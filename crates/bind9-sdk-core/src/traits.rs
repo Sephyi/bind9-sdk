@@ -10,9 +10,10 @@
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
+use crate::update::{UpdateMessage, UpdateResult};
+use crate::zone::{Zone, ZoneSummary};
 
-// Placeholder types — fleshed out in subsequent plans.
-// These exist so the trait signatures compile now.
+// Placeholder types — fleshed out in subsequent worktrees.
 
 /// Server status information from `rndc status`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,22 +22,6 @@ pub struct ServerStatus;
 /// A zone that has been frozen via `rndc freeze`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenZone;
-
-/// A constructed RFC 2136 dynamic update message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdateMessage;
-
-/// Result of sending an RFC 2136 update.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdateResult;
-
-/// Summary of a zone (name, class, serial).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZoneSummary;
-
-/// Full zone data.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zone;
 
 /// Server-level statistics.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +78,8 @@ pub trait StatsClient: Send + Sync {
 mod tests {
     use super::*;
     use crate::error::CoreError;
+    use crate::protocol::Rcode;
+    use crate::record::RecordClass;
 
     // Minimal mock to verify trait is implementable
     struct MockNamedControl;
@@ -108,11 +95,11 @@ mod tests {
             Ok(())
         }
 
-        async fn reload_zone(&self, _zone: &crate::domain::DomainName) -> Result<(), CoreError> {
+        async fn reload_zone(&self, _zone: &DomainName) -> Result<(), CoreError> {
             Ok(())
         }
 
-        async fn freeze(&self, _zone: &crate::domain::DomainName) -> Result<FrozenZone, CoreError> {
+        async fn freeze(&self, _zone: &DomainName) -> Result<FrozenZone, CoreError> {
             Ok(FrozenZone)
         }
     }
@@ -127,12 +114,16 @@ mod tests {
     impl ZoneManager for MockZoneManager {
         type Error = CoreError;
 
-        async fn list_zones(&self) -> Result<alloc::vec::Vec<ZoneSummary>, CoreError> {
+        async fn list_zones(&self) -> Result<Vec<ZoneSummary>, CoreError> {
             Ok(alloc::vec![])
         }
 
-        async fn get_zone(&self, _name: &crate::domain::DomainName) -> Result<Zone, CoreError> {
-            Ok(Zone)
+        async fn get_zone(&self, _name: &DomainName) -> Result<Zone, CoreError> {
+            Ok(Zone {
+                name: DomainName::new("example.com.").unwrap(),
+                class: RecordClass::IN,
+                records: alloc::vec![],
+            })
         }
     }
 
@@ -147,7 +138,10 @@ mod tests {
         type Error = CoreError;
 
         async fn send_update(&self, _update: &UpdateMessage) -> Result<UpdateResult, CoreError> {
-            Ok(UpdateResult)
+            Ok(UpdateResult {
+                rcode: Rcode::NoError,
+                id: 0,
+            })
         }
     }
 
@@ -165,10 +159,7 @@ mod tests {
             Ok(ServerStats)
         }
 
-        async fn zone_stats(
-            &self,
-            _zone: &crate::domain::DomainName,
-        ) -> Result<ZoneStats, CoreError> {
+        async fn zone_stats(&self, _zone: &DomainName) -> Result<ZoneStats, CoreError> {
             Ok(ZoneStats)
         }
     }
