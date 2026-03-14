@@ -19,6 +19,18 @@ The work is organized into two waves of two parallel git worktrees each. Each wo
 
 **PRD adjustment**: nsupdate sender (FR-010) is moved from Phase 2 to Phase 1. IXFR/AXFR transfer client (FR-011) remains Phase 2. This gives v0.1.0 a complete control + update workflow without the complexity of zone transfers.
 
+**Review-driven changes** (from dialectic verification — Claude spec reviewer + Gemini 3 Pro):
+- `getrandom` replaced with feature-gated randomness: `TsigKey::generate()` requires `std`, WASM gets deterministic `with_id()` constructors
+- Placeholder types from Phase 1a explicitly migrated in pre-worktree setup
+- `ZoneFile` changed from `Vec<Zone>` to single `Zone` (RFC 1035 = one zone per file)
+- `RndcConnection::command()` uses `&mut self` (TCP is mutable state)
+- `RecordType` enum added to core for type-safe prerequisites
+- `Rcode` enum moved to core (`protocol.rs`)
+- `TsigKey::key_material` uses `Zeroizing<Vec<u8>>` (not raw `Vec<u8>`)
+- `HmacSha1` added as `#[deprecated]` for legacy BIND9 compatibility
+- `IncludeResolver` trait added for pluggable `$INCLUDE` handling
+- rdata text parsing prioritized: common types first (A/AAAA/NS/SOA/MX/CNAME/TXT/SRV/PTR/CAA), remaining types follow
+
 ## 2. Wave Structure
 
 ```
@@ -63,7 +75,8 @@ crates/bind9-sdk-core/src/
 │   ├── parser.rs       — tokenizer + parser state machine
 │   ├── serializer.rs   — zone file text emitter
 │   └── rdata_text.rs   — RecordData ↔ zone file text conversion
-└── lib.rs              — update: pub mod zone (replace zone module stub if any)
+├── protocol.rs         — RecordType enum, Rcode enum (shared DNS protocol types)
+└── lib.rs              — update: pub mod zone; pub mod protocol;
 ```
 
 The `zone/` submodule split follows the architecture spec's file size policy (§4.4: split at ~400 lines). The parser and serializer alone will each exceed 300 lines.
@@ -96,20 +109,34 @@ impl Zone {
 }
 ```
 
-**ZoneFile** — parsed zone file with metadata:
+**ZoneFile** — parsed zone file with metadata. One `ZoneFile` = one `Zone` (RFC 1035 master file format defines a single zone per file):
 
 ```rust
 pub struct ZoneFile {
     pub origin: DomainName,
     pub default_ttl: Option<Ttl>,
-    pub zones: Vec<Zone>,
+    pub zone: Zone,
 }
 
 impl ZoneFile {
     pub fn parse(input: &str) -> Result<Self, CoreError> { /* ... */ }
+    pub fn parse_with_includes(
+        input: &str,
+        resolver: &dyn IncludeResolver,
+    ) -> Result<Self, CoreError> { /* ... */ }
     pub fn serialize(&self) -> String { /* ... */ }
 }
 ```
+
+**IncludeResolver** — pluggable `$INCLUDE` handler (allows filesystem I/O in `std` contexts while keeping core `no_std`):
+
+```rust
+pub trait IncludeResolver {
+    fn resolve(&self, path: &str) -> Result<String, CoreError>;
+}
+```
+
+The default `parse()` method returns `CoreError::ZoneParse` on `$INCLUDE` directives. Callers with filesystem access use `parse_with_includes()` with a resolver that reads files.
 
 **ZoneFile implements ZoneManager:**
 
@@ -118,17 +145,18 @@ impl ZoneManager for ZoneFile {
     type Error = CoreError;
 
     async fn list_zones(&self) -> Result<Vec<ZoneSummary>, CoreError> {
-        Ok(self.zones.iter().map(|z| z.summary()).collect())
+        Ok(alloc::vec![self.zone.summary()])
     }
 
     async fn get_zone(&self, name: &DomainName) -> Result<Zone, CoreError> {
-        self.zones.iter()
-            .find(|z| z.name == *name)
-            .cloned()
-            .ok_or_else(|| CoreError::InvalidName {
+        if self.zone.name == *name {
+            Ok(self.zone.clone())
+        } else {
+            Err(CoreError::InvalidName {
                 name: name.to_string(),
                 reason: "zone not found".into(),
             })
+        }
     }
 }
 ```
@@ -137,7 +165,7 @@ impl ZoneManager for ZoneFile {
 
 The zone file parser handles:
 
-- **Directives**: `$ORIGIN`, `$TTL`. `$INCLUDE` returns `CoreError::ZoneParse` with a clear "not supported" message (requires filesystem I/O, incompatible with `no_std`).
+- **Directives**: `$ORIGIN`, `$TTL`. `$INCLUDE` is handled by the `IncludeResolver` trait — `parse()` returns `CoreError::ZoneParse` on `$INCLUDE`, `parse_with_includes()` delegates to the resolver.
 - **Comments**: `;` to end of line.
 - **Continuation**: Parenthesized `(...)` multi-line records.
 - **Owner name inheritance**: blank owner field inherits from the previous record.
@@ -158,7 +186,7 @@ Each RecordData variant needs two functions:
 - `parse_rdata(rtype: &str, tokens: &mut TokenStream, origin: &DomainName) -> Result<RecordData, CoreError>`
 - `serialize_rdata(rdata: &RecordData) -> String`
 
-All 21 variants from Phase 1a get text format support. The `Unknown` variant uses RFC 3597 generic format: `\# <length> <hex>`.
+Text format support is prioritized by usage frequency. v0.1.0 must support: A, AAAA, NS, SOA, MX, CNAME, TXT, SRV, PTR, CAA (the 10 most common types). Remaining variants (DNSSEC types, SSHFP, TLSA, RP, CSYNC) are added in follow-up commits within the same worktree if time permits, otherwise deferred. The `Unknown` variant uses RFC 3597 generic format: `\# <length> <hex>`.
 
 ### 3.6 Testing Strategy
 
@@ -201,38 +229,40 @@ Per architecture spec §2.3 (secret-bearing types):
 pub struct TsigKey {
     name: DomainName,
     algorithm: TsigAlgorithm,
-    key_material: Vec<u8>,  // zeroize on drop
+    key_material: zeroize::Zeroizing<Vec<u8>>,
 }
 ```
+
+Uses `zeroize::Zeroizing<Vec<u8>>` — key bytes are zeroed on drop automatically. Manual `Debug` impl redacts as `TsigKey { name: "...", algorithm: HmacSha256, key: [REDACTED] }`. No `Clone` — per architecture spec §2.3.
 
 **TsigAlgorithm** enum:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TsigAlgorithm {
     HmacSha256,
     HmacSha512,
+    #[deprecated(note = "HMAC-SHA1 is weak; use HmacSha256 or HmacSha512 for new deployments")]
+    HmacSha1,
 }
 ```
 
-No HMAC-MD5 support — deprecated per RFC 8945 §5.3 and our PRD security requirements. If a user needs HMAC-MD5 for legacy compat, they can use `Raw` operations.
+HMAC-SHA1 is included for legacy BIND9 compatibility but marked deprecated. No HMAC-MD5 support — too weak per RFC 8945 §5.3.
 
 **Key behaviors:**
 - `TsigKey::new(name, algorithm, key_material)` — construct from raw bytes
 - `TsigKey::from_base64(name, algorithm, base64_key)` — parse from `rndc.conf` / `named.conf` key format
-- `TsigKey::generate(name, algorithm)` — generate random key (uses `getrandom` crate for `no_std` compatible randomness)
-- `TsigKey::sign(message_bytes) -> Vec<u8>` — compute HMAC over message
-- `TsigKey::verify(message_bytes, mac) -> Result<(), CoreError>` — verify HMAC
-- Manual `Debug` impl — redacts key material as `[REDACTED]`
-- `ZeroizeOnDrop` derive — key bytes zeroed on drop
-- No `Clone` — per architecture spec §2.3
+- `TsigKey::generate(name, algorithm)` — generate random key. **Requires `std` feature** (uses `getrandom`). Not available in `no_std`/WASM builds.
+- `TsigKey::sign(&self, message_bytes) -> Vec<u8>` — compute HMAC over message
+- `TsigKey::verify(&self, message_bytes, mac) -> Result<(), CoreError>` — verify HMAC
 
 **TSIG record construction** (RFC 8945 §4.3):
 - `TsigRecord::new(key, message, timestamp)` — constructs the TSIG pseudo-record
 - Time fudge defaults to 300 seconds (RFC 8945 recommendation)
 - MAC computed over: request MAC (if response) + DNS message (sans TSIG) + TSIG variables
 
-**Dependencies**: `hmac`, `sha2`, `digest` (all workspace deps, `no_std`), `zeroize` (workspace dep), `getrandom` (new — needs adding to workspace, `no_std` with platform features).
+**Dependencies**: `hmac`, `sha2`, `digest` (all workspace deps, `no_std`), `zeroize` (workspace dep), `base64` (new, `no_std` with `alloc`), `getrandom` (new, behind `std` feature only — not compiled for WASM).
 
 ### 4.3 UpdateBuilder (`core/update.rs`)
 
@@ -258,14 +288,14 @@ impl UpdateBuilder<Unsigned> {
     pub fn new(zone: DomainName, class: RecordClass) -> Self;
 
     // Prerequisites (RFC 2136 §2.4)
-    pub fn require_rrset_exists(self, name: &DomainName, rtype: u16) -> Self;
-    pub fn require_rrset_not_exists(self, name: &DomainName, rtype: u16) -> Self;
+    pub fn require_rrset_exists(self, name: &DomainName, rtype: RecordType) -> Self;
+    pub fn require_rrset_not_exists(self, name: &DomainName, rtype: RecordType) -> Self;
     pub fn require_name_exists(self, name: &DomainName) -> Self;
     pub fn require_name_not_exists(self, name: &DomainName) -> Self;
 
     // Updates (RFC 2136 §2.5)
     pub fn add_record(self, record: ResourceRecord) -> Self;
-    pub fn delete_rrset(self, name: &DomainName, rtype: u16) -> Self;
+    pub fn delete_rrset(self, name: &DomainName, rtype: RecordType) -> Self;
     pub fn delete_record(self, record: ResourceRecord) -> Self;
     pub fn delete_name(self, name: &DomainName) -> Self;
 
@@ -297,7 +327,7 @@ impl UpdateMessage {
 
 The wire encoding follows RFC 2136 §2: DNS message with opcode UPDATE (5), zone section, prerequisite section, update section, additional section (TSIG if signed).
 
-**Dependencies**: Phase 1a types, TSIG from §4.2. `getrandom` for message ID generation.
+**Dependencies**: Phase 1a types, TSIG from §4.2, `RecordType` from `protocol.rs`. Message ID generation: `UpdateBuilder::new()` uses random ID when `std` feature is enabled (via `getrandom`). For `no_std`/WASM, use `UpdateBuilder::with_id(id: u16)` to supply a deterministic ID.
 
 ### 4.4 NetError (`net/error.rs`)
 
@@ -356,7 +386,7 @@ impl TlsConfig {
 - Certificate validation via `webpki` roots (strict by default)
 - Localhost exemption: non-TLS permitted only for loopback addresses
 
-**Dependencies**: `rustls`, `webpki-roots` (new workspace deps needed).
+**Dependencies**: `rustls`, `webpki-roots` (new workspace deps needed). `tokio-rustls` is deferred to Phase 2 (XoT for zone transfers). Phase 1 rndc uses plaintext TCP on localhost with HMAC auth — no TLS needed.
 
 ### 4.6 Bind9Client Skeleton (`net/config.rs`)
 
@@ -427,13 +457,13 @@ crates/bind9-sdk-net/src/
 
 **Framing**: 4-byte big-endian length prefix + payload. NOT the 2-byte DNS TCP prefix.
 
-**Authentication**: HMAC-based challenge-response:
+**Authentication**: HMAC-based mutual authentication. The exact sequence must be verified against BIND9 source (`lib/isccfg/`, `lib/isc/netmgr/`) before implementation — the description below is approximate:
 1. Client connects to TCP port 953
-2. Client sends `auth` message with nonce
-3. Server responds with challenge
-4. Client sends HMAC of challenge using shared key
-5. Server validates, responds with success/failure
-6. Subsequent commands are HMAC-signed
+2. Client sends a `_ctrl` message containing a nonce, HMAC-signed with the shared key
+3. Server validates the HMAC, responds with success/failure
+4. Subsequent commands include HMAC signatures
+
+**Note**: This flow may differ from the actual BIND9 9.20 implementation. The rndc protocol is not formally documented outside the BIND9 source. Implementation must reference the source code and/or captured wire dumps, not this description alone.
 
 **ISC message encoding**: Key-value pairs in a binary format. Keys and values are length-prefixed strings. The format is stable across BIND9 minor versions.
 
@@ -456,10 +486,12 @@ impl RndcConnection<Unauthenticated> {
 }
 
 impl RndcConnection<Authenticated> {
-    pub async fn command(&self, cmd: RndcCommand) -> Result<RndcResponse, NetError>;
+    pub async fn command(&mut self, cmd: RndcCommand) -> Result<RndcResponse, NetError>;
     pub async fn close(self) -> Result<(), NetError>;
 }
 ```
+
+The `Bind9Client` wraps `RndcConnection` behind a `tokio::sync::Mutex` internally, exposing `&self` at the `NamedControl` trait level per architecture spec §5.4.
 
 **RndcCommand**: The full enum from PRD FR-005 (§4.1). Each variant serializes to the correct rndc command string.
 
@@ -495,9 +527,10 @@ impl NamedControl for Bind9Client {
 
 ### 5.5 ServerStatus
 
-Flesh out the placeholder from Phase 1a:
+Flesh out the placeholder from Phase 1a. **This type stays in `bind9-sdk-core/src/traits.rs`** (where the trait that returns it is defined). The rndc stream constructs and populates these structs but does not define them. Same applies to `FrozenZone`.
 
 ```rust
+// In bind9-sdk-core/src/traits.rs (replacing the unit struct placeholder)
 pub struct ServerStatus {
     pub version: String,
     pub running_since: Option<String>,  // ISO 8601 timestamp string
@@ -535,9 +568,10 @@ impl StatsHttpClient {
 }
 ```
 
-**ServerStats** — flesh out placeholder:
+**ServerStats** — flesh out placeholder. **This type stays in `bind9-sdk-core/src/traits.rs`** (where the `StatsClient` trait that returns it is defined). The HTTP client constructs and populates these structs but does not define them. Same applies to `ZoneStats`.
 
 ```rust
+// In bind9-sdk-core/src/traits.rs (replacing the unit struct placeholder)
 pub struct ServerStats {
     pub boot_time: String,
     pub config_time: String,
@@ -552,6 +586,7 @@ pub struct ServerStats {
 **ZoneStats** — flesh out placeholder:
 
 ```rust
+// In bind9-sdk-core/src/traits.rs (replacing the unit struct placeholder)
 pub struct ZoneStats {
     pub name: DomainName,
     pub class: RecordClass,
@@ -598,14 +633,22 @@ impl NsUpdateSender {
 }
 ```
 
-**UpdateResult** — flesh out placeholder:
+**UpdateResult** — flesh out placeholder. **Stays in `bind9-sdk-core/src/traits.rs`** (returned by `DynamicUpdater` trait):
 
 ```rust
+// In bind9-sdk-core/src/traits.rs
 pub struct UpdateResult {
     pub rcode: Rcode,
     pub id: u16,
 }
+```
 
+**Rcode** — defined in `bind9-sdk-core/src/protocol.rs` (fundamental DNS concept, reused by multiple subsystems):
+
+```rust
+// In bind9-sdk-core/src/protocol.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Rcode {
     NoError,
     FormErr,
@@ -619,6 +662,29 @@ pub enum Rcode {
     NotAuth,
     NotZone,
     Other(u16),
+}
+
+impl Rcode {
+    pub fn from_value(value: u16) -> Self;
+    pub fn value(&self) -> u16;
+}
+```
+
+**RecordType** — also in `protocol.rs` (used by UpdateBuilder prerequisites):
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RecordType {
+    A, Aaaa, Cname, Ns, Ptr, Soa, Mx, Txt, Srv, Caa,
+    Dnskey, Rrsig, Nsec, Nsec3, Ds, Cds, Cdnskey,
+    Tlsa, Sshfp, Csync, Rp,
+    Other(u16),
+}
+
+impl RecordType {
+    pub fn from_value(value: u16) -> Self;
+    pub fn value(&self) -> u16;
 }
 ```
 
@@ -674,23 +740,50 @@ impl DynamicUpdater for Bind9Client {
 ### 7.3 Pre-Worktree Setup
 
 Before creating any worktrees, on `development`:
-1. Add module declaration stubs to `core/lib.rs` (`pub mod zone; pub mod tsig; pub mod update;`)
-2. Add module declaration stubs to `net/lib.rs` (`pub mod error; pub mod tls; pub mod config; pub mod rndc; pub mod stats; pub mod nsupdate;`)
-3. Add new workspace dependencies to `Cargo.toml` (`getrandom`, `rustls`, `webpki-roots`, `base64`)
-4. Commit this scaffolding
 
-This ensures worktrees branch from a common base with all module paths declared, eliminating merge conflicts on `lib.rs`.
+1. **Migrate placeholder types** from `core/traits.rs`:
+   - `Zone`, `ZoneSummary` → `core/zone/mod.rs` (created as stubs with real fields)
+   - `UpdateMessage`, `UpdateResult` → `core/update.rs` (created as stubs)
+   - `ServerStatus`, `FrozenZone`, `ServerStats`, `ZoneStats` → remain in `core/traits.rs` but get real fields
+   - Update mock tests in `traits.rs` to construct with real fields
+   - Update imports throughout
+
+2. **Add module declarations** to `core/lib.rs`:
+   - `pub mod zone; pub mod tsig; pub mod update; pub mod protocol;`
+   - Create empty stub files/directories for each
+
+3. **Add module declarations** to `net/lib.rs`:
+   - `pub mod error; pub mod tls; pub mod config; pub mod rndc; pub mod stats; pub mod nsupdate;`
+   - Create empty stub files
+
+4. **Add workspace dependencies** to root `Cargo.toml` `[workspace.dependencies]`:
+   - `getrandom = { version = "0.3", default-features = false }`
+   - `base64 = { version = "0.22", default-features = false, features = ["alloc"] }`
+   - `rustls = { version = "0.23" }`
+   - `webpki-roots = { version = "1" }`
+   - `sha1 = { version = "0.10", default-features = false }` (for `HmacSha1`)
+
+5. **Add crate-level dependencies**:
+   - `bind9-sdk-core/Cargo.toml`: add `base64`, `getrandom` (behind `std` feature), `sha1`
+   - `bind9-sdk-net/Cargo.toml`: add `rustls`, `webpki-roots`
+
+6. **Update PRD**: FR-010 phase change, stats-channel comment fix, Phase 2 scope update
+
+7. **Commit** this scaffolding
+
+This ensures worktrees branch from a common base with all module paths declared and dependencies resolved, eliminating merge conflicts.
 
 ## 8. New Dependencies
 
-| Crate | Purpose | Used by | `no_std`? |
-| --- | --- | --- | --- |
-| `getrandom` | Random bytes for key generation + message IDs | core (tsig, update) | Yes (with features) |
-| `base64` | TSIG key encoding/decoding | core (tsig) | Yes (`default-features = false`, `alloc`) |
-| `rustls` | TLS 1.3 client | net (tls) | No |
-| `webpki-roots` | Mozilla CA root certificates | net (tls) | No |
-| `tokio` | Already in workspace | net | No |
-| `reqwest` | Already in workspace | net (stats) | No |
+| Crate | Version | Purpose | Used by | `no_std`? |
+| --- | --- | --- | --- | --- |
+| `getrandom` | 0.3 | Random bytes for key gen + message IDs | core (behind `std` feature only) | No — `std` gated |
+| `base64` | 0.22 | TSIG key base64 encoding/decoding | core (tsig) | Yes (`default-features = false`, `alloc`) |
+| `sha1` | 0.10 | HMAC-SHA1 for legacy BIND9 compat | core (tsig) | Yes (`default-features = false`) |
+| `rustls` | 0.23 | TLS 1.3 client configuration | net (tls) | No |
+| `webpki-roots` | 1 | Mozilla CA root certificates | net (tls) | No |
+| `tokio` | 1 | Already in workspace | net | No |
+| `reqwest` | 0.12 | Already in workspace | net (stats) | No |
 
 ## 9. PRD Adjustments
 
@@ -727,6 +820,6 @@ Phase 1 is complete when:
 | --- | --- | --- | --- |
 | Zone parser complexity exceeds estimate | Medium | Delays Wave 1 | Start with common record types (A, AAAA, MX, CNAME, NS, SOA, TXT, SRV), add remaining in follow-up commits |
 | rndc wire protocol underdocumented | Medium | Delays Wave 2 | Reference BIND9 source code (`lib/isc/netmgr/`), capture wire dumps from real rndc sessions |
-| `getrandom` in no_std context | Low | Blocks TSIG key generation | Feature-gate `generate()` behind `std` or use platform-specific features |
+| `getrandom` in no_std context | Low (mitigated) | Blocks TSIG key generation | Resolved: `generate()` is `std`-gated. WASM gets `with_id()` constructors. |
 | Merge conflicts between worktrees | Low | Delays merge | Pre-add all module declarations (§7.3) |
 | TSIG implementation doesn't match BIND9 | Medium | Integration test failures | Use RFC 2202 test vectors + captured BIND9 TSIG packets as fixtures |
