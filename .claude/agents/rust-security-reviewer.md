@@ -1,10 +1,14 @@
+<!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+
 ---
 name: rust-security-reviewer
 description: >
   Security audit for bind9-sdk Rust code. Reviews TSIG/crypto key exposure, DNS name parsing
   safety, rndc wire protocol input validation, RFC 2136 update injection, WASM boundary safety,
-  napi-rs FFI safety, and dependency security. Invoke after changes to any crate in
-  crates/bind9-sdk-core/, crates/bind9-sdk-net/, crates/bind9-sdk-bindings/, or Cargo.toml.
+  napi-rs FFI safety, zeroization, NIS2 logging compliance, TLS configuration, and secret handling.
+  Invoke after changes to any crate in crates/bind9-sdk-core/, crates/bind9-sdk-net/,
+  crates/bind9-sdk-bindings/, or Cargo.toml.
 tools:
   - Read
   - Grep
@@ -65,10 +69,10 @@ Expand scope based on these rules:
 3. Zone name authorization: the SDK itself is a client; however, if any layer validates that updates target an authorized zone, ensure this check is not bypassable by encoding tricks (trailing dots, case variants)
 4. TSIG signing of updates must cover the full message including prerequisite section — flag if only the update section is signed
 
-### E. WASM Boundary Safety (wasm-bindgen)
+### E. WASM Boundary Safety (napi-rs WASM)
 
-1. All `#[wasm_bindgen]` functions that accept `String` or `&str` parameters must handle empty strings and strings with null bytes — Rust strings are valid UTF-8 but may contain null bytes, which can cause issues in C interop layers
-2. **No panics at WASM boundary**: any unhandled `panic!` in a WASM function aborts the entire WASM module. All `#[wasm_bindgen]` functions must return `Result<T, JsValue>` and use `?` or explicit error mapping — never `unwrap()` or `expect()`
+1. All napi-rs functions compiled to WASM that accept `String` or `&str` parameters must handle empty strings and strings with null bytes
+2. **No panics at WASM boundary**: any unhandled `panic!` in a WASM-compiled napi-rs function aborts the module. All such functions must return `napi::Result<T>` and use `?` or explicit error mapping — never `unwrap()` or `expect()`
 3. Buffer sizes from JS (`Uint8Array`, `ArrayBuffer`): verify length before slice operations — JS can pass a zero-length buffer where non-zero is expected
 
 ### F. napi-rs FFI Safety
@@ -87,7 +91,7 @@ Expand scope based on these rules:
 ### H. Dependency Security
 
 1. Run `cargo audit` if `Cargo.toml` or `Cargo.lock` changed
-2. Key dependencies to flag if updated: `hmac`, `sha2`, `digest`, `tokio`, `reqwest`, `rustls`, `napi`, `wasm-bindgen`, `serde_json`
+2. Key dependencies to flag if updated: `hmac`, `sha2`, `digest`, `tokio`, `reqwest`, `rustls`, `napi`, `serde_json`
 3. `reqwest` must use `rustls-tls` feature, never `native-tls` — verify `default-features = false` is set
 
 ### I. Integer and Arithmetic Safety
@@ -95,6 +99,29 @@ Expand scope based on these rules:
 1. DNS serial numbers are u32 with RFC 1982 wrap-around arithmetic — verify all serial comparisons use RFC 1982 logic, not plain `<`/`>`
 2. Wire format length fields (u16 RDLENGTH, u32 rndc message length): all reads must check remaining buffer length before advancing the cursor
 3. Zone record counts from user input: verify `usize` arithmetic does not overflow on 32-bit targets (WASM is 32-bit)
+
+### J. NIS2 Logging Compliance
+
+1. All rndc commands must emit a structured log entry with: event type, timestamp, zone (if applicable), command, result, session UUID
+2. All RFC 2136 updates must emit a structured log entry with: zone, record type, operation (add/delete), prerequisite result
+3. All TSIG authentication failures must emit a structured log entry with: peer address, algorithm, failure reason, timestamp
+4. All zone transfers (AXFR/IXFR) must emit structured log entries: start, record count, completion/failure, duration
+5. All DNSSEC key lifecycle events (generation, publication, activation, retirement, revocation, removal) must emit structured log entries
+6. No log entry may contain TSIG key material, private key bytes, or client IP addresses from stats-channel (unless explicitly configured)
+7. Log entries must use RFC 3339 timestamps with microsecond precision in UTC
+
+### K. TLS Configuration
+
+1. Verify all TLS connections enforce TLS 1.3 minimum — no TLS 1.2 fallback. Check `rustls` configuration for `protocol_versions` or equivalent.
+2. Verify cipher suite list contains only AES-256-GCM and ChaCha20-Poly1305 — no AES-128, no CBC modes.
+3. Verify certificate validation is strict by default — no `danger_accept_invalid_certs`, no `danger_accept_invalid_hostnames`.
+4. If TOFU/SPKI pinning is supported, verify pin comparison is constant-time.
+
+### L. Secret Handling
+
+1. TSIG keys and rndc keys must never be written to disk (no file caching, no temp files, no serialization to persistent storage).
+2. No memoization or caching of key material in static variables or lazy statics.
+3. All key material types must implement `Drop` with zeroization (via `ZeroizeOnDrop` derive or manual `Drop` impl).
 
 ## Step 3: Report Format
 

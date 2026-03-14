@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+
 ---
 name: api-compat-reviewer
 description: Read-only agent that checks public API compatibility before changing structs, traits, enums, or functions. Reports all callers of changed items and flags breaking changes. Use before modifying any pub API surface.
@@ -95,3 +98,28 @@ BREAKING (N items require caller updates) / CLEAN (no breaking changes)
 - **`RndcCommand` variants** — similarly `#[non_exhaustive]`. New commands are non-breaking; renamed/removed commands are breaking.
 - **`bind9-sdk` re-export crate is the semver boundary** — `bind9-sdk-core` and `bind9-sdk-net` are internal. Changes to their public APIs that are not re-exported from `bind9-sdk` do not require a semver bump on the public crate. Track re-exports carefully.
 - **Wire format structs** — any struct that derives `serde::Serialize`/`Deserialize` and crosses a persistence or network boundary has an implicit serialization compatibility contract, not just an API contract.
+
+### Re-export Coverage
+
+Before reporting, verify that ALL `pub` types in `bind9-sdk-core` and `bind9-sdk-net` are re-exported through `bind9-sdk/src/lib.rs`. Any public type that is NOT re-exported is a gap — users cannot access it through the published crate.
+
+Run:
+1. `grep -rn "^pub " crates/bind9-sdk-core/src/ crates/bind9-sdk-net/src/` to list all public items
+2. `grep -rn "pub use" bind9-sdk/src/lib.rs` to list all re-exports
+3. Report any public items not covered by re-exports
+
+### Non-Exhaustive Enforcement
+
+These enums MUST have `#[non_exhaustive]`:
+- `RecordData` — new DNS record types will be added
+- `RndcCommand` — new rndc commands may be added
+- `DnssecAlgorithm` — post-quantum algorithms expected ~2027-2028
+- Any other enum representing an extensible registry (IANA-sourced)
+
+Report any such enum missing `#[non_exhaustive]` as a BREAKING CHANGE risk.
+
+### Send + Sync on Public Traits
+
+Traits intended for external implementation (`ZoneManager`, `NamedControl`, `DynamicUpdater`, `StatsClient`) must carry `Send + Sync` bounds if their methods are used in async contexts. Verify:
+1. Trait definition includes `: Send + Sync` or equivalent where used with `dyn Trait`
+2. All concrete implementations satisfy these bounds
