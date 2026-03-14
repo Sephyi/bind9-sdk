@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 pub(crate) mod parser;
+pub(crate) mod rdata_text;
 
 use alloc::vec::Vec;
 
