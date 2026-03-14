@@ -95,6 +95,21 @@ bind9-sdk/                     ← git repo root (this directory)
 
 6. **`bind9-sdk` is the only published user-facing crate** — Users add `bind9-sdk` to their `Cargo.toml`, never internal crates directly. Internal crates are published to satisfy crates.io dependency resolution but carry no stability guarantees of their own.
 
+## Coding Architecture
+
+Full spec: `docs/specs/2026-03-14-coding-architecture-design.md`
+
+Key patterns enforced across all implementation:
+
+- **Make invalid states unrepresentable** — newtypes (`DomainName`, `Ttl`, `Serial`), typestate (`UpdateBuilder<Unsigned/Signed>`, `RndcConnection<Unauth/Auth>`), `#[non_exhaustive]` enums
+- **Parse, don't validate** — external input validated once at construction, trusted thereafter
+- **Error strategy** — one `#[non_exhaustive]` `thiserror` enum per crate (`CoreError`, `NetError`). No `anyhow`, no `Box<dyn Error>`. `thiserror` 2.x with `default-features = false` in core (no_std)
+- **Trait design** — management traits in `core` with associated error types (`type Error: core::error::Error + Send + Sync + 'static`) to avoid circular deps. `net::Bind9Client` implements with `type Error = NetError`
+- **Secret-bearing types** — manual `Debug`/`Display` with `[REDACTED]`, `ZeroizeOnDrop`, no `Clone`. Applies to `TsigKey`, `RndcKey`, any key material
+- **Observability** — `tracing` crate for all instrumentation. Structured fields, never interpolated strings. Key material never in any log field
+- **File size** — target 200–300 lines, split at ~400. `rdata.rs` expected to become `rdata/` submodule early
+- **Testing** — proptest for roundtrip/invariant properties, insta for serialization snapshots, hand-written mocks for trait testing. `#![forbid(unsafe_code)]` in `core` and `net`
+
 ## Gotchas
 
 - **`no_std` means `core::error::Error`** — `std::error::Error` is not available in `bind9-sdk-core`. Use `core::error::Error` (stable since Rust 1.81, which is below our rust-version of 1.94). The `std` feature flag on `bind9-sdk-core` opts back in to `std::error::Error`.
@@ -150,6 +165,7 @@ SDK targets compliance with GDPR, NIS2 (EU 2022/2555), NIST SP 800-53/800-81/800
 
 ## References
 
+- **Coding architecture**: `docs/specs/2026-03-14-coding-architecture-design.md` — type patterns, error strategy, trait design, observability, testing
 - **Design specs**: `docs/specs/` (brainstorming skill writes specs here, not the default `docs/superpowers/specs/`)
 - **Implementation plans**: `docs/plans/` (writing-plans skill writes plans here, not the default `docs/superpowers/plans/`)
 - **PRD**: `PRD.md`
