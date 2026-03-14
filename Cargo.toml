@@ -51,6 +51,24 @@ tracing = { version = "0.1" }
 # Secret zeroization — no_std compatible (consumed by bind9-sdk-core for TsigKey and key material types)
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 
+# Base64 encoding for TSIG keys — no_std compatible
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+# Random bytes for key generation — std only (not compiled for WASM)
+getrandom = { version = "0.3", default-features = false }
+
+# HMAC-SHA1 for legacy BIND9 compatibility — no_std compatible
+sha1 = { version = "0.10", default-features = false }
+
+# TLS 1.3 client
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+
+# Mozilla CA root certificates
+webpki-roots = { version = "1" }
+
+# Tokio rustls integration
+tokio-rustls = { version = "0.26" }
+
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }
 insta = { version = "1" }

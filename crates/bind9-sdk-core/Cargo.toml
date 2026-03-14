@@ -15,7 +15,7 @@ rust-version.workspace = true
 [features]
 default = []
 # Enables std::error::Error impls and std-dependent utilities
-std = ["thiserror/std", "serde?/std"]
+std = ["thiserror/std", "serde?/std", "dep:getrandom"]
 # Enables serde Serialize/Deserialize on DNS types
 serde = ["dep:serde"]
 # Enables Rayon-based parallel zone parsing (implies std; incompatible with WASM)
@@ -24,10 +24,13 @@ parallel = ["std", "dep:rayon"]
 [dependencies]
 hmac = { workspace = true }
 sha2 = { workspace = true }
+sha1 = { workspace = true }
 digest = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
 zeroize = { workspace = true }
+base64 = { workspace = true }
+getrandom = { workspace = true, features = ["std"], optional = true }
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
