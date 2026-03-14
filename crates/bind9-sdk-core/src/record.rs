@@ -5,7 +5,9 @@
 use alloc::format;
 use core::fmt;
 
+use crate::domain::DomainName;
 use crate::error::CoreError;
+use crate::rdata::RecordData;
 
 /// DNS Time-To-Live value.
 ///
@@ -139,7 +141,18 @@ impl fmt::Display for RecordClass {
     }
 }
 
-// ResourceRecord is defined in Task 6 after RecordData is available.
+/// A complete DNS resource record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceRecord {
+    /// Owner name (the domain this record belongs to)
+    pub name: DomainName,
+    /// Record class (almost always IN)
+    pub class: RecordClass,
+    /// Time to live in seconds
+    pub ttl: Ttl,
+    /// Record-type-specific data
+    pub rdata: RecordData,
+}
 
 #[cfg(test)]
 mod tests {
@@ -204,6 +217,9 @@ mod tests {
         assert_eq!(a.partial_cmp(&b), None);
     }
 
+    use crate::domain::DomainName;
+    use crate::rdata::RecordData;
+
     // -- RecordClass tests --
 
     #[test]
@@ -221,5 +237,36 @@ mod tests {
         assert_eq!(RecordClass::from_value(1), RecordClass::IN);
         assert_eq!(RecordClass::from_value(3), RecordClass::CH);
         assert_eq!(RecordClass::from_value(999), RecordClass::Unknown(999));
+    }
+
+    // -- ResourceRecord tests --
+
+    #[test]
+    fn resource_record_construction() {
+        let rr = ResourceRecord {
+            name: DomainName::new("example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(3600).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 1)),
+        };
+        assert_eq!(rr.class, RecordClass::IN);
+        assert_eq!(rr.ttl.value(), 3600);
+    }
+
+    #[test]
+    fn resource_record_equality() {
+        let rr1 = ResourceRecord {
+            name: DomainName::new("example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(3600).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 1)),
+        };
+        let rr2 = ResourceRecord {
+            name: DomainName::new("EXAMPLE.COM.").unwrap(), // case-insensitive
+            class: RecordClass::IN,
+            ttl: Ttl::new(3600).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 1)),
+        };
+        assert_eq!(rr1, rr2);
     }
 }
