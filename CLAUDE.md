@@ -131,6 +131,7 @@ bind9-sdk/                     ← git repo root (this directory)
 
 ## References
 
+- **Design specs**: `docs/specs/` (superpowers brainstorming skill writes specs here, not the default `docs/superpowers/specs/`)
 - **PRD**: `PRD.md`
 - **Research doc**: `/Users/sephyi/Documents/Markdown/huhn/bind9-dns-management-2026.md`
 - **hu.hn infra plans**: `/Users/sephyi/Documents/Markdown/huhn/dev-concerns.md`
