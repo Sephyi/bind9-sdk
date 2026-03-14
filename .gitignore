@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# --- OS / Editor -------------------------------------------------------------
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# Environment
+.env
+.env.local
+
+# --- Rust / Cargo ------------------------------------------------------------
+
+# Cargo build artifacts
+debug/
+target/
+dist/
+
+# Rust backup files (rustfmt)
+**/*.rs.bk
+
+# MSVC debug information
+*.pdb
+
+# Mutation testing data
+**/mutants.out*/
+
+# --- AI ----------------------------------------------------------------------
+
+.claude/
