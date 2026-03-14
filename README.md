@@ -18,6 +18,18 @@ A Rust-native library for programmatic BIND9 DNS server management. Implements t
 
 Ships as three coordinated artifacts from one codebase: a **Rust crate** on crates.io, a **browser WASM bundle** via wasm-pack, and a **Node.js native addon** via napi-rs.
 
+## 🛡️ Compliance & Security
+
+Designed to meet GDPR, NIS2, NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II requirements for DNS infrastructure. Secure defaults out of the box.
+
+- **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop, never in logs or errors.
+- **Transport** — XoT for non-localhost transfers. TLS 1.3 only. Strict cert validation default.
+- **DNSSEC** — All IANA algorithms (8–16). Ed25519 default. KSK rollover safety gates.
+- **Logging** — Tamper-evident structured JSON. Forward-integrity ratchet. SIEM-ready.
+- **GDPR** — No IP-attributable data logged by default. Personal data fields documented.
+- **Supply Chain** — SBOM per release. `cargo audit` in CI. `#![forbid(unsafe_code)]` in core.
+- **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns. HMAC-SHA512 default.
+
 ## 💛 Sponsor
 
 If you find bind9-sdk useful, consider [**sponsoring my work**](https://github.com/sponsors/Sephyi).
