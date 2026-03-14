@@ -3,14 +3,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 
-// Phase 1 — v0.1.0 implementation modules:
-//
-// pub mod domain;   // DomainName, Label — RFC 1035 §2.3 wire encoding and text form
-// pub mod record;   // ResourceRecord, RecordData, RecordType (A, AAAA, MX, TXT, CNAME, ...)
-// pub mod zone;     // Zone, ZoneSummary, ZoneStatus
-// pub mod update;   // RFC 2136 dynamic update message construction
-// pub mod tsig;     // TSIG signing — RFC 8945, HMAC-SHA256/SHA512 via RustCrypto
-// pub mod error;    // CoreError
+pub mod domain;
+pub mod error;
+pub mod rdata;
+pub mod record;
+pub mod traits;
