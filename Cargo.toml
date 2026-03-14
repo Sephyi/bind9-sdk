@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "bind9-sdk",
     "crates/bind9-sdk-core",
@@ -17,7 +17,7 @@ edition = "2024"
 authors = ["Sephyi <me@sephy.io>"]
 license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/sephyi/bind9-sdk"
-rust-version = "1.85"
+rust-version = "1.94"
 
 [workspace.dependencies]
 # Internal crates
@@ -36,6 +36,9 @@ serde_json = { version = "1" }
 # Async runtime (net layer and above only)
 tokio = { version = "1", features = ["full"] }
 
+# Data parallelism (std only — not available in WASM)
+rayon = { version = "1.11" }
+
 # HTTP client for statistics-channel (net layer)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
@@ -44,3 +47,10 @@ thiserror = { version = "2", default-features = false }
 
 # Logging
 tracing = { version = "0.1" }
+
+# Secret zeroization — no_std compatible (consumed by bind9-sdk-core for TsigKey and key material types)
+zeroize = { version = "1", default-features = false, features = ["derive"] }
+
+# Testing (consumed via [dev-dependencies] in each crate)
+proptest = { version = "1" }
+insta = { version = "1" }
