@@ -49,7 +49,7 @@ thiserror = { version = "2", default-features = false }
 tracing = { version = "0.1" }
 
 # Secret zeroization — no_std compatible (consumed by bind9-sdk-core for TsigKey and key material types)
-zeroize = { version = "1", default-features = false, features = ["derive"] }
+zeroize = { version = "1", default-features = false, features = ["derive", "alloc"] }
 
 # Base64 encoding for TSIG keys — no_std compatible
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }

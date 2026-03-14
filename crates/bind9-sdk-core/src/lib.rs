@@ -24,5 +24,6 @@ pub use protocol::{Rcode, RecordType};
 pub use rdata::RecordData;
 pub use record::{RecordClass, ResourceRecord, Serial, Ttl};
 pub use traits::{DynamicUpdater, NamedControl, StatsClient, ZoneManager};
-pub use update::{UpdateMessage, UpdateResult};
+pub use tsig::{TsigAlgorithm, TsigKey, TsigRecord};
+pub use update::{Prerequisite, Signed, Unsigned, UpdateBuilder, UpdateEntry, UpdateMessage, UpdateResult};
 pub use zone::{Zone, ZoneSummary};
