@@ -4,7 +4,7 @@
 
 [package]
 name = "bind9-sdk-bindings"
-description = "Browser WASM and Node.js native bindings for bind9-sdk"
+description = "Node.js and Bun native bindings for bind9-sdk via napi-rs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -17,17 +17,13 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-# Browser WASM output via wasm-pack (bind9-sdk-core subset only — no TCP in browser)
-browser = ["dep:wasm-bindgen"]
-# Node.js native addon via napi-rs (full surface including rndc/IXFR/nsupdate)
+# Node.js/Bun native addon via napi-rs (full surface including rndc/IXFR/nsupdate)
+# NOTE: napi v2 -> v3 migration happens in Phase 4. Pinned at v2 until then.
 nodejs = ["dep:napi", "dep:napi-derive", "dep:bind9-sdk-net"]
 
 [dependencies]
 bind9-sdk-core = { workspace = true }
 bind9-sdk-net = { workspace = true, optional = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { version = "0.2", optional = true }
 
 [dependencies.napi]
 version = "2"

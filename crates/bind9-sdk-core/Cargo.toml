@@ -18,6 +18,8 @@ default = []
 std = ["thiserror/std", "serde?/std"]
 # Enables serde Serialize/Deserialize on DNS types
 serde = ["dep:serde"]
+# Enables Rayon-based parallel zone parsing (implies std; incompatible with WASM)
+parallel = ["std", "dep:rayon"]
 
 [dependencies]
 hmac = { workspace = true }
@@ -25,3 +27,5 @@ sha2 = { workspace = true }
 digest = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
+zeroize = { workspace = true }
+rayon = { workspace = true, optional = true }
