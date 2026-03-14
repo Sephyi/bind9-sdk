@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+pub(crate) mod parser;
+
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
