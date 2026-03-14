@@ -68,6 +68,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(unreachable_patterns)] // #[non_exhaustive] only forces wildcard arms on external crates
     fn core_error_is_non_exhaustive() {
         let err = CoreError::WireFormat("test".into());
         match err {
