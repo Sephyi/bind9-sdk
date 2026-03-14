@@ -29,3 +29,7 @@ thiserror = { workspace = true }
 serde = { workspace = true, optional = true }
 zeroize = { workspace = true }
 rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }

@@ -6,31 +6,34 @@
 //!
 //! Rust SDK for programmatic BIND9 DNS server management.
 //!
-//! Implements the full rndc wire protocol, RFC 1035 zone file parsing and serialization,
-//! RFC 2136 dynamic updates (nsupdate), IXFR/AXFR zone transfer, and the BIND9
-//! statistics-channel JSON API — with zero shell subprocess dependencies.
+//! ## Quick start
 //!
-//! ## Feature flags
+//! ```rust
+//! use bind9_sdk::{DomainName, RecordData, ResourceRecord, RecordClass, Ttl};
+//! use core::net::Ipv4Addr;
 //!
-//! - `net` *(default)*: includes `bind9-sdk-net` for rndc, nsupdate, IXFR/AXFR, stats HTTP.
-//!   Disable with `default-features = false` if you only need zone file parsing or
-//!   RFC 2136 message construction in a `no_std` context.
-//!
-//! ## Workspace crates
-//!
-//! | Crate | Role |
-//! |---|---|
-//! | `bind9-sdk-core` | `no_std + alloc`: DNS types, zone parsing, RFC 2136 construction, TSIG |
-//! | `bind9-sdk-net` | tokio: rndc TCP, nsupdate send, IXFR/AXFR, stats HTTP |
-//! | `bind9-sdk-bindings` | wasm-bindgen (browser) + napi-rs (Node.js) |
+//! let name = DomainName::new("example.com.").unwrap();
+//! ```
 
 /// Core DNS types, zone parsing, and RFC 2136 message construction.
 ///
 /// This module is `no_std` compatible — safe to use in WASM and embedded contexts.
+///
+/// **Stability:** Paths under `bind9_sdk::core` are not covered by semver guarantees.
+/// Prefer top-level imports (e.g., `use bind9_sdk::DomainName`).
 pub use bind9_sdk_core as core;
 
 /// Network operations: rndc TCP wire protocol, nsupdate sender, IXFR/AXFR, statistics HTTP.
 ///
 /// Requires `feature = "net"` (enabled by default).
+///
+/// **Stability:** Paths under `bind9_sdk::net` are not covered by semver guarantees.
+/// Prefer top-level imports.
 #[cfg(feature = "net")]
 pub use bind9_sdk_net as net;
+
+// Curated top-level re-exports (covered by semver)
+pub use bind9_sdk_core::{
+    CoreError, DomainName, DynamicUpdater, Label, NamedControl, RecordClass, RecordData,
+    ResourceRecord, Serial, StatsClient, Ttl, ZoneManager,
+};
