@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+// We intentionally use `async fn` in traits rather than `-> impl Future + Send`
+// desugaring. These traits are not used as trait objects (`dyn Trait`); they exist
+// for static dispatch only. See coding architecture spec §5.2.
+#![allow(async_fn_in_trait)]
+
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
