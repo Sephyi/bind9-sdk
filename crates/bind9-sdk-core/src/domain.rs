@@ -183,7 +183,9 @@ impl Eq for DomainName {}
 
 impl core::hash::Hash for DomainName {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.labels.len().hash(state);
         for label in &self.labels {
+            label.as_str().len().hash(state);
             for byte in label.as_str().bytes() {
                 state.write_u8(byte.to_ascii_lowercase());
             }
@@ -214,6 +216,7 @@ impl fmt::Display for DomainName {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     // -- Label tests --
@@ -354,6 +357,33 @@ mod tests {
     fn domain_name_display() {
         let name = DomainName::new("www.example.com.").unwrap();
         assert_eq!(alloc::format!("{name}"), "www.example.com.");
+    }
+
+    #[test]
+    fn label_all_numeric_accepted() {
+        let label = Label::new("123").unwrap();
+        assert_eq!(label.as_str(), "123");
+    }
+
+    #[test]
+    fn domain_name_all_numeric_labels() {
+        let name = DomainName::new("4.3.2.1.in-addr.arpa.").unwrap();
+        assert_eq!(name.label_count(), 6);
+    }
+
+    #[test]
+    fn domain_name_hash_distinguishes_label_boundaries() {
+        use core::hash::{Hash, Hasher};
+        // "ab.c." and "a.bc." have the same concatenated bytes
+        // but different label structure — must hash differently.
+        let a = DomainName::new("ab.c.").unwrap();
+        let b = DomainName::new("a.bc.").unwrap();
+        let hash = |name: &DomainName| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            name.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_ne!(hash(&a), hash(&b));
     }
 
     mod proptests {

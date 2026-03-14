@@ -112,10 +112,7 @@ mod tests {
             Ok(())
         }
 
-        async fn freeze(
-            &self,
-            _zone: &crate::domain::DomainName,
-        ) -> Result<FrozenZone, CoreError> {
+        async fn freeze(&self, _zone: &crate::domain::DomainName) -> Result<FrozenZone, CoreError> {
             Ok(FrozenZone)
         }
     }
@@ -134,10 +131,7 @@ mod tests {
             Ok(alloc::vec![])
         }
 
-        async fn get_zone(
-            &self,
-            _name: &crate::domain::DomainName,
-        ) -> Result<Zone, CoreError> {
+        async fn get_zone(&self, _name: &crate::domain::DomainName) -> Result<Zone, CoreError> {
             Ok(Zone)
         }
     }
