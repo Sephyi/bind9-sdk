@@ -4,11 +4,14 @@
 
 pub(crate) mod parser;
 pub(crate) mod rdata_text;
+pub(crate) mod serializer;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
-use crate::record::{RecordClass, ResourceRecord, Serial};
+use crate::error::CoreError;
+use crate::record::{RecordClass, ResourceRecord, Serial, Ttl};
 
 /// Summary of a zone (name, class, serial).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,71 @@ impl Zone {
             name: self.name.clone(),
             class: self.class,
             serial: self.serial().unwrap_or(Serial::new(0)),
+        }
+    }
+}
+
+/// Resolver for `$INCLUDE` directives in zone files.
+///
+/// Implement this trait to provide filesystem or custom include resolution.
+/// The default `ZoneFile::parse()` method returns an error on `$INCLUDE`.
+/// Use `ZoneFile::parse_with_includes()` to supply a resolver.
+pub trait IncludeResolver {
+    /// Read the content of an included file.
+    fn resolve(&self, path: &str) -> Result<String, CoreError>;
+}
+
+/// A parsed zone file with metadata.
+///
+/// One `ZoneFile` corresponds to one zone (RFC 1035 master file format).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZoneFile {
+    /// The zone origin (from `$ORIGIN` directive or inferred from SOA).
+    pub origin: DomainName,
+    /// The default TTL (from `$TTL` directive).
+    pub default_ttl: Option<Ttl>,
+    /// The parsed zone data.
+    pub zone: Zone,
+}
+
+impl ZoneFile {
+    /// Parse a zone file from text.
+    ///
+    /// Returns `CoreError::ZoneParse` on `$INCLUDE` directives. Use
+    /// `parse_with_includes()` if the zone file may contain includes.
+    pub fn parse(input: &str) -> Result<Self, CoreError> {
+        parser::parse_zone(input, None)
+    }
+
+    /// Parse a zone file from text with include resolution.
+    pub fn parse_with_includes(
+        input: &str,
+        resolver: &dyn IncludeResolver,
+    ) -> Result<Self, CoreError> {
+        parser::parse_zone(input, Some(resolver))
+    }
+
+    /// Serialize the zone file back to text format.
+    pub fn serialize(&self) -> String {
+        serializer::serialize(self)
+    }
+}
+
+impl crate::traits::ZoneManager for ZoneFile {
+    type Error = CoreError;
+
+    async fn list_zones(&self) -> Result<Vec<ZoneSummary>, CoreError> {
+        Ok(alloc::vec![self.zone.summary()])
+    }
+
+    async fn get_zone(&self, name: &DomainName) -> Result<Zone, CoreError> {
+        if self.zone.name == *name {
+            Ok(self.zone.clone())
+        } else {
+            Err(CoreError::InvalidName {
+                name: alloc::format!("{name}"),
+                reason: "zone not found".into(),
+            })
         }
     }
 }
@@ -117,5 +185,56 @@ mod tests {
             records: alloc::vec![],
         };
         assert_eq!(zone.serial(), None);
+    }
+
+    #[test]
+    fn zonefile_type_constructs() {
+        let zf = ZoneFile {
+            origin: DomainName::new("example.com.").unwrap(),
+            default_ttl: Some(Ttl::new(3600).unwrap()),
+            zone: example_zone(),
+        };
+        assert_eq!(zf.origin, DomainName::new("example.com.").unwrap());
+        assert_eq!(zf.default_ttl, Some(Ttl::new(3600).unwrap()));
+        assert_eq!(zf.zone.name, DomainName::new("example.com.").unwrap());
+    }
+
+    struct TestIncludeResolver;
+
+    impl IncludeResolver for TestIncludeResolver {
+        fn resolve(&self, _path: &str) -> Result<alloc::string::String, CoreError> {
+            Ok(alloc::string::String::from("included IN A 10.0.0.1\n"))
+        }
+    }
+
+    #[test]
+    fn include_resolver_trait_implementable() {
+        let resolver = TestIncludeResolver;
+        let content = resolver.resolve("test.zone").unwrap();
+        assert!(content.contains("included"));
+    }
+
+    #[test]
+    fn zonefile_zone_manager_list_zones() {
+        let zf = ZoneFile {
+            origin: DomainName::new("example.com.").unwrap(),
+            default_ttl: Some(Ttl::new(3600).unwrap()),
+            zone: example_zone(),
+        };
+        let summaries = alloc::vec![zf.zone.summary()];
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].name, DomainName::new("example.com.").unwrap());
+        assert_eq!(summaries[0].serial, Serial::new(2026031401));
+    }
+
+    #[test]
+    fn zonefile_zone_manager_get_zone_not_found() {
+        let zf = ZoneFile {
+            origin: DomainName::new("example.com.").unwrap(),
+            default_ttl: Some(Ttl::new(3600).unwrap()),
+            zone: example_zone(),
+        };
+        let other = DomainName::new("other.com.").unwrap();
+        assert_ne!(zf.zone.name, other);
     }
 }

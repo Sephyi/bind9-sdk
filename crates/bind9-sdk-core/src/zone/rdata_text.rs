@@ -346,7 +346,7 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
 
 /// Decode a hex string into bytes.
 fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(format!("hex string has odd length: {}", hex.len()));
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
