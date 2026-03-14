@@ -423,18 +423,24 @@ fn process_line(
     // Owner name: if first word is empty (inherited), use last_owner
     let owner = if word_refs[0].is_empty() {
         pos += 1;
-        state.last_owner.clone().ok_or_else(|| CoreError::ZoneParse {
-            line,
-            reason: "inherited owner name but no previous owner".into(),
-        })?
+        state
+            .last_owner
+            .clone()
+            .ok_or_else(|| CoreError::ZoneParse {
+                line,
+                reason: "inherited owner name but no previous owner".into(),
+            })?
     } else if is_class(word_refs[0]).is_some()
         || is_record_type(word_refs[0])
         || is_ttl(word_refs[0])
     {
-        state.last_owner.clone().ok_or_else(|| CoreError::ZoneParse {
-            line,
-            reason: "inherited owner name but no previous owner".into(),
-        })?
+        state
+            .last_owner
+            .clone()
+            .ok_or_else(|| CoreError::ZoneParse {
+                line,
+                reason: "inherited owner name but no previous owner".into(),
+            })?
     } else if word_refs[0].ends_with('.') {
         let o = DomainName::new(word_refs[0]).map_err(|e| CoreError::ZoneParse {
             line,
