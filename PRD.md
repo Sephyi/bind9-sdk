@@ -6,10 +6,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # bind9-sdk — Product Requirements Document
 
-**Version**: v0.1  
-**Date**: 2026-03-14  
-**Status**: Planning  
-**Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)  
+**Version**: v0.2
+**Date**: 2026-03-14
+**Status**: Planning
+**Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
 
@@ -19,6 +19,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 | Version | Date | Summary |
 | --- | --- | --- |
 | 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
+| 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
 
 </details>
 
@@ -28,7 +29,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 `bind9-sdk` is a Rust-native library for programmatic BIND9 DNS server management. It implements the full rndc wire protocol, RFC 1035 zone file parsing and serialization, RFC 2136 dynamic updates (nsupdate), IXFR/AXFR zone transfer, and the BIND9 statistics-channel JSON API — all in one cohesive, type-safe Rust crate with zero shell subprocess dependencies.
 
-It ships as three coordinated artifacts from a single codebase: a Rust crate on crates.io, a native Node.js addon via napi-rs, and a WASM bundle for browser environments. The npm package fills a gap that is structurally empty: as of 2026 there is not a single maintained TypeScript or JavaScript library for BIND9 management on npm.
+It ships as three coordinated artifacts from a single codebase: a Rust crate on crates.io, a native Node.js/Bun addon via napi-rs v3, and a WASM fallback bundle (also via napi-rs v3) for browser environments. The npm package fills a gap that is structurally empty: as of 2026 there is not a single maintained TypeScript or JavaScript library for BIND9 management on npm.
 
 ### Core Principles
 
@@ -37,7 +38,7 @@ It ships as three coordinated artifacts from a single codebase: a Rust crate on 
 3. **`no_std` core** — the parsing and serialization layer compiles to WASM without modification
 4. **Async-first** — tokio throughout the network layer; sync wrappers for embedding contexts that need them
 5. **Zero panics** — proptest + fuzzing guarantees on all parsers; `#![forbid(unsafe_code)]` in core
-6. **Multi-runtime** — one Rust codebase produces Rust (crates.io), Node.js (napi-rs native addon), and browser (wasm-pack WASM bundle) artifacts
+6. **Multi-runtime** — one Rust codebase produces Rust (crates.io), Node.js/Bun (napi-rs v3 native addon), and browser (napi-rs v3 WASM fallback) artifacts
 7. **Correct first** — RFC compliance tested against real BIND9 9.20 instances in CI
 
 ### Compatibility Policy
@@ -66,7 +67,7 @@ It ships as three coordinated artifacts from a single codebase: a Rust crate on 
 ### 2.2 Unique Differentiators
 
 1. **rndc TCP wire protocol** — implemented in pure Rust; no competitor does this outside BIND itself
-2. **Dual runtime** — one codebase, three artifacts: Rust crate + Node.js native addon + browser WASM
+2. **Dual runtime** — one codebase, three artifacts: Rust crate + Node.js/Bun native addon (napi-rs v3) + browser WASM (napi-rs v3 fallback)
 3. **Zero shell dependencies** — no `rndc` binary required; no `nsupdate` CLI; no `named-checkzone`
 4. **no_std core** — WASM-compatible parsing layer without tricks or feature hacks
 5. **Type-safe DNS record model** — every record type is a Rust enum variant, not a stringly-typed map
@@ -104,12 +105,11 @@ bind9-sdk/
 │   │       ├── transfer/       # IXFR + AXFR zone transfer client
 │   │       ├── update.rs       # nsupdate sender (UDP + TCP fallback)
 │   │       └── stats.rs        # HTTP stats-channel client (reqwest)
-│   └── bind9-sdk-bindings/      # wasm-bindgen (browser) + napi-rs (Node.js)
+│   └── bind9-sdk-bindings/      # napi-rs v3 (native + WASM from single layer)
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── wasm.rs         # #[wasm_bindgen] exports — core only
-│           └── node.rs         # #[napi] exports — core + net
+│           └── node.rs         # #[napi] exports — core + net (WASM via napi-rs v3 fallback)
 ├── bind9-sdk/                   # re-export crate (the public API on crates.io)
 │   ├── Cargo.toml
 │   └── src/lib.rs              # re-exports from core + net behind feature flags
@@ -186,6 +186,8 @@ pub enum RecordData {
     Cdnskey { /* same as Dnskey — for automated DS rollover */ },
     Tlsa { /* RFC 6698 */ },
     Sshfp { algorithm: u8, fp_type: u8, fingerprint: Vec<u8> },
+    Csync { soa_serial: u32, flags: u16, type_bitmaps: TypeBitmaps },  // RFC 7477 — Child-to-Parent Synchronization
+    Rp { mbox: DomainName, txt: DomainName },  // RFC 1183 — Responsible Person. GDPR note: contains personal data (mailbox URI). Subject to GDPR Art. 4(1). API docs must note this.
     Unknown { rtype: u16, data: Vec<u8> },
 }
 ```
@@ -203,9 +205,28 @@ pub enum RecordData {
 | IXFR/AXFR client | No | Yes |
 | Statistics channel HTTP client | No (CORS) | Yes |
 
-### 3.5 Resolved Design Decisions
+### 3.5 Parallelism Architecture
 
-See Decisions Log (§14).
+- **tokio** for async I/O: rndc TCP, zone transfers, nsupdate UDP/TCP, stats HTTP
+- **rayon** for CPU-bound parallelism: large zone parsing, parallel record processing. Feature-gated behind `parallel`
+- **Bridge pattern**: `tokio::sync::oneshot` channel + `rayon::spawn` for async-to-parallel handoff. Never block tokio threads with rayon's `join`/`install`
+- **Sequential fallback**: rayon requires `std` — not available in `no_std` core or WASM. Sequential processing used when `parallel` feature is disabled
+
+### 3.6 Rust Language Features
+
+`rust-version = "1.94"` (edition 2024). Features available since the 1.85 baseline that the SDK uses:
+
+| Feature | Stable Since | Usage |
+| --- | --- | --- |
+| Async closures (`async &#124;&#124; {}`) | 1.85 | Async callbacks in builder patterns |
+| Trait upcasting | 1.86 | Trait object hierarchy for `ZoneManager` / `NamedControl` |
+| Safe `#[target_feature]` | 1.86 | Optional SIMD-accelerated parsing paths |
+| Let chains in `if`/`while` | 1.88 | Ergonomic pattern matching in parsers |
+| Const generic `_` inference | 1.89 | Generic buffer sizes in wire protocol encoding |
+
+### 3.7 Resolved Design Decisions
+
+See Decisions Log (§16).
 
 ## 4. Feature Requirements
 
@@ -441,49 +462,51 @@ Generate CDS and CDNSKEY records from an existing DNSKEY record, for automated D
 - ✓ Supported digest types: SHA-256 (type 2, mandatory), SHA-384 (type 4)
 - ✓ DELETE sentinel record (`0 3 0 AA==`) generation for DS removal (RFC 8078 §4)
 
-### 4.3 Phase 3 — v0.3.0: Browser WASM Build
+### 4.3 Phase 3 — v0.3.0: JavaScript Bindings (napi-rs v3)
 
-#### FR-030: WASM Build (wasm-pack)
+#### FR-030: WASM Build (napi-rs v3)
 
-**Priority**: P0 | **Phase**: 3
+**Priority**: P2 | **Phase**: 3
 
-Compile `bind9-sdk-bindings` with `--target bundler` and `--target web` via wasm-pack. Exports the `bind9-sdk-core` surface (zone parsing/serialization, record types, TSIG construction, nsupdate message building).
+WASM output produced as a byproduct of napi-rs v3 compilation targeting `wasm32-wasip1-threads`. Exports the `bind9-sdk-core` surface (zone parsing/serialization, record types, TSIG construction, nsupdate message building). This is no longer a separate wasm-pack build step — napi-rs v3 handles both native and WASM from a single binding layer.
 
 **Acceptance Criteria**:
 - ✓ `import { parseZone, Zone, DomainName } from 'bind9-sdk'` works in Vite, webpack 5, and Rollup without configuration
 - ✓ `import('bind9-sdk')` works as a dynamic import in browser (lazy WASM load)
 - ✓ WASM bundle size < 500KB gzipped
-- ✓ Zero runtime panics on zone files from BIND9 9.20 (verified via wasm-pack test)
+- ✓ Zero runtime panics on zone files from BIND9 9.20
 - ✓ `parseZone(str)` returns either `Zone` or throws `BindSdkError` with `.message` and `.line` fields
+- ✓ napi-rs v3 WASM target: `wasm32-wasip1-threads`
 
 **Edge Cases**:
 - WASM module instantiation fails (out of memory) → throws `BindSdkError` with `.code = 'WASM_INIT_FAILED'`
 - Called with non-string input → TypeError before WASM boundary (validated in JS wrapper)
 
-#### FR-031: TypeScript Type Definitions (WASM)
+#### FR-031: TypeScript Type Definitions (napi-rs v3)
 
 **Priority**: P0 | **Phase**: 3
 
-wasm-bindgen generates `.d.ts` for all exported WASM functions and types. Additional hand-written overloads where wasm-bindgen output is imprecise.
+napi-rs v3 generates `.d.ts` for all exported functions and types (both native and WASM surfaces). Additional hand-written overloads where auto-generated output is imprecise. Bun runtime support required alongside Node.js.
 
 **Acceptance Criteria**:
-- ✓ `tsc --noEmit` passes with zero errors on TypeScript consumer using the WASM package
+- ✓ `tsc --noEmit` passes with zero errors on TypeScript consumer using both native and WASM packages
 - ✓ All exported functions have JSDoc comments (generated from Rust `///` doc comments)
+- ✓ Types verified in Node.js 20 LTS, Node.js 22 LTS, and Bun
 
-### 4.4 Phase 4 — v0.4.0: Node.js Native + npm
+### 4.4 Phase 4 — v0.4.0: npm Publish + Full SDK Surface
 
-#### FR-040: napi-rs Node.js Native Addon
+#### FR-040: napi-rs v3 Node.js + Bun Native Addon
 
 **Priority**: P0 | **Phase**: 4
 
-Compile `bind9-sdk-bindings` as a native Node.js addon via napi-rs. Exposes the full SDK surface — both `bind9-sdk-core` and `bind9-sdk-net` — including rndc, nsupdate sender, IXFR/AXFR, and stats-channel client.
+Compile `bind9-sdk-bindings` as a native addon via napi-rs v3. Exposes the full SDK surface — both `bind9-sdk-core` and `bind9-sdk-net` — including rndc, nsupdate sender, IXFR/AXFR, and stats-channel client. Single binding layer produces both native and WASM outputs.
 
 **Acceptance Criteria**:
-- ✓ `const { RndcClient, parseZone } = require('bind9-sdk')` works in Node.js 20 LTS and 22 LTS
+- ✓ `const { RndcClient, parseZone } = require('bind9-sdk')` works in Node.js 20 LTS, Node.js 22 LTS, and Bun
 - ✓ `await client.command(RndcCommand.reload())` reaches real BIND9 9.20 and returns `RndcResponse`
 - ✓ Platform matrix: Linux x86_64, Linux ARM64, macOS ARM64, macOS x86_64, Windows x86_64
-- ✓ Pre-built `.node` binaries published to npm — no local Rust toolchain required for consumers
-- ✓ WASM fallback automatically used when native binary unavailable for consumer's platform
+- ✓ Pre-built native binaries published to npm — no local Rust toolchain required for consumers
+- ✓ napi-rs v3 WASM fallback (`wasm32-wasip1-threads`) automatically used when native binary unavailable for consumer's platform
 
 #### FR-041: npm Package (`bind9-sdk`)
 
@@ -728,7 +751,100 @@ error[RNDC_AUTH]: Authentication failed connecting to 127.0.0.1:953
 - TSIG nonce and key name logged at `TRACE` level; key secret never logged
 - rndc command and response type logged at `DEBUG`; response body at `TRACE`
 
-## 8. Testing Requirements
+## 8. Compliance Requirements
+
+SDK targets compliance with GDPR, NIS2 (EU 2022/2555), NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II requirements relevant to DNS infrastructure. All defaults exceed minimum compliance thresholds.
+
+### 8.1 Authentication & Authorization
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-AUTH-1 | No anonymous rndc connections — type-system or construction-time enforcement | NIST 800-53 IA-3/SC-8, NIS2 Art. 21(2)(h) |
+| REQ-AUTH-2 | TSIG key material never in logs, errors, or serialized output. Zeroized on drop | ISO 27002 A.8.24 |
+| REQ-AUTH-3 | TSIG key rotation support (RFC 8945 S5 dual-key transition) | NIST 800-53 SC-12 |
+| REQ-AUTH-4 | Structured log entries for all TSIG authentication failures | NIS2 Art. 23 |
+
+### 8.2 Transport Security
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-TLS-1 | XoT required for non-localhost zone transfers. Cleartext only for 127.0.0.1/::1 | NIS2 Art. 21(2)(h), RFC 9103 |
+| REQ-TLS-2 | TLS 1.3 only. AES-256-GCM + ChaCha20-Poly1305 cipher suites | BSI TR-02102-2 |
+| REQ-TLS-3 | Strict certificate validation default. TOFU/SPKI pinning as CA alternative | NIS2 Art. 21(2)(h) |
+
+### 8.3 DNSSEC Key Management
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-DNSSEC-1 | All IANA-registered DNSSEC algorithms supported (8, 10, 13, 14, 15, 16). Ed25519 recommended default | NIST SP 800-57/800-81 |
+| REQ-DNSSEC-2 | Key lifecycle states per RFC 7583: generated -> published -> active -> retire-scheduled -> revoked -> removed | RFC 7583 |
+| REQ-DNSSEC-3 | KSK rollover safety gate: verify DS propagation before retiring old KSK | NIST SP 800-81 |
+| REQ-DNSSEC-4 | No private key material in SDK — control-plane instructions to BIND9 only | BSI TR-02102-1 |
+| REQ-DNSSEC-5 | Algorithm agility: `DnssecAlgorithm` enum mapped to IANA registry. Extensible for post-quantum | RFC 9904 |
+
+### 8.4 Tamper-Evident Logging
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-LOG-1 | Every rndc command, RFC 2136 update, TSIG failure, zone transfer, and key event logged | NIST SP 800-92r1 |
+| REQ-LOG-2 | Structured JSON: RFC 3339 timestamps (microsecond, UTC), monotonic sequence numbers, session UUIDs | SOC 2 CC7/CC8 |
+| REQ-LOG-3 | Forward-integrity ratchet: per-entry MAC key derived via one-way ratchet | NIS2 Art. 23 |
+| REQ-LOG-4 | Data minimization: no TSIG secrets, no private keys, no client IPs unless explicitly requested | GDPR Art. 5(1)(c) |
+| REQ-LOG-5 | SecurityWarning events: cleartext transfer, deprecated TSIG algorithm, weak DNSSEC algorithm, near-expiry RRSIG | NIS2 Art. 21(2)(g) |
+| REQ-LOG-6 | 12-month retention compatibility: structured format supports SIEM ingestion | SOC 2 CC7 |
+
+### 8.5 Zone Data Integrity
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-ZONE-1 | Batched atomic updates: `UpdateBuilder` produces single RFC 2136 PDU for multiple operations | RFC 2136 S3.7 |
+| REQ-ZONE-2 | RAII zone-freeze guard: `FrozenZone` implements `Drop` -> calls `thaw` even on panic | SOC 2 PI1.4 |
+| REQ-ZONE-3 | Optional SOA serial verification after update (detects silent BIND9 rejections) | ACID properties |
+| REQ-ZONE-4 | IXFR strict serial ordering: reject non-monotonic sequences, discard partial + fall back to AXFR | RFC 1995 |
+| REQ-ZONE-5 | SOA RNAME preserved exactly — documented as potentially personal data | GDPR Art. 4(1) |
+
+### 8.6 GDPR Compliance Aids
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-GDPR-1 | Stats-channel client does not log raw IP-attributable data by default | GDPR Art. 5(1)(c)/(e) |
+| REQ-GDPR-2 | SOA RNAME, RP records, stats IP data documented with GDPR notes in API docs | GDPR Art. 6 |
+| REQ-GDPR-3 | No cross-session caching of zone data without explicit caller control | GDPR Art. 17 |
+
+### 8.7 Supply Chain & Release Hygiene
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-SC-1 | SBOM per release: CycloneDX 1.6 or SPDX 2.3 format | NIS2 Art. 21(2)(d)/(e) |
+| REQ-SC-2 | `SECURITY.md`: vulnerability disclosure process, 72h acknowledgment SLA, CVE pathway via RustSec | EU Cyber Resilience Act |
+| REQ-SC-3 | `cargo audit` in CI: zero unresolved advisories. 14-day SLA for advisory fixes | ISO 27002 A.5.21 |
+| REQ-SC-4 | Pinned toolchain: exact version in `rust-toolchain.toml`, `Cargo.lock` committed | NIS2 Art. 21(2)(e) |
+
+### 8.8 Operational Security Defaults
+
+| ID | Requirement | Source |
+| --- | --- | --- |
+| REQ-SEC-DEFAULT-1 | All connection methods require explicit auth config. No default anonymous mode | NIS2 Art. 21(2)(g) |
+| REQ-SEC-DEFAULT-2 | HMAC-MD5 rejected. HMAC-SHA1 accepted with `SecurityWarning`. HMAC-SHA512 default | BSI TR-02102-1, RFC 8945 |
+| REQ-SEC-DEFAULT-3 | `SecurityWarning` system with configurable deny policy | NIS2 Art. 21(2)(g) |
+
+## 9. Security Architecture
+
+### 9.1 Hidden-Primary / Distributed-Secondary
+
+- **Primary server**: high-security host with RAM encryption, holds DNSSEC signing keys, KASP-managed
+- **Secondary servers**: low-cost VPS, serve pre-signed zones via authenticated AXFR/IXFR over XoT
+- **Per-zone keys**: each zone has its own ZSK; KSK can be shared or per-zone depending on operator policy
+- **Key isolation**: even if primary is compromised, per-zone key scope limits blast radius. RFC 8901 Model 1 (single signer, hidden primary)
+
+### 9.2 Monitoring
+
+- RRSIG expiry monitoring with configurable warning threshold
+- SOA serial consistency checks across primary/secondaries
+- DNSSEC chain validation status via rndc `dnssec-status`
+- SecurityWarning events for near-expiry signatures, algorithm deprecation, cleartext transfers
+
+## 10. Testing Requirements
 
 ### TR-001: Unit Tests
 
@@ -784,7 +900,7 @@ proptest! {
 
 ### TR-004: WASM Tests
 
-- `wasm-pack test --node` on all `bind9-sdk-core` unit tests
+- napi-rs v3 WASM output (`wasm32-wasip1-threads`) tested via Node.js WASI runtime
 - Browser bundle smoke test via Playwright: `parseZone` with a 1,000-record zone in Chromium and Firefox
 
 ### TR-005: napi-rs / npm Tests
@@ -795,10 +911,10 @@ proptest! {
 ### TR-006: CI Pipeline
 
 - `cargo check` → `cargo clippy -- -D warnings` → `cargo test` → `cargo audit` → `cargo deny check`
-- WASM build: `wasm-pack build --target bundler && wasm-pack test --node`
+- WASM build: `napi build --target wasm32-wasip1-threads --release`
 - Integration tests: BIND9 9.20 container via testcontainers
 - Fuzzing: scheduled 1-hour run on `main`, full 24-hour run before `v1.0.0`
-- Matrix: stable Rust + MSRV (TBD — target Rust 1.85 or later for edition 2024 + let chains)
+- Matrix: stable Rust + MSRV (`rust-version = "1.94"`, edition 2024)
 
 ### TR-007: Fuzzing
 
@@ -807,27 +923,29 @@ Three `cargo-fuzz` targets:
 - `fuzz_rndc_response` — arbitrary bytes as rndc response packet
 - `fuzz_stats_json` — arbitrary bytes as stats-channel JSON
 
-## 9. Distribution Requirements
+## 11. Distribution Requirements
 
-### DR-001: crates.io
+### DR-001: crates.io (P0 — Primary Artifact)
 
 `cargo add bind9-sdk` — published on crates.io. Feature flags:
 - `net` (default) — enables `bind9-sdk-net` (tokio, rndc, IXFR, nsupdate sender, stats HTTP)
 - `core-only` — `no_std` + `alloc` only; for embedding in WASM or constrained environments
 - `cli` — enables `bind9-sdk-cli` binary
 
-### DR-002: npm
+### DR-002: npm (P1 — Node.js + Bun via napi-rs v3 Native)
 
-`npm install bind9-sdk` — single package on npm registry. Pre-built native binaries for all supported platforms; WASM fallback auto-selected when native unavailable.
+`npm install bind9-sdk` — single package on npm registry. Pre-built native binaries for all supported platforms via napi-rs v3; WASM fallback auto-selected when native unavailable.
 
-Supported platforms for pre-built `.node` binaries:
-- Linux x86_64 (glibc ≥ 2.17), Linux ARM64
+Supported platforms for pre-built native binaries:
+- Linux x86_64 (glibc >= 2.17), Linux ARM64
 - macOS ARM64, macOS x86_64
 - Windows x86_64
 
-### DR-003: WASM Package (browser)
+Supported runtimes: Node.js 20 LTS, Node.js 22 LTS, Bun.
 
-`npm install bind9-sdk` (WASM variant) — browser-compatible bundle built via `wasm-pack --target web`. Exposes the `bind9-sdk-core` subset only (zone parsing, record construction, RFC 2136 message building). No TCP in browser. Bundle size target: < 500 KB gzipped. Phase 3 (v0.3.0).
+### DR-003: WASM (P2 — napi-rs v3 Fallback)
+
+WASM output comes free from napi-rs v3 compilation (`wasm32-wasip1-threads` target). Not a separate design driver. Exposes the `bind9-sdk-core` subset only (zone parsing, record construction, RFC 2136 message building). No TCP in browser. Bundle size target: < 500 KB gzipped.
 
 ### DR-004: Docs
 
@@ -844,19 +962,19 @@ codegen-units = 1
 opt-level = "z"
 ```
 
-## 10. Roadmap Summary
+## 12. Roadmap Summary
 
 | Phase | Version | Focus |
 | --- | --- | --- |
 | 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction |
 | 2 | v0.2.0 | Zone transfers: nsupdate sender, IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY |
-| 3 | v0.3.0 | WASM browser build: wasm-pack, TypeScript types, < 500KB bundle |
-| 4 | v0.4.0 | Node.js native: napi-rs addon, npm publish, full SDK in JS ecosystem |
+| 3 | v0.3.0 | JavaScript bindings: napi-rs v3 (native + WASM from single layer), TypeScript types, Bun support |
+| 4 | v0.4.0 | npm publish: full SDK surface in JS ecosystem, pre-built native binaries, WASM fallback |
 | 5 | v0.5.0 | CLI tool, zone diff, connection pooling |
 | 6 | v0.6.0 | named.conf parser (FR-060), fuzzing (FR-061), RFC compliance integration suite (FR-062) |
 | 7 | v1.0.0 | Multi-view support, DNSSEC rollover helpers, Prometheus integration, SemVer stability |
 
-## 11. Success Metrics
+## 13. Success Metrics
 
 | Metric | Target | Measurement |
 | --- | --- | --- |
@@ -867,10 +985,10 @@ opt-level = "z"
 | docs.rs coverage | 100% public API | `cargo doc --no-deps -D missing_docs` |
 | crates.io downloads | > 1K/month at v1.0.0 | crates.io stats |
 | npm weekly downloads | > 500 at v1.0.0 | npm stats |
-| MSRV | Rust 1.85+ (edition 2024) | CI matrix |
+| MSRV | Rust 1.94 (edition 2024) | CI matrix |
 | CLI startup | < 100ms | hyperfine in CI |
 
-## 12. Non-Goals
+## 14. Non-Goals
 
 - **DNS resolver** — `bind9-sdk` manages BIND9 servers; it does not resolve DNS queries for clients. Use `hickory-dns` for resolution.
 - **BIND9 configuration file generation** — `named.conf` generation is out of scope. Zone files only.
@@ -880,18 +998,18 @@ opt-level = "z"
 - **GUI / web UI** — library and CLI only.
 - **Windows DNS Server** — Microsoft DNS is a different product with a different protocol.
 
-## 13. Open Questions
+## 15. Open Questions
 
 | ID | Question | Owner | Deadline | Status |
 | --- | --- | --- | --- | --- |
 | OQ-001 | Can `bind9-sdk-core` be fully `no_std` + `alloc`? Zone parsing needs complex allocation — confirm no `std` leakage before v0.1.0 | Sephyi | 2026-04-01 | PENDING |
-| OQ-002 | napi-rs vs. wasm-bindgen for Node.js: native addon preferred, but should WASM fallback for Node.js use the same WASM bundle as browser? (Yes is simpler; No allows richer Node.js WASM API) | Sephyi | 2026-04-15 | PENDING |
+| OQ-002 | napi-rs v3 produces both native and WASM from single binding layer. wasm-bindgen removed from architecture. | Sephyi | 2026-04-15 | RESOLVED — napi-rs v3 |
 | OQ-003 | named.conf parser (FR-060): scope creep risk — how much of the named.conf grammar to support? Define explicit in-scope/out-of-scope boundary before v0.6.0 start. | Sephyi | Before v0.6.0 start | PENDING |
-| OQ-004 | MSRV: edition 2024 + let chains → minimum Rust 1.85. Acceptable? | Sephyi | 2026-04-01 | PENDING |
+| OQ-004 | MSRV: edition 2024 + language features through 1.94. Acceptable? `rust-version = "1.94"` set. | Sephyi | 2026-04-01 | RESOLVED — 1.94 |
 | OQ-005 | License: PolyForm-Noncommercial-1.0.0 is a placeholder. Open-source SDK (MIT/Apache 2.0) likely better for ecosystem adoption. Decide before first crates.io publish. | Sephyi | Before v0.1.0 publish | PENDING |
 | OQ-006 | `bind9-sdk` npm package name: is `bind9-sdk` available on npm? Alternative: `@bind9-sdk/core`? | Sephyi | 2026-04-01 | PENDING |
 
-## 14. Decisions Log
+## 16. Decisions Log
 
 ### DEC-001: BIND9 over Knot DNS
 
@@ -911,7 +1029,7 @@ opt-level = "z"
 **Date**: 2026-03-14
 **Context**: Language selection for SDK implementation
 **Decision Drivers**: Performance, type safety, WASM compatibility, developer preference
-**Chosen**: Rust — exclusively for implementation. Distribution targets: Rust crate (crates.io), browser WASM (wasm-pack), Node.js native addon (napi-rs). No Python bindings.
+**Chosen**: Rust — exclusively for implementation. Distribution targets: Rust crate (crates.io), Node.js/Bun native addon + browser WASM (napi-rs v3). No Python bindings.
 **Consequences**: ✓ Single codebase for three runtimes / ✗ LiveKit voice agent must be built manually (no Python LiveKit Agents framework equivalent in Rust)
 **Status**: ACCEPTED
 
@@ -931,7 +1049,9 @@ opt-level = "z"
 **Chosen**: ECDSAP256SHA256 (Algorithm 13). Ed25519 (Algorithm 15) available but not default — incomplete resolver support as of 2026.
 **Status**: ACCEPTED
 
-## 15. Assumptions & Dependencies
+> **Update (v0.2)**: This decision will be revisited. RFC 9904 (November 2025) supersedes the RFC 8624 guidance that DEC-004 relied on. Ed25519 (Algorithm 15) resolver support is now widespread. The preparation spec recommends defaulting to Ed25519 over Algorithm 13. See Compliance Requirements REQ-DNSSEC-1.
+
+## 17. Assumptions & Dependencies
 
 | ID | Type | Assumption | Consequence if Wrong |
 | --- | --- | --- | --- |
@@ -978,15 +1098,20 @@ RFCs implemented or referenced by bind9-sdk, with traceability to feature requir
 | RFC 1034 | Domain Names: Concepts and Facilities | Internet Standard | `bind9-sdk-core::domain` | FR-001, FR-003 |
 | RFC 1035 | Domain Names: Implementation and Specification | Internet Standard | Zone parser/serializer, wire encoder/decoder | FR-001, FR-002, FR-003, FR-061 |
 | RFC 1982 | Serial Number Arithmetic | Internet Standard | SOA serial strategies | FR-012 |
-| RFC 1995 | Incremental Zone Transfer in DNS (IXFR) | Internet Standard | `bind9-sdk-net::transfer` | FR-011 |
-| RFC 2136 | Dynamic Updates in the Domain Name System (DNS UPDATE) | Internet Standard | `bind9-sdk-core::update`, `bind9-sdk-net::nsupdate` | FR-008, FR-010, FR-051 |
+| RFC 1995 | Incremental Zone Transfer in DNS (IXFR) | Proposed Standard | `bind9-sdk-net::transfer` | FR-011 |
+| RFC 2136 | Dynamic Updates in the Domain Name System (DNS UPDATE) | Proposed Standard | `bind9-sdk-core::update`, `bind9-sdk-net::nsupdate` | FR-008, FR-010, FR-051 |
 | RFC 2181 | Clarifications to the DNS Specification | Internet Standard | Zone parser, `DomainName` validation | FR-001, FR-003 |
 | RFC 2782 | DNS RR for Specifying the Location of Services (SRV) | Internet Standard | `RecordData::Srv` | FR-003 |
 | RFC 3007 | Secure Dynamic Update | Internet Standard | `bind9-sdk-net::nsupdate` (TSIG-signed updates) | FR-010 |
 | RFC 3596 | DNS Extensions to Support IP Version 6 (AAAA) | Internet Standard | `RecordData::Aaaa` | FR-001, FR-003 |
-| RFC 5936 | DNS Zone Transfer Protocol (AXFR) | Internet Standard | `bind9-sdk-net::transfer` | FR-011 |
+| RFC 5936 | DNS Zone Transfer Protocol (AXFR) | Proposed Standard | `bind9-sdk-net::transfer` | FR-011 |
 | RFC 6891 | Extension Mechanisms for DNS — EDNS(0) | Internet Standard | OPT record in TSIG messages | FR-008, FR-010 |
-| RFC 8499 | DNS Terminology | Informational | Terminology reference throughout | — |
+| RFC 9499 | DNS Terminology (March 2024) | BCP 219 | Terminology reference throughout. Supersedes RFC 8499 | — |
+| RFC 1996 | DNS NOTIFY | Proposed Standard | Zone transfer trigger logic | FR-011 |
+| RFC 7766 | DNS Transport over TCP | Proposed Standard | Normative TCP behavior for rndc, nsupdate, IXFR/AXFR | FR-004, FR-010, FR-011 |
+| RFC 9103 | Zone Transfer over TLS (XoT) | Proposed Standard | Default transport for non-localhost transfers | FR-011 |
+| RFC 9210 | DNS Transport over TCP — Operational Requirements | BCP 235 | TCP operational requirements for `bind9-sdk-net` | FR-004, FR-010, FR-011 |
+| RFC 4343 | Domain Name System Case Insensitivity Clarification | Proposed Standard | `DomainName` comparison semantics | FR-003 |
 
 ### DNSSEC RFCs
 
@@ -1000,8 +1125,17 @@ RFCs implemented or referenced by bind9-sdk, with traceability to feature requir
 | RFC 7344 | Automating DNSSEC Delegation Trust Maintenance (CDS, CDNSKEY) | Internet Standard | `RecordData::Cds`, `RecordData::Cdnskey` | FR-003, FR-020, FR-022 |
 | RFC 8078 | Managing DS Records from the Parent via CDS/CDNSKEY | Internet Standard | `bind9-sdk-core::dnssec::cds` | FR-022 |
 | RFC 8080 | Edwards-Curve Digital Security Algorithm for DNSSEC (ED25519, ED448) | Internet Standard | `RecordData::Dnskey` algorithm field | FR-003, FR-020 |
-| RFC 8624 | Algorithm Implementation Requirements and Usage Guidance for DNSSEC | BCP | Algorithm ordering and default selection | FR-020, FR-071 |
+| RFC 9904 | DNSSEC Algorithm Implementation Requirements (November 2025) | BCP | Algorithm ordering and default selection. Supersedes RFC 8624 — DNSSEC algorithm recommendation process | FR-020, FR-071 |
 | RFC 9276 | Guidance for NSEC3 Parameter Settings | BCP | iterations=0, no-salt defaults | FR-020 |
+| RFC 4033 | DNS Security Introduction and Requirements | Proposed Standard | Context for DNSSEC (RFC 4034/4035) | FR-020 |
+| RFC 4035 | Protocol Modifications for the DNS Security Extensions | Proposed Standard | DO/AD/CD bits, NSEC chain validation | FR-020 |
+| RFC 6840 | Clarifications and Implementation Notes for DNS Security (DNSSEC) | Proposed Standard | Updates to RFC 4033/4034/4035/5155 | FR-020 |
+| RFC 7477 | Child-to-Parent Synchronization in DNS (CSYNC) | Proposed Standard | `RecordData::Csync` variant | FR-003 |
+| RFC 9615 | Automatic DNSSEC Bootstrapping using Authenticated Signals from the Zone's Operator (July 2024) | Proposed Standard | Updates CDS/CDNSKEY chain | FR-022 |
+| RFC 9859 | Generalized DNS Notifications (September 2025) | Proposed Standard | BIND9 9.21 support shipped. SDK targets BIND9 9.20 initially; track as future/informational until 9.21 is baseline | — |
+| RFC 9077 | NSEC and NSEC3: TTLs and Aggressive Use | Proposed Standard | NSEC TTL capped at SOA minimum | FR-020 |
+| RFC 4509 | Use of SHA-256 in DNSSEC Delegation Signer (DS) Resource Records | Proposed Standard | DS record construction | FR-020, FR-022 |
+| RFC 5702 | Use of SHA-2 Algorithms with RSA in DNSKEY and RRSIG Resource Records for DNSSEC | Proposed Standard | DNSKEY/RRSIG algorithm support | FR-020 |
 
 ### TSIG Authentication RFCs
 
@@ -1009,6 +1143,16 @@ RFCs implemented or referenced by bind9-sdk, with traceability to feature requir
 | --- | --- | --- | --- | --- |
 | RFC 2845 | Secret Key Transaction Authentication for DNS (TSIG) | **Obsoleted by RFC 8945** | — | — |
 | RFC 8945 | Secret Key Transaction Authentication for DNS (TSIG) | Internet Standard | `bind9-sdk-core::tsig` | FR-007, FR-008, FR-010 |
+
+> **Historical note**: RFC 4635 (HMAC SHA TSIG Algorithm Identifiers) defined the HMAC-SHA256 and HMAC-SHA512 algorithm names for TSIG. Its content has been absorbed by RFC 8945, which is now the sole normative reference for TSIG authentication in this SDK.
+
+### Informational & Operational RFCs
+
+| RFC | Title | Status | Why |
+| --- | --- | --- | --- |
+| RFC 2308 | Negative Caching of DNS Queries | Proposed Standard | SOA minimum TTL semantics |
+| RFC 7583 | DNSSEC Key Rollover Timing Considerations | Informational | Required for FR-071 automated rollover |
+| RFC 8901 | Multi-Signer DNSSEC Models | Informational | Maps to hidden-primary architecture |
 
 ### Application Record RFCs
 
