@@ -2,9 +2,4 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-pub mod config;
-pub mod error;
-pub mod nsupdate;
-pub mod rndc;
-pub mod stats;
-pub mod tls;
+// Bind9Client skeleton and ClientConfig — fleshed out in WT-2 plan.

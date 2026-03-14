@@ -2,9 +2,4 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-pub mod config;
-pub mod error;
-pub mod nsupdate;
-pub mod rndc;
-pub mod stats;
-pub mod tls;
+// Statistics-channel HTTP client — fleshed out in WT-4 plan.
