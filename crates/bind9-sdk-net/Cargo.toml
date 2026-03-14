@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+[package]
+name = "bind9-sdk-net"
+description = "Network layer for bind9-sdk: rndc TCP wire protocol, RFC 2136 nsupdate sender, IXFR/AXFR client, statistics-channel HTTP"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bind9-sdk-core = { workspace = true, features = ["std"] }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true }

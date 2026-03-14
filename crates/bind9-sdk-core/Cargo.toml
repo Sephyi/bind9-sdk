@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+[package]
+name = "bind9-sdk-core"
+description = "Core DNS types, zone parsing, and RFC 2136 message construction for bind9-sdk (no_std + alloc)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Enables std::error::Error impls and std-dependent utilities
+std = ["thiserror/std", "serde?/std"]
+# Enables serde Serialize/Deserialize on DNS types
+serde = ["dep:serde"]
+
+[dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+digest = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }

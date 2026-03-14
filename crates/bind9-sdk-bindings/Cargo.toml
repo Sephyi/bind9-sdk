@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+[package]
+name = "bind9-sdk-bindings"
+description = "Browser WASM and Node.js native bindings for bind9-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Browser WASM output via wasm-pack (bind9-sdk-core subset only — no TCP in browser)
+browser = ["dep:wasm-bindgen"]
+# Node.js native addon via napi-rs (full surface including rndc/IXFR/nsupdate)
+nodejs = ["dep:napi", "dep:napi-derive", "dep:bind9-sdk-net"]
+
+[dependencies]
+bind9-sdk-core = { workspace = true }
+bind9-sdk-net = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+
+[dependencies.napi]
+version = "2"
+optional = true
+
+[dependencies.napi-derive]
+version = "2"
+optional = true

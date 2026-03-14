@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+[workspace]
+resolver = "2"
+members = [
+    "bind9-sdk",
+    "crates/bind9-sdk-core",
+    "crates/bind9-sdk-net",
+    "crates/bind9-sdk-bindings",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Sephyi <me@sephy.io>"]
+license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/sephyi/bind9-sdk"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Internal crates
+bind9-sdk-core = { path = "crates/bind9-sdk-core", version = "0.1.0" }
+bind9-sdk-net = { path = "crates/bind9-sdk-net", version = "0.1.0" }
+
+# Crypto — RustCrypto, no_std compatible
+hmac = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+digest = { version = "0.10", default-features = false }
+
+# Serialization — core uses no_std subset, net layer uses std
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1" }
+
+# Async runtime (net layer and above only)
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client for statistics-channel (net layer)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Error handling — thiserror 2.x supports no_std via default-features = false
+thiserror = { version = "2", default-features = false }
+
+# Logging
+tracing = { version = "0.1" }
