@@ -6,9 +6,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # bind9-sdk — Product Requirements Document
 
-**Version**: v0.2
+**Version**: v0.3
 **Date**: 2026-03-14
-**Status**: Planning
+**Status**: In Progress — Phase 1a complete, Phase 1b next
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -20,6 +20,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 | --- | --- | --- |
 | 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
 | 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
+| 0.3 | 2026-03-14 | Phase 1a (Core Foundation) completed — 9 tasks, 11 commits, 57 tests. Added implementation progress tracker (§12.1). Resolved OQ-001 (`no_std` confirmed). New decisions: DEC-005 through DEC-008 (async traits, core::error::Error, thiserror no_std, RRSIG original_ttl). |
 
 </details>
 
@@ -974,6 +975,43 @@ opt-level = "z"
 | 6 | v0.6.0 | named.conf parser (FR-060), fuzzing (FR-061), RFC compliance integration suite (FR-062) |
 | 7 | v1.0.0 | Multi-view support, DNSSEC rollover helpers, Prometheus integration, SemVer stability |
 
+### 12.1 Implementation Progress
+
+#### Phase 1a: Core Foundation — COMPLETED (2026-03-14)
+
+**Branch**: `development` | **Commits**: 11 | **Tests**: 57 passing | **Status**: clippy clean, WASM clean
+
+Modules delivered in `crates/bind9-sdk-core/src/`:
+
+| Module | What it provides |
+| --- | --- |
+| `error.rs` | `CoreError` enum with 6 `#[non_exhaustive]` variants (InvalidName, InvalidLabel, InvalidRecord, ZoneParse, WireFormat, Tsig) |
+| `domain.rs` | `Label` newtype (63-byte max, RFC 1035) + `DomainName` newtype (253-char text / 255-octet wire max, case-insensitive `PartialEq`, label-boundary-aware `Hash`) |
+| `record.rs` | `Ttl` (u32, RFC 8767 max), `Serial` (u32, RFC 1982 `PartialOrd` with wrapping), `RecordClass` (IN/CH/HS/ANY/Unknown), `ResourceRecord` struct |
+| `rdata.rs` | `RecordData` enum with 21 DNS record type variants + Unknown, `#[non_exhaustive]` |
+| `traits.rs` | 4 management traits with associated error types: `NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient` |
+| `lib.rs` | Curated re-exports, `#![no_std]`, `#![forbid(unsafe_code)]` |
+
+Re-export crate (`bind9-sdk/src/lib.rs`):
+
+- `pub use bind9_sdk_core as core` + curated top-level re-exports
+- Doc example in crate-level docs
+
+Testing:
+
+- Property-based testing established with proptest (label roundtrip, domain name display roundtrip, serial RFC 1982 arithmetic)
+- All 57 tests passing across workspace
+
+Key implementation decisions recorded as DEC-005 through DEC-008 (see §16).
+
+**Deferred to Phase 1b**: `RdataLength` newtype (wire encoding context needed).
+
+#### Phase 1b: Zone File Parser + Wire Encoding — NOT STARTED
+
+#### Phase 1c: rndc Wire Protocol — NOT STARTED
+
+#### Phase 1d: Statistics Channel + nsupdate Construction — NOT STARTED
+
 ## 13. Success Metrics
 
 | Metric | Target | Measurement |
@@ -1002,7 +1040,7 @@ opt-level = "z"
 
 | ID | Question | Owner | Deadline | Status |
 | --- | --- | --- | --- | --- |
-| OQ-001 | Can `bind9-sdk-core` be fully `no_std` + `alloc`? Zone parsing needs complex allocation — confirm no `std` leakage before v0.1.0 | Sephyi | 2026-04-01 | PENDING |
+| OQ-001 | Can `bind9-sdk-core` be fully `no_std` + `alloc`? Zone parsing needs complex allocation — confirm no `std` leakage before v0.1.0 | Sephyi | 2026-04-01 | RESOLVED — confirmed in Phase 1a. `#![no_std]` + `extern crate alloc` works. `cargo check --target wasm32-unknown-unknown` passes. `core::error::Error` (stable since 1.81) used instead of `std::error::Error`. `thiserror` 2.x with `default-features = false` for no_std. |
 | OQ-002 | napi-rs v3 produces both native and WASM from single binding layer. wasm-bindgen removed from architecture. | Sephyi | 2026-04-15 | RESOLVED — napi-rs v3 |
 | OQ-003 | named.conf parser (FR-060): scope creep risk — how much of the named.conf grammar to support? Define explicit in-scope/out-of-scope boundary before v0.6.0 start. | Sephyi | Before v0.6.0 start | PENDING |
 | OQ-004 | MSRV: edition 2024 + language features through 1.94. Acceptable? `rust-version = "1.94"` set. | Sephyi | 2026-04-01 | RESOLVED — 1.94 |
@@ -1051,12 +1089,44 @@ opt-level = "z"
 
 > **Update (v0.2)**: This decision will be revisited. RFC 9904 (November 2025) supersedes the RFC 8624 guidance that DEC-004 relied on. Ed25519 (Algorithm 15) resolver support is now widespread. The preparation spec recommends defaulting to Ed25519 over Algorithm 13. See Compliance Requirements REQ-DNSSEC-1.
 
+### DEC-005: `async fn` in traits (not desugared)
+
+**Date**: 2026-03-14 (Phase 1a)
+**Context**: The four management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`) use async methods. Two options: native `async fn` in traits (stable since Rust 1.75) or manual desugaring with `Pin<Box<dyn Future>>`.
+**Chosen**: Native `async fn` in traits with `#![allow(async_fn_in_trait)]` — static dispatch only. No `dyn Trait` usage planned for these traits; consumers use generics or concrete types.
+**Consequences**: Simpler trait definitions, no boxing overhead. If dynamic dispatch is ever needed, a separate `DynZoneManager` wrapper with boxed futures can be added without breaking the static-dispatch API.
+**Status**: ACCEPTED
+
+### DEC-006: `core::error::Error` over `std::error::Error`
+
+**Date**: 2026-03-14 (Phase 1a)
+**Context**: `bind9-sdk-core` is `#![no_std]`. Error types need `Error` trait impl. `core::error::Error` was stabilized in Rust 1.81, well below the project MSRV of 1.85/1.94.
+**Chosen**: Use `core::error::Error` unconditionally in `bind9-sdk-core`. The `std` feature flag on the crate opts back in to `std::error::Error` for consumers who want it.
+**Consequences**: No feature-gating gymnastics for error impls. All error types work in `no_std` by default.
+**Status**: ACCEPTED
+
+### DEC-007: `thiserror` 2.x with `default-features = false`
+
+**Date**: 2026-03-14 (Phase 1a)
+**Context**: `thiserror` 1.x required `std`. `thiserror` 2.x supports `no_std` via `default-features = false`. Alternative: hand-write `Display` + `Error` impls.
+**Chosen**: `thiserror` 2.x with `default-features = false` in `bind9-sdk-core`. Reduces boilerplate while maintaining `no_std` compatibility.
+**Consequences**: One additional dependency in core, but `thiserror` is widely trusted and the `no_std` support is clean.
+**Status**: ACCEPTED
+
+### DEC-008: RRSIG `original_ttl` as raw `u32` (not `Ttl` newtype)
+
+**Date**: 2026-03-14 (Phase 1a)
+**Context**: `RecordData::Rrsig` contains an `original_ttl` field. Two options: wrap it in the `Ttl` newtype (which enforces RFC 8767 max) or use raw `u32` for wire fidelity.
+**Chosen**: Raw `u32`. The RRSIG `original_ttl` is a wire-format field that records the TTL at signing time. It must round-trip exactly as received, even if the value exceeds the SDK's recommended TTL range. Applying `Ttl` validation would reject valid signed records from other implementations.
+**Consequences**: Wire fidelity preserved. The `Ttl` newtype is used for user-facing TTL values (e.g., in `ResourceRecord`), while RRSIG's `original_ttl` stays as the raw wire value.
+**Status**: ACCEPTED
+
 ## 17. Assumptions & Dependencies
 
 | ID | Type | Assumption | Consequence if Wrong |
 | --- | --- | --- | --- |
 | ASSM-001 | Technical | BIND9 9.20 rndc wire protocol is stable and will not change in 9.20.x patch releases | Patch releases break rndc client — requires version-gated protocol handling |
-| ASSM-002 | Technical | `bind9-sdk-core` can be compiled as `no_std + alloc` without losing meaningful functionality | Zone parser or record types require std — must move affected code to `bind9-sdk-net` or add `std` feature gate |
+| ASSM-002 | Technical | **CONFIRMED (Phase 1a)**: `bind9-sdk-core` compiles as `no_std + alloc` without losing functionality. `core::error::Error`, `thiserror` 2.x no_std, WASM target all clean. | Zone parser or record types require std — must move affected code to `bind9-sdk-net` or add `std` feature gate |
 | ASSM-003 | Technical | napi-rs pre-built binary distribution covers > 95% of Node.js consumer platforms | Consumers on unsupported platforms must build from source — degrades DX |
 | ASSM-004 | Business | Zero maintained npm packages for BIND9 management remain as of v0.1.0 publish | Competition exists — differentiate on Rust-native quality, not gap alone |
 | ASSM-005 | Dependency | BIND9 9.20 statistics-channel JSON schema does not change between 9.20.x releases | Stats client deserialization breaks on schema change — version detection needed |
