@@ -1094,3 +1094,90 @@ www IN A 192.0.2.1
         );
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    extern crate alloc;
+    use crate::domain::DomainName;
+    use crate::rdata::RecordData;
+    use crate::record::{RecordClass, ResourceRecord, Serial, Ttl};
+    use crate::zone::{Zone, ZoneFile};
+    use core::net::Ipv4Addr;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Arbitrary strings never cause panics in the parser.
+        #[test]
+        fn parse_never_panics(input in "\\PC{0,500}") {
+            // Must not panic — Err is fine, panic is not
+            let _ = ZoneFile::parse(&input);
+        }
+
+        /// Valid zone files survive parse-serialize-parse roundtrip.
+        #[test]
+        fn roundtrip_generated_a_records(
+            count in 1usize..5,
+            octets in proptest::collection::vec(1u8..255, 4..20),
+        ) {
+            let origin = DomainName::new("test.example.com.").unwrap();
+            let mut records = alloc::vec![
+                ResourceRecord {
+                    name: origin.clone(),
+                    class: RecordClass::IN,
+                    ttl: Ttl::new(3600).unwrap(),
+                    rdata: RecordData::Soa {
+                        mname: DomainName::new("ns1.test.example.com.").unwrap(),
+                        rname: DomainName::new("admin.test.example.com.").unwrap(),
+                        serial: Serial::new(1),
+                        refresh: Ttl::new(3600).unwrap(),
+                        retry: Ttl::new(900).unwrap(),
+                        expire: Ttl::new(604800).unwrap(),
+                        minimum: Ttl::new(86400).unwrap(),
+                    },
+                },
+            ];
+
+            for i in 0..core::cmp::min(count, octets.len() / 4) {
+                let base = i * 4;
+                if base + 3 < octets.len() {
+                    records.push(ResourceRecord {
+                        name: origin.clone(),
+                        class: RecordClass::IN,
+                        ttl: Ttl::new(300).unwrap(),
+                        rdata: RecordData::A(Ipv4Addr::new(
+                            octets[base],
+                            octets[base + 1],
+                            octets[base + 2],
+                            octets[base + 3],
+                        )),
+                    });
+                }
+            }
+
+            let zf = ZoneFile {
+                origin: origin.clone(),
+                default_ttl: Some(Ttl::new(300).unwrap()),
+                zone: Zone {
+                    name: origin,
+                    class: RecordClass::IN,
+                    records,
+                },
+            };
+
+            let serialized = zf.serialize();
+            let reparsed = ZoneFile::parse(&serialized);
+            prop_assert!(
+                reparsed.is_ok(),
+                "serialized zone should reparse: {:?}\nSerialized:\n{}",
+                reparsed.err(),
+                serialized,
+            );
+            let reparsed = reparsed.unwrap();
+            prop_assert_eq!(
+                zf.zone.records.len(),
+                reparsed.zone.records.len(),
+                "record count mismatch after roundtrip"
+            );
+        }
+    }
+}
