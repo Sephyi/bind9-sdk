@@ -355,4 +355,48 @@ mod tests {
         let name = DomainName::new("www.example.com.").unwrap();
         assert_eq!(alloc::format!("{name}"), "www.example.com.");
     }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn label_roundtrip(s in "[a-z][a-z0-9]{0,10}") {
+                let label = Label::new(&s).unwrap();
+                prop_assert_eq!(label.as_str(), s.as_str());
+            }
+
+            #[test]
+            fn domain_name_display_roundtrip(
+                labels in proptest::collection::vec(
+                    "[a-z][a-z0-9]{0,10}",
+                    1..4
+                )
+            ) {
+                let name_str = alloc::format!("{}.", labels.join("."));
+                let name = DomainName::new(&name_str);
+                prop_assume!(name.is_ok(), "generated name must be valid");
+                let name = name.unwrap();
+                let displayed = alloc::format!("{name}");
+                let reparsed = DomainName::new(&displayed).unwrap();
+                prop_assert_eq!(name, reparsed);
+            }
+
+            #[test]
+            fn domain_name_wire_len_positive(
+                labels in proptest::collection::vec(
+                    "[a-z]{1,10}",
+                    1..4
+                )
+            ) {
+                let name_str = alloc::format!("{}.", labels.join("."));
+                let name = DomainName::new(&name_str);
+                prop_assume!(name.is_ok(), "generated name must be valid");
+                let name = name.unwrap();
+                prop_assert!(name.wire_len() > 0);
+                prop_assert!(name.wire_len() <= 255);
+            }
+        }
+    }
 }

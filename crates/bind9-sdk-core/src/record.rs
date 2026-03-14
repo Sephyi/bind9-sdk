@@ -269,4 +269,26 @@ mod tests {
         };
         assert_eq!(rr1, rr2);
     }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn serial_add_then_compare(base: u32, increment in 1u32..=(1 << 31) - 1) {
+                let a = Serial::new(base);
+                let b = a + increment;
+                // Per RFC 1982: if 0 < increment < 2^31, then a < b
+                prop_assert!(b > a, "Serial({}) + {} should be > Serial({})", base, increment, base);
+            }
+
+            #[test]
+            fn serial_reflexive_eq(value: u32) {
+                let a = Serial::new(value);
+                let b = Serial::new(value);
+                prop_assert_eq!(a, b);
+            }
+        }
+    }
 }
