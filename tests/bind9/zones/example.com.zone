@@ -1,0 +1,13 @@
+; SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+; SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+$TTL 3600
+@   IN  SOA ns1.example.com. admin.example.com. (
+        2026031601  ; serial
+        3600        ; refresh
+        900         ; retry
+        604800      ; expire
+        86400       ; minimum
+    )
+    IN  NS  ns1.example.com.
+ns1 IN  A   127.0.0.1
