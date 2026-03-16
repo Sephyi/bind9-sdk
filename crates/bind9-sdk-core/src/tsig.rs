@@ -85,7 +85,9 @@ pub struct TsigKey {
 impl TsigKey {
     /// Create a new TSIG key from raw key material bytes.
     ///
-    /// Returns an error if `key_material` is empty.
+    /// Returns an error if `key_material` is empty. Logs a warning via
+    /// `tracing` if the key is shorter than the algorithm's recommended length
+    /// (requires the `std` feature).
     pub fn new(
         name: DomainName,
         algorithm: TsigAlgorithm,
@@ -93,6 +95,16 @@ impl TsigKey {
     ) -> Result<Self, CoreError> {
         if key_material.is_empty() {
             return Err(CoreError::Tsig("key material must not be empty".into()));
+        }
+        #[cfg(feature = "std")]
+        if key_material.len() < algorithm.key_length() {
+            tracing::warn!(
+                key_name = %name,
+                algorithm = %algorithm,
+                actual_len = key_material.len(),
+                recommended_len = algorithm.key_length(),
+                "TSIG key shorter than algorithm's recommended length"
+            );
         }
         Ok(Self {
             name,
