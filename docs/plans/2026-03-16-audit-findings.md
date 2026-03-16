@@ -141,3 +141,50 @@ These documents remain in `docs/plans/` as historical records:
 | `2026-03-16-wave2-review-remediation.md` | COMPLETE | SEC/TSIG/RFC2136/TEST items, all delivered |
 | `2026-03-16-wt5-hardening-remediation.md` | COMPLETE | Merged at `637913f` |
 | `2026-03-16-post-wt5-hardening-e2e.md` | COMPLETE | Merged at `5b9001b` |
+
+## Follow-up Remediation Branch
+
+Additional Phase 2 remediation was implemented on branch `audit/remediation` after this document was created. These changes are intentionally recorded here as a follow-up rather than rewriting the original snapshot above.
+
+### Branch Status
+
+- **Branch**: `audit/remediation`
+- **Base**: `development` at `7481bd6`
+- **State**: unmerged, ready for review
+- **Verification**: `cargo test --workspace` passed after both commits
+
+### Commits
+
+| Commit | Message | Findings Impact |
+| --- | --- | --- |
+| `bad8d3a` | `fix(net): verify rndc response auth and nested payloads` | Closes `F-001` / `GPT-RNDC-AUTH`, closes `F-030`, and materially closes the client-side replay gap tracked as `F-002` / `F-033` by validating signed reply `_ser`, `_tim`, `_exp`, `_rpl`, and `_nonce` fields. |
+| `87d64ad` | `fix(net): classify update failures and flag dead TLS config` | Closes `GPT-ERR-TYPED`; partially mitigates `F-012` by emitting an explicit warning when `ClientConfig.tls` is set but no transport consumes it yet. |
+
+### What Changed
+
+#### `bad8d3a` — rndc auth hardening
+
+- Verifies server `_auth.hsha` on rndc handshake and command replies before trusting `_data`.
+- Validates replay-relevant `_ctrl` fields on signed replies: `_ser`, `_tim`, `_exp`, `_rpl`, and `_nonce`.
+- Requires a nonce-bearing authenticated handshake response before transitioning to `Authenticated`.
+- Verifies expected `_data.type` on replies to avoid accepting mismatched signed responses.
+- Improves response extraction so nested `_data` maps are rendered into usable text instead of being silently dropped.
+
+#### `87d64ad` — typed update failures + TLS dead-config surfacing
+
+- Adds typed `NetError::PrerequisiteFailed` for RFC 2136 prerequisite rcodes (`NXDOMAIN`, `YXDOMAIN`, `NXRRSET`, `YXRRSET`).
+- Adds typed `NetError::TsigRejected` for TSIG-authenticated update failures (`BADSIG`, `BADKEY`, `BADTIME`, `BADTRUNC`).
+- Classifies update results at the `Bind9Client` boundary instead of returning only generic string errors.
+- Emits a runtime warning when `ClientConfig.tls` is configured even though Phase 1 transports still do not consume it.
+
+### Remaining Open Items After `audit/remediation`
+
+These findings still remain open after the branch work above:
+
+| ID | Status After Branch | Note |
+| --- | --- | --- |
+| `F-012` | PARTIAL | Warning added; full fix still requires actual TLS/XoT transport support or API reshaping. |
+| `F-005` | OPEN | Documentation alignment item only; no protocol behavior change required. |
+| `GPT-ZONE-COL` | OPEN | Would require public error-shape changes (`ZoneParse` currently exposes line but not column). |
+| `GPT-DNSSEC` | OPEN | Phase 2+ type-specific DNSSEC serialization work, not a safe narrow patch for this branch. |
+| `GPT-SPLIT` / `GPT-SNAP` / `GPT-PROP` | OPEN | Code organization and test-infra improvements, not correctness blockers for this remediation pass. |
