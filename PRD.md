@@ -6,9 +6,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # bind9-sdk — Product Requirements Document
 
-**Version**: v0.3
-**Date**: 2026-03-14
-**Status**: In Progress — Phase 1a complete, Phase 1b next
+**Version**: v0.4
+**Date**: 2026-03-16
+**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 next
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -20,6 +20,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 | --- | --- | --- |
 | 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
 | 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
+| 0.4 | 2026-03-16 | Phase 1b Wave 1 completed — zone parser (165 tests), TSIG RFC 8945 (TsigKey with zeroization), UpdateBuilder RFC 2136 (typestate Unsigned→Signed), net foundation (NetError, TlsConfig, ClientConfig). 309 new tests, 242 total after merge. |
 | 0.3 | 2026-03-14 | Phase 1a (Core Foundation) completed — 9 tasks, 11 commits, 57 tests. Added implementation progress tracker (§12.1). Resolved OQ-001 (`no_std` confirmed). New decisions: DEC-005 through DEC-008 (async traits, core::error::Error, thiserror no_std, RRSIG original_ttl). |
 
 </details>
@@ -1006,11 +1007,37 @@ Key implementation decisions recorded as DEC-005 through DEC-008 (see §16).
 
 **Deferred to Phase 1b**: `RdataLength` newtype (wire encoding context needed).
 
-#### Phase 1b: Zone File Parser + Wire Encoding — NOT STARTED
+#### Phase 1b Wave 1: Zone Parser + TSIG + UpdateBuilder + Net Foundation — COMPLETED (2026-03-16)
 
-#### Phase 1c: rndc Wire Protocol — NOT STARTED
+**Branches**: `feat/zone-parser` (5 commits, 165 tests) + `feat/tsig-update-net` (3 commits, 144 tests) | **Status**: merged to `development`, clippy clean, WASM clean
 
-#### Phase 1d: Statistics Channel + nsupdate Construction — NOT STARTED
+Modules delivered in `crates/bind9-sdk-core/src/`:
+
+| Module | What it provides |
+| --- | --- |
+| `zone/parser.rs` | Zone file tokenizer (comments, directives, parens, escapes) + record assembler (`$ORIGIN`, `$TTL`, `$INCLUDE`, owner name inheritance, relative→absolute resolution) |
+| `zone/rdata_text.rs` | Text-format rdata parser/serializer for 10 record types (A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, CAA) + RFC 3597 unknown type generic format |
+| `zone/serializer.rs` | Zone file serializer (`ZoneFile` → text) with roundtrip property tests |
+| `zone/mod.rs` | `ZoneFile` type, `IncludeResolver` trait, `ZoneManager` impl for `ZoneFile` |
+| `tsig.rs` | `TsigAlgorithm` (SHA-1 deprecated, SHA-256, SHA-512), `TsigKey` (Zeroizing material, base64 decode, key generation), `TsigRecord` (RFC 8945 wire format), HMAC sign/verify |
+| `update.rs` | `UpdateBuilder<Unsigned/Signed>` typestate, `Prerequisite` (RFC 2136 §2.4), `UpdateEntry` (add/delete), wire encoding for all 22 rdata variants |
+| `domain.rs` | Added `DomainName::write_wire()` for DNS wire format encoding |
+
+Modules delivered in `crates/bind9-sdk-net/src/`:
+
+| Module | What it provides |
+| --- | --- |
+| `error.rs` | `NetError` enum with 7 `#[non_exhaustive]` variants (Connection, Protocol, Timeout, Auth, Tls, Http, UpdateRejected) |
+| `tls.rs` | `TlsConfig` wrapping `rustls::ClientConfig` with explicit ring CryptoProvider |
+| `config.rs` | `ClientConfig` (host, port, TLS, TSIG) + `Bind9Client` skeleton implementing all 4 management traits |
+
+Testing: 222 core + 19 net + 1 doc = **242 tests passing** across workspace. Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip.
+
+#### Phase 1b Wave 2: rndc Wire Protocol + Stats/nsupdate — NOT STARTED
+
+Planned worktrees:
+- **WT-3**: rndc wire protocol client (custom TCP framing, ISC message encoding)
+- **WT-4**: statistics-channel HTTP client + nsupdate sender
 
 ## 13. Success Metrics
 
