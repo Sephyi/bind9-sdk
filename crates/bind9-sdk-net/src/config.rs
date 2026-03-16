@@ -38,6 +38,9 @@ pub struct ClientConfig {
     pub dns_addr: Option<SocketAddr>,
 
     /// Optional TLS configuration for encrypted connections.
+    ///
+    /// **Note:** Currently unused. Reserved for future TLS-encrypted rndc
+    /// and statistics-channel connections (Phase 2 XoT).
     pub tls: Option<TlsConfig>,
 
     /// Timeout for individual operations (default: 10 seconds).
@@ -161,7 +164,7 @@ impl StatsClient for Bind9Client {
             .stats_url
             .as_ref()
             .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
-        let client = StatsHttpClient::new(url)?;
+        let client = StatsHttpClient::new(url, self.config.timeout)?;
         client.fetch_server_stats().await
     }
 
@@ -171,7 +174,7 @@ impl StatsClient for Bind9Client {
             .stats_url
             .as_ref()
             .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
-        let client = StatsHttpClient::new(url)?;
+        let client = StatsHttpClient::new(url, self.config.timeout)?;
         client.fetch_zone_stats(zone).await
     }
 }
