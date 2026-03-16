@@ -152,11 +152,16 @@ impl ServerStats {
 /// Implemented by `Bind9Client` (net crate) for live servers.
 /// Test mocks implement with `type Error = CoreError`.
 pub trait NamedControl: Send + Sync {
+    /// Error type returned by all rndc operations.
     type Error: core::error::Error + Send + Sync + 'static;
 
+    /// Fetch the server status from `rndc status`.
     async fn status(&self) -> Result<ServerStatus, Self::Error>;
+    /// Reload all zones and configuration.
     async fn reload(&self) -> Result<(), Self::Error>;
+    /// Reload a single zone by name.
     async fn reload_zone(&self, zone: &DomainName) -> Result<(), Self::Error>;
+    /// Freeze dynamic updates for a zone so the zone file can be edited safely.
     async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, Self::Error>;
 }
 
@@ -164,8 +169,10 @@ pub trait NamedControl: Send + Sync {
 ///
 /// Implemented by `Bind9Client` (net crate).
 pub trait DynamicUpdater: Send + Sync {
+    /// Error type returned by dynamic update operations.
     type Error: core::error::Error + Send + Sync + 'static;
 
+    /// Send a wire-encoded RFC 2136 update message and return the server response.
     async fn send_update(&self, update: &UpdateMessage) -> Result<UpdateResult, Self::Error>;
 }
 
@@ -174,9 +181,12 @@ pub trait DynamicUpdater: Send + Sync {
 /// Implemented by `Bind9Client` (net crate) for live servers
 /// and by `ZoneFile` (core crate) for local file operations.
 pub trait ZoneManager: Send + Sync {
+    /// Error type returned by zone management operations.
     type Error: core::error::Error + Send + Sync + 'static;
 
+    /// List all zones known to the server.
     async fn list_zones(&self) -> Result<Vec<ZoneSummary>, Self::Error>;
+    /// Retrieve the full record set for a zone.
     async fn get_zone(&self, name: &DomainName) -> Result<Zone, Self::Error>;
 }
 
@@ -184,9 +194,12 @@ pub trait ZoneManager: Send + Sync {
 ///
 /// Implemented by `Bind9Client` (net crate).
 pub trait StatsClient: Send + Sync {
+    /// Error type returned by statistics-channel operations.
     type Error: core::error::Error + Send + Sync + 'static;
 
+    /// Fetch server-level statistics from `/json/v1/server`.
     async fn server_stats(&self) -> Result<ServerStats, Self::Error>;
+    /// Fetch zone-level statistics for a named zone from `/json/v1/zones`.
     async fn zone_stats(&self, zone: &DomainName) -> Result<ZoneStats, Self::Error>;
 }
 

@@ -95,6 +95,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "bind9-sdk-core",
+ "insta",
  "reqwest",
  "rustls",
  "serde",

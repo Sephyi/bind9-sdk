@@ -8,31 +8,56 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum RecordType {
+    /// IPv4 host address (type 1).
     A,
+    /// IPv6 host address (type 28).
     Aaaa,
+    /// Canonical name alias (type 5).
     Cname,
+    /// Authoritative name server (type 2).
     Ns,
+    /// Domain name pointer for reverse DNS (type 12).
     Ptr,
+    /// Start of authority (type 6).
     Soa,
+    /// Mail exchange (type 15).
     Mx,
+    /// Text record (type 16).
     Txt,
+    /// Service locator (type 33).
     Srv,
+    /// Certification authority authorization (type 257).
     Caa,
+    /// DNS public key for DNSSEC (type 48).
     Dnskey,
+    /// DNSSEC signature (type 46).
     Rrsig,
+    /// Next secure record for authenticated denial (type 47).
     Nsec,
+    /// Next secure record version 3 (type 50).
     Nsec3,
+    /// Delegation signer for DNSSEC chain of trust (type 43).
     Ds,
+    /// Child copy of DS for CDS bootstrapping (type 59).
     Cds,
+    /// Child copy of DNSKEY for CDS bootstrapping (type 60).
     Cdnskey,
+    /// TLS certificate association (type 52).
     Tlsa,
+    /// SSH public key fingerprint (type 44).
     Sshfp,
+    /// Child-to-parent synchronization (type 62).
     Csync,
+    /// Responsible person (type 17).
     Rp,
+    /// Any other record type not listed above, identified by its numeric code.
     Other(u16),
 }
 
 impl RecordType {
+    /// Map a raw IANA record type number to the corresponding variant.
+    ///
+    /// Unknown numbers produce `Other(value)`.
     pub fn from_value(value: u16) -> Self {
         match value {
             1 => Self::A,
@@ -60,6 +85,7 @@ impl RecordType {
         }
     }
 
+    /// Return the IANA numeric type code for this record type.
     pub fn value(&self) -> u16 {
         match self {
             Self::A => 1,
@@ -121,21 +147,36 @@ impl fmt::Display for RecordType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Rcode {
+    /// No error — the query completed successfully (RCODE 0).
     NoError,
+    /// Format error — the server could not interpret the request (RCODE 1).
     FormErr,
+    /// Server failure — the server encountered an internal error (RCODE 2).
     ServFail,
+    /// Non-existent domain — the queried name does not exist (RCODE 3).
     NxDomain,
+    /// Not implemented — the server does not support this query type (RCODE 4).
     NotImp,
+    /// Refused — the server refused the request for policy reasons (RCODE 5).
     Refused,
+    /// Name exists when it should not (RFC 2136 dynamic update, RCODE 6).
     YxDomain,
+    /// RR set exists when it should not (RFC 2136, RCODE 7).
     YxRrset,
+    /// RR set that should exist does not (RFC 2136, RCODE 8).
     NxRrset,
+    /// Server not authoritative for the zone (RFC 2136, RCODE 9).
     NotAuth,
+    /// Name not contained in zone (RFC 2136, RCODE 10).
     NotZone,
+    /// Any other response code not listed above, identified by its numeric value.
     Other(u16),
 }
 
 impl Rcode {
+    /// Map a raw numeric RCODE to the corresponding variant.
+    ///
+    /// Unknown codes produce `Other(value)`.
     pub fn from_value(value: u16) -> Self {
         match value {
             0 => Self::NoError,
@@ -153,6 +194,7 @@ impl Rcode {
         }
     }
 
+    /// Return the numeric RCODE value.
     pub fn value(&self) -> u16 {
         match self {
             Self::NoError => 0,
@@ -170,6 +212,7 @@ impl Rcode {
         }
     }
 
+    /// Return `true` if this is `NoError` (RCODE 0).
     pub fn is_success(&self) -> bool {
         matches!(self, Self::NoError)
     }

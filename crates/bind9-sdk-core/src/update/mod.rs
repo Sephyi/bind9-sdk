@@ -31,17 +31,36 @@ use crate::record::{RecordClass, ResourceRecord};
 #[non_exhaustive]
 pub enum Prerequisite {
     /// An RRset with this name and type must exist (any data).
-    RrsetExists { name: DomainName, rtype: RecordType },
+    RrsetExists {
+        /// Owner name of the required RRset.
+        name: DomainName,
+        /// Record type of the required RRset.
+        rtype: RecordType,
+    },
     /// An RRset with this name and type must NOT exist.
-    RrsetNotExists { name: DomainName, rtype: RecordType },
+    RrsetNotExists {
+        /// Owner name of the forbidden RRset.
+        name: DomainName,
+        /// Record type of the forbidden RRset.
+        rtype: RecordType,
+    },
     /// At least one RRset with this name must exist (any type).
-    NameExists { name: DomainName },
+    NameExists {
+        /// The domain name that must be in use.
+        name: DomainName,
+    },
     /// No RRsets with this name must exist (name is not in use).
-    NameNotExists { name: DomainName },
+    NameNotExists {
+        /// The domain name that must not be in use.
+        name: DomainName,
+    },
     /// An RRset with this name, type, and specific data must exist (§2.4.2).
     RrsetExistsWithData {
+        /// Owner name of the required RRset.
         name: DomainName,
+        /// Record type of the required RRset.
         rtype: RecordType,
+        /// The specific records that must be present.
         records: Vec<ResourceRecord>,
     },
 }
@@ -66,11 +85,19 @@ pub enum UpdateEntry {
     /// Add a resource record to the zone.
     AddRecord(ResourceRecord),
     /// Delete all records of a given type at a name.
-    DeleteRrset { name: DomainName, rtype: RecordType },
+    DeleteRrset {
+        /// Owner name of the RRset to delete.
+        name: DomainName,
+        /// Record type of the RRset to delete.
+        rtype: RecordType,
+    },
     /// Delete a specific resource record.
     DeleteRecord(ResourceRecord),
     /// Delete all records at a name (any type).
-    DeleteName { name: DomainName },
+    DeleteName {
+        /// The domain name whose records should all be deleted.
+        name: DomainName,
+    },
 }
 
 /// Typestate: the update message has not been signed.
@@ -114,6 +141,8 @@ pub struct UpdateMessage {
 /// Result of sending an RFC 2136 update to a server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateResult {
+    /// The DNS RCODE from the server response.
     pub rcode: Rcode,
+    /// The DNS message ID echoed by the server.
     pub id: u16,
 }

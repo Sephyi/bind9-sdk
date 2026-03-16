@@ -16,16 +16,22 @@ use crate::record::{RecordClass, ResourceRecord, Serial, Ttl};
 /// Summary of a zone (name, class, serial).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZoneSummary {
+    /// The apex domain name of the zone.
     pub name: DomainName,
+    /// The DNS class of the zone (almost always `IN`).
     pub class: RecordClass,
+    /// The current SOA serial number.
     pub serial: Serial,
 }
 
 /// Full zone data — a collection of resource records sharing a common origin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Zone {
+    /// The apex domain name of the zone.
     pub name: DomainName,
+    /// The DNS class of the zone (almost always `IN`).
     pub class: RecordClass,
+    /// All resource records in the zone.
     pub records: Vec<ResourceRecord>,
 }
 

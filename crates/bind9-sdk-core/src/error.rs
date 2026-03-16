@@ -14,7 +14,12 @@ use alloc::string::String;
 pub enum CoreError {
     /// A domain name failed validation (RFC 1035 §2.3.1).
     #[error("invalid domain name `{name}`: {reason}")]
-    InvalidName { name: String, reason: String },
+    InvalidName {
+        /// The rejected name string.
+        name: String,
+        /// Human-readable explanation of the validation failure.
+        reason: String,
+    },
 
     /// A DNS label failed validation (length, character set).
     #[error("invalid label: {0}")]
@@ -26,7 +31,12 @@ pub enum CoreError {
 
     /// Zone file parsing failed at a specific line.
     #[error("zone parse error at line {line}: {reason}")]
-    ZoneParse { line: u32, reason: String },
+    ZoneParse {
+        /// 1-based line number where the parse error occurred.
+        line: u32,
+        /// Human-readable description of the parse failure.
+        reason: String,
+    },
 
     /// DNS wire format encoding or decoding failed.
     #[error("wire format error: {0}")]

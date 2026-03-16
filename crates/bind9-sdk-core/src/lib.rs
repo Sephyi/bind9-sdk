@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+//! Core `no_std` types for the BIND9 management SDK.
+//!
+//! Provides DNS domain names, resource records, zone file parsing and
+//! serialization, RFC 2136 dynamic update messages, RFC 8945 TSIG signing,
+//! and management traits — all without requiring `std`.
+//!
+//! Enable the `std` feature to opt in to `std::error::Error` impls.
+//! Enable the `serde` feature for `Serialize`/`Deserialize` on DNS types.
+
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -10,14 +19,23 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+/// Validated DNS domain name and label types.
 pub mod domain;
+/// Error type for all `bind9-sdk-core` operations.
 pub mod error;
+/// DNS protocol primitives: `RecordType` and `Rcode`.
 pub mod protocol;
+/// DNS record data variants (`RecordData`).
 pub mod rdata;
+/// DNS resource record and associated types (`ResourceRecord`, `Ttl`, `Serial`, `RecordClass`).
 pub mod record;
+/// Management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`).
 pub mod traits;
+/// TSIG authentication types and signing/verification (RFC 8945).
 pub mod tsig;
+/// RFC 2136 dynamic update builder and message types.
 pub mod update;
+/// Zone file parser, serializer, and zone types.
 pub mod zone;
 
 // Curated re-exports for common access

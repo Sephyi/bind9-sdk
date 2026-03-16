@@ -149,8 +149,8 @@ impl UpdateBuilder<Unsigned> {
     /// record's Time Signed field. Servers reject timestamps outside their
     /// fudge window (RFC 8945 §5.2.3), so this must be the current time.
     ///
-    /// Use [`sign_now`](Self::sign_now) (requires `std` feature) for automatic
-    /// timestamping, or provide a timestamp from an external clock in `no_std`.
+    /// Use `sign_now` (requires `std` feature) for automatic timestamping,
+    /// or provide a timestamp from an external clock in `no_std`.
     pub fn sign(self, key: &crate::tsig::TsigKey, timestamp: u64) -> UpdateBuilder<Signed> {
         self.sign_inner(key, timestamp)
     }

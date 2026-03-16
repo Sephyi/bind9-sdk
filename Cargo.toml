@@ -18,6 +18,8 @@ authors = ["Sephyi <me@sephy.io>"]
 license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/sephyi/bind9-sdk"
 rust-version = "1.94"
+keywords = ["dns", "bind9", "rndc", "nsupdate", "networking"]
+categories = ["network-programming", "parser-implementations"]
 
 [workspace.dependencies]
 # Internal crates
