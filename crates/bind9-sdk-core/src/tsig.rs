@@ -256,6 +256,10 @@ pub struct TsigRecord {
     pub mac: Zeroizing<Vec<u8>>,
     /// The original DNS message ID.
     pub original_id: u16,
+    /// TSIG error code (0 = NOERROR, 18 = BADTIME).
+    pub error: u16,
+    /// Additional data (used for BADTIME: server's current time as 48-bit).
+    pub other_data: Vec<u8>,
     /// The complete TSIG record in wire format, ready to append to a DNS message.
     /// Wrapped in `Zeroizing` to clear on drop.
     pub wire_bytes: Zeroizing<Vec<u8>>,
@@ -270,6 +274,8 @@ impl fmt::Debug for TsigRecord {
             .field("fudge", &self.fudge)
             .field("mac", &"[REDACTED]")
             .field("original_id", &self.original_id)
+            .field("error", &self.error)
+            .field("other_data_len", &self.other_data.len())
             .field("wire_bytes", &"[REDACTED]")
             .finish()
     }
@@ -397,6 +403,8 @@ impl TsigRecord {
             fudge,
             mac: Zeroizing::new(mac),
             original_id,
+            error: 0,
+            other_data: Vec::new(),
             wire_bytes: Zeroizing::new(wire),
         }
     }
@@ -437,11 +445,17 @@ impl TsigRecord {
             )));
         }
 
-        // TTL (must be 0)
+        // TTL (must be 0 per RFC 8945 §4.2)
         if pos + 4 > wire.len() {
             return Err(CoreError::Tsig("truncated TSIG TTL".into()));
         }
-        pos += 4; // skip TTL
+        let ttl = u32::from_be_bytes([wire[pos], wire[pos + 1], wire[pos + 2], wire[pos + 3]]);
+        if ttl != 0 {
+            return Err(CoreError::Tsig(alloc::format!(
+                "TSIG TTL must be 0, got {ttl}"
+            )));
+        }
+        pos += 4;
 
         // RDLENGTH
         if pos + 2 > wire.len() {
@@ -503,8 +517,27 @@ impl TsigRecord {
             return Err(CoreError::Tsig("truncated TSIG original ID".into()));
         }
         let original_id = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
-        // pos += 2 intentionally omitted — remaining fields (error, other_len, other_data)
-        // are not stored in TsigRecord currently
+        pos += 2;
+
+        // RDATA: Error (16-bit)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG error".into()));
+        }
+        let error = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        pos += 2;
+
+        // RDATA: Other length (16-bit)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG other_len".into()));
+        }
+        let other_len = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
+        pos += 2;
+
+        // RDATA: Other data
+        if pos + other_len > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG other_data".into()));
+        }
+        let other_data = wire[pos..pos + other_len].to_vec();
 
         Ok(TsigRecord {
             key_name,
@@ -513,6 +546,8 @@ impl TsigRecord {
             fudge,
             mac: Zeroizing::new(mac),
             original_id,
+            error,
+            other_data,
             wire_bytes: Zeroizing::new(wire.to_vec()),
         })
     }
@@ -573,11 +608,12 @@ impl TsigRecord {
         // Fudge: 16-bit
         tsig_vars.extend_from_slice(&response_tsig.fudge.to_be_bytes());
 
-        // Error: 16-bit (0)
-        tsig_vars.extend_from_slice(&0u16.to_be_bytes());
+        // Error: 16-bit (from parsed TSIG)
+        tsig_vars.extend_from_slice(&response_tsig.error.to_be_bytes());
 
-        // Other length: 16-bit (0)
-        tsig_vars.extend_from_slice(&0u16.to_be_bytes());
+        // Other length + data (from parsed TSIG)
+        tsig_vars.extend_from_slice(&(response_tsig.other_data.len() as u16).to_be_bytes());
+        tsig_vars.extend_from_slice(&response_tsig.other_data);
 
         // Build MAC input: request_mac (length-prefixed) + response + tsig_vars
         let mut mac_input =
@@ -1395,6 +1431,50 @@ mod tests {
             ts + 600,
         );
         assert!(result.is_err());
+    }
+
+    // --- parse_from_wire error/other_data tests ---
+
+    #[test]
+    fn parse_from_wire_extracts_error_and_other_fields() {
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let msg = alloc::vec![0u8; 12];
+        let timestamp = 1710000000u64;
+        let tsig = TsigRecord::new(&key, &msg, timestamp, None);
+        let parsed = TsigRecord::parse_from_wire(&tsig.wire_bytes).unwrap();
+        assert_eq!(parsed.error, 0);
+        assert!(parsed.other_data.is_empty());
+    }
+
+    #[test]
+    fn parse_from_wire_rejects_nonzero_ttl() {
+        let key = TsigKey::new(
+            DomainName::new("k.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let tsig = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        let mut bad_wire = tsig.wire_bytes.to_vec();
+        // Find TTL field: skip owner name, then TYPE(2) + CLASS(2)
+        let mut pos = 0;
+        loop {
+            let len = bad_wire[pos] as usize;
+            if len == 0 {
+                pos += 1;
+                break;
+            }
+            pos += 1 + len;
+        }
+        pos += 4; // TYPE + CLASS
+        // Set TTL to 1 (non-zero)
+        bad_wire[pos..pos + 4].copy_from_slice(&1u32.to_be_bytes());
+        assert!(TsigRecord::parse_from_wire(&bad_wire).is_err());
     }
 
     // --- Proptests ---
