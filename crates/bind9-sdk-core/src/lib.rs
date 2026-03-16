@@ -7,6 +7,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "std")]
+extern crate std;
+
 pub mod domain;
 pub mod error;
 pub mod protocol;

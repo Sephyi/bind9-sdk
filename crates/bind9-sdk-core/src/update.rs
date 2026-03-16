@@ -167,10 +167,32 @@ impl UpdateBuilder<Unsigned> {
         )
     }
 
-    /// Sign the update with a TSIG key, transitioning to the `Signed` state.
+    /// Sign the update with a TSIG key at the given timestamp.
     ///
-    /// After signing, call [`UpdateBuilder::build`] to extract the message.
-    pub fn sign(self, key: &crate::tsig::TsigKey) -> UpdateBuilder<Signed> {
+    /// The `timestamp` is seconds since the Unix epoch, used in the TSIG
+    /// record's Time Signed field. Servers reject timestamps outside their
+    /// fudge window (RFC 8945 §5.2.3), so this must be the current time.
+    ///
+    /// Use [`sign_now`](Self::sign_now) (requires `std` feature) for automatic
+    /// timestamping, or provide a timestamp from an external clock in `no_std`.
+    pub fn sign(self, key: &crate::tsig::TsigKey, timestamp: u64) -> UpdateBuilder<Signed> {
+        self.sign_inner(key, timestamp)
+    }
+
+    /// Sign the update with a TSIG key using the current system time.
+    ///
+    /// Convenience wrapper around [`sign`](Self::sign) that reads
+    /// `SystemTime::now()` for the TSIG timestamp.
+    #[cfg(feature = "std")]
+    pub fn sign_now(self, key: &crate::tsig::TsigKey) -> UpdateBuilder<Signed> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before Unix epoch")
+            .as_secs();
+        self.sign_inner(key, timestamp)
+    }
+
+    fn sign_inner(self, key: &crate::tsig::TsigKey, timestamp: u64) -> UpdateBuilder<Signed> {
         let unsigned = encode_update_message(
             self.id,
             &self.zone,
@@ -179,7 +201,6 @@ impl UpdateBuilder<Unsigned> {
             &self.updates,
         );
 
-        let timestamp = 0u64; // no_std: no wall clock; use 0 for now
         let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp);
 
         let mut wire = unsigned.wire_bytes;
@@ -830,7 +851,7 @@ mod tests {
         )
         .unwrap();
         let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
-            .sign(&key)
+            .sign(&key, 0)
             .build();
         let bytes = msg.as_bytes();
 
@@ -862,7 +883,7 @@ mod tests {
         let msg = UpdateBuilder::with_id(0x1234, zone, RecordClass::IN)
             .require_name_not_exists(&DomainName::new("new.example.com.").unwrap())
             .add_record(rr)
-            .sign(&key)
+            .sign(&key, 1710000000)
             .build();
 
         let bytes = msg.as_bytes();
@@ -896,7 +917,7 @@ mod tests {
 
         let unsigned = UpdateBuilder::with_id(1, zone.clone(), RecordClass::IN).build_unsigned();
         let signed = UpdateBuilder::with_id(1, zone, RecordClass::IN)
-            .sign(&key)
+            .sign(&key, 0)
             .build();
 
         assert_ne!(unsigned.as_bytes(), signed.as_bytes());

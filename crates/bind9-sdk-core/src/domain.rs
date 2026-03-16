@@ -170,11 +170,27 @@ impl DomainName {
     ///
     /// Format: each label as `<length byte><label bytes>`, terminated by
     /// a zero-length root label. No DNS name compression.
+    /// Preserves original label casing.
     pub fn write_wire(&self, buf: &mut Vec<u8>) {
         for label in &self.labels {
             let bytes = label.as_str().as_bytes();
             buf.push(bytes.len() as u8);
             buf.extend_from_slice(bytes);
+        }
+        buf.push(0); // root label
+    }
+
+    /// Write this domain name in canonical DNS wire format (RFC 4034 §6.2).
+    ///
+    /// Same as [`write_wire`](Self::write_wire) but lowercases all ASCII
+    /// characters. Required by RFC 8945 for TSIG MAC computation.
+    pub fn write_wire_canonical(&self, buf: &mut Vec<u8>) {
+        for label in &self.labels {
+            let bytes = label.as_str().as_bytes();
+            buf.push(bytes.len() as u8);
+            for &byte in bytes {
+                buf.push(byte.to_ascii_lowercase());
+            }
         }
         buf.push(0); // root label
     }
@@ -417,6 +433,29 @@ mod tests {
         let mut buf = Vec::new();
         name.write_wire(&mut buf);
         assert_eq!(buf, alloc::vec![0]);
+    }
+
+    #[test]
+    fn domain_name_write_wire_canonical_lowercases() {
+        let name = DomainName::new("Example.COM.").unwrap();
+        let mut buf = Vec::new();
+        name.write_wire_canonical(&mut buf);
+        // All ASCII lowered: \x07example\x03com\x00
+        assert_eq!(
+            buf,
+            alloc::vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,]
+        );
+    }
+
+    #[test]
+    fn domain_name_write_wire_canonical_matches_lowercase_write_wire() {
+        let mixed = DomainName::new("Www.Example.COM.").unwrap();
+        let lower = DomainName::new("www.example.com.").unwrap();
+        let mut canonical = Vec::new();
+        let mut plain = Vec::new();
+        mixed.write_wire_canonical(&mut canonical);
+        lower.write_wire(&mut plain);
+        assert_eq!(canonical, plain);
     }
 
     #[test]

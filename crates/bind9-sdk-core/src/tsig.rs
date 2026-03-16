@@ -268,10 +268,11 @@ impl TsigRecord {
         };
 
         // Build TSIG Variables for MAC computation (RFC 8945 §4.3.3)
+        // All names MUST be in canonical wire format (lowercase, RFC 4034 §6.2)
         let mut tsig_vars = Vec::new();
 
-        // Key name in wire format
-        key.name.write_wire(&mut tsig_vars);
+        // Key name in canonical wire format
+        key.name.write_wire_canonical(&mut tsig_vars);
 
         // Class: ANY (255)
         tsig_vars.extend_from_slice(&255u16.to_be_bytes());
@@ -279,10 +280,10 @@ impl TsigRecord {
         // TTL: 0
         tsig_vars.extend_from_slice(&0u32.to_be_bytes());
 
-        // Algorithm name in wire format
+        // Algorithm name in canonical wire format
         let alg_name = key.algorithm.dns_name();
         let alg_domain = DomainName::new(alg_name).expect("algorithm DNS name is always valid");
-        alg_domain.write_wire(&mut tsig_vars);
+        alg_domain.write_wire_canonical(&mut tsig_vars);
 
         // Time signed: 48-bit (6 bytes, big-endian)
         tsig_vars.extend_from_slice(&timestamp.to_be_bytes()[2..8]);
@@ -304,10 +305,11 @@ impl TsigRecord {
         let mac = key.sign(&mac_input);
 
         // Build the complete TSIG record in wire format
+        // Names in canonical form per RFC 8945 §4.2
         let mut wire = Vec::new();
 
-        // Owner name: key name in wire format
-        key.name.write_wire(&mut wire);
+        // Owner name: key name in canonical wire format
+        key.name.write_wire_canonical(&mut wire);
 
         // TYPE: TSIG (250)
         wire.extend_from_slice(&250u16.to_be_bytes());
@@ -322,8 +324,8 @@ impl TsigRecord {
         let rdata_start = wire.len();
         wire.extend_from_slice(&0u16.to_be_bytes());
 
-        // RDATA: Algorithm name
-        alg_domain.write_wire(&mut wire);
+        // RDATA: Algorithm name (canonical)
+        alg_domain.write_wire_canonical(&mut wire);
 
         // RDATA: Time signed (48-bit)
         wire.extend_from_slice(&timestamp.to_be_bytes()[2..8]);
@@ -781,6 +783,36 @@ mod tests {
             wire.len() > 20,
             "Wire bytes too short: {} bytes",
             wire.len()
+        );
+    }
+
+    #[test]
+    fn tsig_record_canonical_key_name_produces_same_mac() {
+        // RFC 8945 §4.3.3: key names are canonicalized to lowercase for MAC.
+        // Mixed-case and lowercase key names with identical material must
+        // produce identical MACs for the same message and timestamp.
+        let material = alloc::vec![0xDD; 32];
+        let key_upper = TsigKey::new(
+            DomainName::new("My-Key.Example.COM.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            material.clone(),
+        )
+        .unwrap();
+        let key_lower = TsigKey::new(
+            DomainName::new("my-key.example.com.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            material,
+        )
+        .unwrap();
+        let message = alloc::vec![0x00; 12];
+        let ts = 1710000000u64;
+
+        let r1 = TsigRecord::new(&key_upper, &message, ts);
+        let r2 = TsigRecord::new(&key_lower, &message, ts);
+
+        assert_eq!(
+            r1.mac, r2.mac,
+            "Canonical (lowercase) key names must produce identical MACs"
         );
     }
 
