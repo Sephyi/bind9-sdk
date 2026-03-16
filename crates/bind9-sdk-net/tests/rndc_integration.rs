@@ -5,7 +5,7 @@
 //! Integration tests for rndc wire protocol against a live BIND9 instance.
 //!
 //! These tests require:
-//! - BIND9 9.20 running on localhost:953
+//! - BIND9 9.20 running on localhost:9953
 //! - An rndc key configured in named.conf matching the test key below
 //!
 //! Run with: `cargo test -p bind9-sdk-net -- --ignored rndc_integration`
@@ -39,9 +39,9 @@ fn test_key() -> bind9_sdk_core::tsig::TsigKey {
 }
 
 #[tokio::test]
-#[ignore = "requires live BIND9 on localhost:953"]
+#[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_connect_and_status() {
-    let addr = "127.0.0.1:953".parse().unwrap();
+    let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 
     let conn = RndcConnection::connect(addr).await.expect("connect failed");
@@ -61,9 +61,9 @@ async fn rndc_connect_and_status() {
 }
 
 #[tokio::test]
-#[ignore = "requires live BIND9 on localhost:953"]
+#[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_reload() {
-    let addr = "127.0.0.1:953".parse().unwrap();
+    let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 
     let conn = RndcConnection::connect(addr).await.expect("connect failed");
@@ -79,12 +79,12 @@ async fn rndc_reload() {
 }
 
 #[tokio::test]
-#[ignore = "requires live BIND9 on localhost:953"]
+#[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_wrong_key_fails_auth() {
     use bind9_sdk_core::domain::DomainName;
     use bind9_sdk_core::tsig::TsigAlgorithm;
 
-    let addr: std::net::SocketAddr = "127.0.0.1:953".parse().unwrap();
+    let addr: std::net::SocketAddr = "127.0.0.1:9953".parse().unwrap();
     let wrong_key = bind9_sdk_core::tsig::TsigKey::new(
         DomainName::new("wrong-key.").unwrap(),
         TsigAlgorithm::HmacSha256,
@@ -97,9 +97,9 @@ async fn rndc_wrong_key_fails_auth() {
 }
 
 #[tokio::test]
-#[ignore = "requires live BIND9 on localhost:953"]
+#[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_multiple_commands_on_same_connection() {
-    let addr = "127.0.0.1:953".parse().unwrap();
+    let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 
     let conn = RndcConnection::connect(addr).await.expect("connect failed");

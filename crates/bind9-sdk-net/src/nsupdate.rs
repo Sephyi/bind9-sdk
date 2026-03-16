@@ -730,7 +730,7 @@ mod tests {
             .sign(&key, 1710000000)
             .build();
 
-        let sender = NsUpdateSender::new("127.0.0.1:53".parse().unwrap());
+        let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
         let result = sender.send(&msg, Some(&key)).await;
         assert!(result.is_ok(), "dynamic update should succeed: {result:?}");
     }
@@ -766,7 +766,7 @@ mod tests {
         }
 
         let msg = builder.sign(&key, 1710000000).build();
-        let sender = NsUpdateSender::new("127.0.0.1:53".parse().unwrap());
+        let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
         let result = sender.send(&msg, Some(&key)).await;
         assert!(
             result.is_ok(),

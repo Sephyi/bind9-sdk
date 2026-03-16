@@ -51,8 +51,8 @@ docker compose down
 
 | Port | Protocol | Service |
 | --- | --- | --- |
-| 53 | UDP/TCP | DNS queries |
-| 953 | TCP | rndc control channel |
+| 15353 | UDP/TCP | DNS queries (mapped from container port 53) |
+| 9953 | TCP | rndc control channel (mapped from container port 953) |
 | 8053 | TCP | Statistics channel (JSON) |
 
 All ports are bound to `127.0.0.1` only.

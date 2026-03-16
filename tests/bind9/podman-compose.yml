@@ -5,12 +5,12 @@ services:
   bind9:
     build: .
     ports:
-      - "127.0.0.1:53:53/udp"
-      - "127.0.0.1:53:53/tcp"
-      - "127.0.0.1:953:953/tcp"
+      - "127.0.0.1:15353:53/udp"
+      - "127.0.0.1:15353:53/tcp"
+      - "127.0.0.1:9953:953/tcp"
       - "127.0.0.1:8053:8053/tcp"
     healthcheck:
-      test: ["CMD", "rndc", "-s", "127.0.0.1", "-p", "953", "-k", "/etc/bind/rndc.key", "status"]
+      test: ["CMD", "rndc", "-c", "/etc/bind/rndc.conf", "status"]
       interval: 2s
       timeout: 5s
       retries: 10
