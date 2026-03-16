@@ -53,7 +53,7 @@ use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 use crate::error::NetError;
 
 use self::command::{RndcCommand, RndcResponse};
-use self::protocol::{IscMessage, IscValue, frame_message, read_frame_length};
+use self::protocol::{IscMessage, IscValue, extract_hmac_input, frame_message, read_frame_length};
 
 /// Fixed buffer size for isccc HMAC auth values.
 ///
@@ -182,9 +182,9 @@ impl RndcConnection<Unauthenticated> {
             .await
             .map_err(|e| NetError::Connection(format!("failed to send auth message: {e}")))?;
 
-        // Read the server's response
-        let response = read_isc_message(&mut self.stream).await?;
-        verify_authenticated_response(key, &response, serial, now, None, Some("null"))?;
+        // Read the server's response (returns message + raw HMAC input bytes)
+        let (response, hmac_raw_input) = read_isc_message(&mut self.stream).await?;
+        verify_authenticated_response(key, &response, &hmac_raw_input, serial, now, None, Some("null"))?;
 
         // Extract nonce from server's _ctrl table
         let nonce = response
@@ -275,11 +275,12 @@ impl<'k> RndcConnection<Authenticated<'k>> {
             .await
             .map_err(|e| NetError::Connection(format!("failed to send command: {e}")))?;
 
-        // Read response
-        let response = read_isc_message(&mut self.stream).await?;
+        // Read response (returns message + raw HMAC input bytes)
+        let (response, hmac_raw_input) = read_isc_message(&mut self.stream).await?;
         verify_authenticated_response(
             self.state.key,
             &response,
+            &hmac_raw_input,
             self.state.serial,
             now,
             self.state.nonce.as_deref(),
@@ -413,9 +414,15 @@ fn current_unix_time() -> Result<u64, NetError> {
 /// BIND9 signs replies with `_auth.hsha` over the `_ctrl` and `_data` tables
 /// and echoes the request serial/timestamps. Replies also carry `_rpl=1` and
 /// the negotiated nonce.
+///
+/// `hmac_raw_input` must be the raw wire bytes after the `_auth` entry in the
+/// server's payload — preserving the server's alist insertion order. Do NOT
+/// pass re-encoded BTreeMap bytes here: BTreeMap uses alphabetical order while
+/// BIND9 uses alist insertion order, producing different HMAC inputs.
 fn verify_authenticated_response(
     key: &TsigKey,
     response: &IscMessage,
+    hmac_raw_input: &[u8],
     expected_serial: u32,
     expected_time: u64,
     expected_nonce: Option<&str>,
@@ -437,7 +444,15 @@ fn verify_authenticated_response(
             reason: "server response missing _data table".to_string(),
         })?;
 
-    let expected_hmac = sign_rndc_body(key, ctrl, data)?;
+    // Compute HMAC over the raw wire bytes (server's alist order), not BTreeMap re-encoding
+    let digest = key.sign(hmac_raw_input);
+    let algo_byte = isccc_algorithm_byte(key.algorithm());
+    let b64 = base64_encode(&digest);
+    let mut expected_hmac = Vec::with_capacity(ISCCC_HMAC_BUF_SIZE);
+    expected_hmac.push(algo_byte);
+    expected_hmac.extend_from_slice(b64.as_bytes());
+    expected_hmac.resize(ISCCC_HMAC_BUF_SIZE, 0);
+
     let received_hmac = match auth.get("hsha") {
         Some(IscValue::Binary(bytes)) => bytes,
         _ => {
@@ -595,8 +610,9 @@ fn render_isc_value(value: &IscValue) -> String {
 /// Read a framed ISC message from a TCP stream.
 ///
 /// Reads the 4-byte length prefix, then reads exactly that many bytes,
-/// then decodes the ISC message.
-async fn read_isc_message(stream: &mut TcpStream) -> Result<IscMessage, NetError> {
+/// then decodes the ISC message. Also returns the raw HMAC input bytes
+/// (the wire bytes after the `_auth` entry) for response verification.
+async fn read_isc_message(stream: &mut TcpStream) -> Result<(IscMessage, Vec<u8>), NetError> {
     // Read 4-byte length prefix
     let mut len_buf = [0u8; 4];
     stream
@@ -626,7 +642,12 @@ async fn read_isc_message(stream: &mut TcpStream) -> Result<IscMessage, NetError
         .await
         .map_err(|e| NetError::Connection(format!("failed to read message payload: {e}")))?;
 
-    IscMessage::decode(&payload)
+    // Extract the HMAC input bytes (bytes after _auth in wire order) before decoding.
+    // These preserve the server's alist insertion order, which BTreeMap re-encoding
+    // would not — the HMAC must be verified against the original wire representation.
+    let hmac_input = extract_hmac_input(&payload).unwrap_or_default();
+    let message = IscMessage::decode(&payload)?;
+    Ok((message, hmac_input))
 }
 
 /// Base64-encode bytes using standard encoding.
@@ -862,6 +883,8 @@ mod tests {
             IscValue::String("server is up and running".to_string()),
         );
 
+        // sign_rndc_body uses BTreeMap order; the test message is also BTreeMap-encoded,
+        // so the HMAC covers the same bytes that extract_hmac_input will return.
         let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
         let mut auth = BTreeMap::new();
         auth.insert("hsha".to_string(), IscValue::Binary(hmac));
@@ -871,10 +894,16 @@ mod tests {
         msg.insert_map("_ctrl", ctrl);
         msg.insert_map("_data", data);
 
+        // Extract the raw HMAC input from the framed message (BTreeMap-ordered wire bytes)
+        let frame = frame_message(&msg).unwrap();
+        let payload = &frame[4..]; // strip 4-byte frame length prefix
+        let hmac_input = extract_hmac_input(payload).expect("_auth must be first entry");
+
         assert!(
             verify_authenticated_response(
                 &key,
                 &msg,
+                &hmac_input,
                 42,
                 1_710_000_000,
                 Some("abc123"),
@@ -913,9 +942,16 @@ mod tests {
         msg.insert_map("_ctrl", ctrl);
         msg.insert_map("_data", data);
 
+        // Extract raw HMAC input from the framed message
+        let frame = frame_message(&msg).unwrap();
+        let payload = &frame[4..];
+        let hmac_input = extract_hmac_input(payload).expect("_auth must be first entry");
+
+        // nonce in message is "server-nonce" but we expect "client-nonce" → should fail
         let err = verify_authenticated_response(
             &key,
             &msg,
+            &hmac_input,
             7,
             1_710_000_001,
             Some("client-nonce"),

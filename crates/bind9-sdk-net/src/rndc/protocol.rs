@@ -299,6 +299,73 @@ impl IscMessage {
     }
 }
 
+/// Extract the HMAC input bytes from a raw isccc wire payload.
+///
+/// The isccc server payload format is:
+/// ```text
+/// [4-byte version][_auth entry][_ctrl entry][_data entry]
+/// ```
+///
+/// The HMAC covers `_ctrl` + `_data` in the server's alist (insertion) order —
+/// the bytes immediately following the `_auth` entry. This preserves the server's
+/// exact wire representation rather than re-encoding from a BTreeMap (which uses
+/// alphabetical order and would produce different bytes).
+///
+/// Returns `None` if the payload is too short or the first entry is not `_auth`.
+pub(crate) fn extract_hmac_input(payload: &[u8]) -> Option<Vec<u8>> {
+    // Skip 4-byte version header
+    if payload.len() < 4 {
+        return None;
+    }
+    let mut pos = 4;
+
+    // Parse the first entry — must be `_auth` for HMAC extraction
+    // 1-byte key length
+    if pos >= payload.len() {
+        return None;
+    }
+    let key_len = payload[pos] as usize;
+    pos += 1;
+
+    // Key bytes
+    if pos + key_len > payload.len() {
+        return None;
+    }
+    let key = &payload[pos..pos + key_len];
+    if key != b"_auth" {
+        // First entry is not _auth — cannot extract HMAC input
+        return None;
+    }
+    pos += key_len;
+
+    // Type tag (1 byte) — skip
+    if pos >= payload.len() {
+        return None;
+    }
+    pos += 1;
+
+    // Value length (4 bytes BE)
+    if pos + 4 > payload.len() {
+        return None;
+    }
+    let val_len = u32::from_be_bytes([
+        payload[pos],
+        payload[pos + 1],
+        payload[pos + 2],
+        payload[pos + 3],
+    ]) as usize;
+    pos += 4;
+
+    // Skip value bytes
+    if pos + val_len > payload.len() {
+        return None;
+    }
+    pos += val_len;
+
+    // Remaining bytes are the HMAC input (_ctrl + _data in server wire order)
+    Some(payload[pos..].to_vec())
+}
+
 /// Encode an ISC message with the 4-byte big-endian length prefix for TCP framing.
 ///
 /// The rndc protocol uses 4-byte length prefixes, NOT the 2-byte DNS TCP length.
@@ -677,6 +744,53 @@ mod tests {
     fn read_frame_length_max() {
         let header: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
         assert_eq!(read_frame_length(&header), u32::MAX);
+    }
+
+    // -- extract_hmac_input tests --
+
+    #[test]
+    fn extract_hmac_input_returns_bytes_after_auth() {
+        // Build a message with _auth first (BTreeMap sorts: _auth < _ctrl < _data)
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", BTreeMap::new()); // empty _auth
+        msg.insert_string("_ctrl", "ctrl-value");
+        msg.insert_string("_data", "data-value");
+
+        let encoded = msg.encode().unwrap(); // [version][_auth][_ctrl][_data]
+        let result = extract_hmac_input(&encoded).unwrap();
+
+        // Verify: re-encode just _ctrl and _data and compare
+        let mut expected_msg = IscMessage::new();
+        expected_msg.insert_string("_ctrl", "ctrl-value");
+        expected_msg.insert_string("_data", "data-value");
+        let expected = expected_msg.encode_body().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn extract_hmac_input_returns_none_for_short_payload() {
+        assert_eq!(extract_hmac_input(&[]), None);
+        assert_eq!(extract_hmac_input(&[0x00, 0x00, 0x00, 0x01]), None);
+        assert_eq!(extract_hmac_input(&[0x00, 0x00, 0x00, 0x01, 5]), None);
+    }
+
+    #[test]
+    fn extract_hmac_input_returns_none_when_first_entry_is_not_auth() {
+        let mut msg = IscMessage::new();
+        msg.insert_string("_ctrl", "value"); // _ctrl sorts before _data but not _auth
+        let encoded = msg.encode().unwrap();
+        assert_eq!(extract_hmac_input(&encoded), None);
+    }
+
+    #[test]
+    fn extract_hmac_input_handles_auth_only_message() {
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", BTreeMap::new());
+        let encoded = msg.encode().unwrap();
+        // No bytes after _auth — should return empty Vec, not None
+        let result = extract_hmac_input(&encoded).unwrap();
+        assert!(result.is_empty());
     }
 
     #[test]
