@@ -53,10 +53,13 @@ bind9-sdk/                     ← git repo root (this directory)
 │   └── src/lib.rs
 ├── crates/
 │   ├── bind9-sdk-core/        ← no_std + alloc; DNS types, zone parsing, RFC 2136, TSIG
+│   │   └── src/zone/          ← zone parser/serializer/rdata_text submodule
 │   ├── bind9-sdk-net/         ← tokio; rndc TCP, nsupdate sender, IXFR/AXFR, stats HTTP
-│   └── bind9-sdk-bindings/    ← napi-rs v3 (Node.js/Bun native addon + WASM fallback)
-├── npm/                       ← npm package output (napi-rs v3 native + WASM artifacts)
-├── tests/                     ← integration test suite (live BIND9 required)
+│   │   └── src/rndc/          ← rndc wire protocol submodule
+│   └── bind9-sdk-bindings/    ← napi-rs v2 (Node.js/Bun native addon; v3 migration Phase 4)
+├── docs/
+│   ├── plans/                 ← implementation plans (8 files)
+│   └── specs/                 ← design specs (3 files)
 ├── Cargo.toml                 ← workspace root
 ├── rust-toolchain.toml
 └── REUSE.toml
@@ -66,9 +69,9 @@ bind9-sdk/                     ← git repo root (this directory)
 
 | Crate | `no_std` | Feature gate | What it provides |
 | --- | --- | --- | --- |
-| `bind9-sdk-core` | Yes | — | `DomainName`, `ResourceRecord`, `RecordData` (20+ variants), zone file parser/emitter, RFC 2136 message construction, TSIG signing (HMAC-SHA256/SHA512) |
-| `bind9-sdk-net` | No | `net` (default) | `rndc` TCP wire protocol client, nsupdate sender, IXFR/AXFR client, statistics-channel HTTP client |
-| `bind9-sdk-bindings` | — | `nodejs` | napi-rs v3 exports: native `.node` + `wasm32-wasip1-threads` WASM fallback |
+| `bind9-sdk-core` | Yes | — | `DomainName`, `ResourceRecord`, `RecordData` (20+ variants), `Rcode`, `RecordType`, zone file parser/emitter (`ZoneFile`, `Zone`), RFC 2136 `UpdateBuilder` (typestate `Unsigned`/`Signed`), TSIG (`TsigKey`, `TsigRecord`, HMAC-SHA256/SHA512), management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`) |
+| `bind9-sdk-net` | No | `net` (default) | `Bind9Client`, `ClientConfig`, `NetError`, `TlsConfig`; rndc TCP wire protocol client (skeleton), nsupdate sender, IXFR/AXFR client, statistics-channel HTTP client — trait impls added in Wave 2 |
+| `bind9-sdk-bindings` | — | `nodejs` | napi-rs v2 exports (v3 migration in Phase 4): native `.node` + WASM fallback |
 | `bind9-sdk` | — | — | Re-exports `core` and optionally `net`; the single crates.io entry point |
 
 ## Feature Flags
@@ -91,7 +94,7 @@ bind9-sdk/                     ← git repo root (this directory)
 
 4. **rndc wire protocol is NOT DNS** — BIND9's rndc uses a custom TCP framing format: 4-byte big-endian length prefix + ISC internal message encoding. Do not confuse with DNS-over-TCP (2-byte prefix). The protocol is documented in the BIND source (`lib/isc/netmgr/`, ISC KB). It is stable across BIND9 minor versions.
 
-5. **napi-rs v3 unified bindings** — napi-rs v3 compiles to both native `.node` files and `wasm32-wasip1-threads` WASM from the same binding code. The `browser` feature and wasm-bindgen dependency are removed. `wasm32-unknown-unknown` is retained in `rust-toolchain.toml` solely for the `no_std` validation hook on `bind9-sdk-core`.
+5. **napi-rs unified bindings** — Currently pinned at napi-rs v2; migration to v3 is planned for Phase 4. v3 will compile to both native `.node` files and `wasm32-wasip1-threads` WASM from the same binding code. `wasm32-unknown-unknown` is retained in `rust-toolchain.toml` solely for the `no_std` validation hook on `bind9-sdk-core`.
 
 6. **`bind9-sdk` is the only published user-facing crate** — Users add `bind9-sdk` to their `Cargo.toml`, never internal crates directly. Internal crates are published to satisfy crates.io dependency resolution but carry no stability guarantees of their own.
 
@@ -114,7 +117,7 @@ Key patterns enforced across all implementation:
 
 - **`no_std` means `core::error::Error`** — `std::error::Error` is not available in `bind9-sdk-core`. Use `core::error::Error` (stable since Rust 1.81, which is below our rust-version of 1.94). The `std` feature flag on `bind9-sdk-core` opts back in to `std::error::Error`.
 - **`wasm32-unknown-unknown` is for `no_std` validation only** — retained in `rust-toolchain.toml` for the WASM check hook on `bind9-sdk-core`. The napi-rs v3 WASM output uses `wasm32-wasip1-threads` (handled by the napi CLI, not the toolchain file).
-- **napi-rs v3 requires a native build step** — `cargo build --features nodejs` alone is not enough; napi-rs needs `napi build --release` to generate the `.node` file and JS bindings. napi-rs v3 auto-falls back to WASM when the native binary is unavailable on a given platform.
+- **napi-rs requires a native build step** — `cargo build --features nodejs` alone is not enough; napi-rs needs `napi build --release` to generate the `.node` file and JS bindings. Currently on napi-rs v2; v3 migration (with auto WASM fallback) is planned for Phase 4.
 - **TSIG key format in `rndc.conf`** — base64-encoded raw HMAC-SHA256 key material, not PEM. The `algorithm hmac-sha256;` line is not a hint about encoding — it specifies the MAC algorithm directly.
 - **BIND9 rndc framing** — message length is encoded as a big-endian u32 (4 bytes), not the 2-byte DNS TCP length. Misreading this is the most common rndc client implementation bug.
 - **`cargo check --workspace` does not check WASM target** — always also run `cargo check --workspace --target wasm32-unknown-unknown` before PR to catch no_std violations in core.
