@@ -8,3 +8,8 @@ pub mod nsupdate;
 pub mod rndc;
 pub mod stats;
 pub mod tls;
+
+// Curated re-exports for common access
+pub use config::{Bind9Client, ClientConfig};
+pub use error::NetError;
+pub use tls::TlsConfig;

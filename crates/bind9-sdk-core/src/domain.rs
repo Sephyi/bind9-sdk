@@ -165,6 +165,19 @@ impl DomainName {
     pub fn is_root(&self) -> bool {
         self.labels.is_empty()
     }
+
+    /// Write this domain name in DNS wire format into the buffer.
+    ///
+    /// Format: each label as `<length byte><label bytes>`, terminated by
+    /// a zero-length root label. No DNS name compression.
+    pub fn write_wire(&self, buf: &mut Vec<u8>) {
+        for label in &self.labels {
+            let bytes = label.as_str().as_bytes();
+            buf.push(bytes.len() as u8);
+            buf.extend_from_slice(bytes);
+        }
+        buf.push(0); // root label
+    }
 }
 
 impl PartialEq for DomainName {
@@ -384,6 +397,34 @@ mod tests {
             hasher.finish()
         };
         assert_ne!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn domain_name_write_wire() {
+        let name = DomainName::new("example.com.").unwrap();
+        let mut buf = Vec::new();
+        name.write_wire(&mut buf);
+        // Expected: \x07example\x03com\x00
+        assert_eq!(
+            buf,
+            alloc::vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,]
+        );
+    }
+
+    #[test]
+    fn domain_name_write_wire_root() {
+        let name = DomainName::root();
+        let mut buf = Vec::new();
+        name.write_wire(&mut buf);
+        assert_eq!(buf, alloc::vec![0]);
+    }
+
+    #[test]
+    fn domain_name_write_wire_length_matches() {
+        let name = DomainName::new("www.example.com.").unwrap();
+        let mut buf = Vec::new();
+        name.write_wire(&mut buf);
+        assert_eq!(buf.len(), name.wire_len());
     }
 
     mod proptests {
