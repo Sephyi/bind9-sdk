@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+
 ---
 name: cargo-dep-auditor
 description: Read-only agent that audits Cargo.toml dependencies for outdated versions, yanked crates, and security advisories. Use when adding new dependencies or before releases.

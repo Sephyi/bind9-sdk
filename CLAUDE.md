@@ -8,7 +8,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 Rust SDK for programmatic BIND9 DNS server management. Implements the rndc wire protocol, RFC 1035 zone file parsing, RFC 2136 dynamic updates (nsupdate), IXFR/AXFR zone transfer, and the BIND9 statistics-channel JSON API — all with zero shell subprocess dependencies.
 
-Distributes as two coordinated artifacts from one codebase: a Rust crate (`bind9-sdk` on crates.io) and a Node.js/Bun native addon (napi-rs v3 from `bind9-sdk-bindings`, with automatic WASM fallback).
+Distributes as two coordinated artifacts from one codebase: a Rust crate (`bind9-sdk` on crates.io) and a Node.js/Bun native addon (napi-rs from `bind9-sdk-bindings`; v3 migration with automatic WASM fallback planned for Phase 4).
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ cargo test --workspace
 # Integration tests (requires BIND9 on localhost:953 with test rndc key — see tests/README.md)
 cargo test --workspace -- --ignored
 
-# Node.js/Bun native addon build (full surface via napi-rs v3)
+# Node.js/Bun native addon build (full surface via napi-rs)
 cargo build --release --manifest-path crates/bind9-sdk-bindings/Cargo.toml --features nodejs
 
 # Audit
@@ -82,7 +82,7 @@ bind9-sdk/                     ← git repo root (this directory)
 | `serde` | `bind9-sdk-core` | Enables `Serialize`/`Deserialize` on DNS types |
 | `net` *(default)* | `bind9-sdk` | Includes `bind9-sdk-net` (rndc, nsupdate, IXFR/AXFR, stats) |
 | `parallel` | `bind9-sdk-core` | Enables Rayon-based parallel zone parsing (implies `std`, incompatible with WASM) |
-| `nodejs` | `bind9-sdk-bindings` | Enables napi-rs v3 exports (native `.node` + WASM fallback) |
+| `nodejs` | `bind9-sdk-bindings` | Enables napi-rs exports (v2; v3 with WASM fallback in Phase 4) |
 
 ## Key Design Decisions
 
@@ -116,7 +116,7 @@ Key patterns enforced across all implementation:
 ## Gotchas
 
 - **`no_std` means `core::error::Error`** — `std::error::Error` is not available in `bind9-sdk-core`. Use `core::error::Error` (stable since Rust 1.81, which is below our rust-version of 1.94). The `std` feature flag on `bind9-sdk-core` opts back in to `std::error::Error`.
-- **`wasm32-unknown-unknown` is for `no_std` validation only** — retained in `rust-toolchain.toml` for the WASM check hook on `bind9-sdk-core`. The napi-rs v3 WASM output uses `wasm32-wasip1-threads` (handled by the napi CLI, not the toolchain file).
+- **`wasm32-unknown-unknown` is for `no_std` validation only** — retained in `rust-toolchain.toml` for the WASM check hook on `bind9-sdk-core`. The planned napi-rs v3 WASM output will use `wasm32-wasip1-threads` (handled by the napi CLI, not the toolchain file).
 - **napi-rs requires a native build step** — `cargo build --features nodejs` alone is not enough; napi-rs needs `napi build --release` to generate the `.node` file and JS bindings. Currently on napi-rs v2; v3 migration (with auto WASM fallback) is planned for Phase 4.
 - **TSIG key format in `rndc.conf`** — base64-encoded raw HMAC-SHA256 key material, not PEM. The `algorithm hmac-sha256;` line is not a hint about encoding — it specifies the MAC algorithm directly.
 - **BIND9 rndc framing** — message length is encoded as a big-endian u32 (4 bytes), not the 2-byte DNS TCP length. Misreading this is the most common rndc client implementation bug.
@@ -179,4 +179,4 @@ SDK targets compliance with GDPR, NIS2 (EU 2022/2555), NIST SP 800-53/800-81/800
 - **RFC 2136**: Dynamic Updates in the Domain Name System
 - **RFC 8945**: Secret Key Transaction Authentication for DNS (TSIG)
 - **RustCrypto hmac/sha2**: `docs.rs/hmac`, `docs.rs/sha2`
-- **napi-rs v3**: `napi.rs`
+- **napi-rs**: `napi.rs`
