@@ -97,7 +97,6 @@ fn find_tsig_in_response(wire: &[u8]) -> Result<Option<usize>, NetError> {
     let ancount = u16::from_be_bytes([wire[6], wire[7]]) as usize;
     let nscount = u16::from_be_bytes([wire[8], wire[9]]) as usize;
 
-
     let arcount = u16::from_be_bytes([wire[10], wire[11]]) as usize;
 
     if arcount == 0 {
@@ -215,16 +214,17 @@ impl NsUpdateSender {
         if let (Some(key), Some(request_mac)) = (tsig_key, update.request_mac()) {
             if let Some(tsig_offset) = find_tsig_in_response(&response)? {
                 // Parse the TSIG record from the response
-                let response_tsig = TsigRecord::parse_from_wire(&response[tsig_offset..])
-                    .map_err(|e| NetError::Protocol(format!("failed to parse response TSIG: {e}")))?;
+                let response_tsig =
+                    TsigRecord::parse_from_wire(&response[tsig_offset..]).map_err(|e| {
+                        NetError::Protocol(format!("failed to parse response TSIG: {e}"))
+                    })?;
 
                 // The message bytes for verification = response without TSIG, ARCOUNT decremented
                 let mut msg_sans_tsig = response[..tsig_offset].to_vec();
                 if msg_sans_tsig.len() >= DNS_HEADER_SIZE {
                     let arcount = u16::from_be_bytes([msg_sans_tsig[10], msg_sans_tsig[11]]);
                     if arcount > 0 {
-                        msg_sans_tsig[10..12]
-                            .copy_from_slice(&(arcount - 1).to_be_bytes());
+                        msg_sans_tsig[10..12].copy_from_slice(&(arcount - 1).to_be_bytes());
                     }
                 }
 
@@ -620,7 +620,9 @@ mod tests {
     #[test]
     fn skip_wire_name_uncompressed() {
         // "example.com." = \x07example\x03com\x00
-        let wire = [7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0];
+        let wire = [
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+        ];
         let mut pos = 0;
         skip_wire_name(&wire, &mut pos).unwrap();
         assert_eq!(pos, 13);

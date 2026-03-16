@@ -509,8 +509,9 @@ mod tests {
             data.push(1); // key length
             data.push(b'k'); // key
             data.push(0x01); // type tag: map
-                             // Value length: remaining nesting bytes (we'll just make it large enough)
-                             // We don't need it to be exact since the depth check fires first
+
+            // Value length: remaining nesting bytes (we'll just make it large enough)
+            // We don't need it to be exact since the depth check fires first
         }
         // This won't decode cleanly, but we need to craft it so the depth check fires.
         // Instead, encode a valid deeply nested message programmatically.

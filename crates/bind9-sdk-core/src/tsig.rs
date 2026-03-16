@@ -503,10 +503,8 @@ impl TsigRecord {
             return Err(CoreError::Tsig("truncated TSIG original ID".into()));
         }
         let original_id = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
-        pos += 2;
-
-        // Skip error (16-bit) and other_len (16-bit) + other_data
-        // These are parsed but not stored in TsigRecord currently
+        // pos += 2 intentionally omitted — remaining fields (error, other_len, other_data)
+        // are not stored in TsigRecord currently
 
         Ok(TsigRecord {
             key_name,
@@ -523,11 +521,7 @@ impl TsigRecord {
     ///
     /// Per RFC 8945 §5.2.3, if |time_signed - now| > fudge, reject with BADTIME.
     pub fn verify_time(&self, now: u64) -> Result<(), CoreError> {
-        let diff = if now > self.time_signed {
-            now - self.time_signed
-        } else {
-            self.time_signed - now
-        };
+        let diff = now.abs_diff(self.time_signed);
         if diff > self.fudge as u64 {
             return Err(CoreError::Tsig(alloc::format!(
                 "TSIG time outside fudge window: signed={}, now={}, fudge={}",
@@ -1138,8 +1132,9 @@ mod tests {
             alloc::vec![0xCC; 32],
         )
         .unwrap();
-        let message =
-            alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let message = alloc::vec![
+            0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
 
         let record = TsigRecord::new(&key, &message, 1710000000, None);
 
@@ -1232,8 +1227,9 @@ mod tests {
             alloc::vec![0xDD; 32],
         )
         .unwrap();
-        let message =
-            alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let message = alloc::vec![
+            0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
         let ts = 1710000000u64;
         let original = TsigRecord::new(&key, &message, ts, None);
 
@@ -1324,14 +1320,16 @@ mod tests {
             alloc::vec![0xAA; 32],
         )
         .unwrap();
-        let request_msg =
-            alloc::vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let request_msg = alloc::vec![
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
         let ts = 1710000000u64;
         let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
 
         // Simulate a response signed with request_mac chaining
-        let response_msg =
-            alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let response_msg = alloc::vec![
+            0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
         let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
 
         let result = TsigRecord::verify_response(
@@ -1356,8 +1354,9 @@ mod tests {
         let ts = 1710000000u64;
         let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
 
-        let response_msg =
-            alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let response_msg = alloc::vec![
+            0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
         // Sign with wrong request_mac
         let wrong_mac = alloc::vec![0xFF; 32];
         let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&wrong_mac));

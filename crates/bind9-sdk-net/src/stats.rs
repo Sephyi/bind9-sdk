@@ -108,7 +108,11 @@ impl StatsHttpClient {
     /// Create a stats client with a custom authorization header.
     ///
     /// Use when the statistics-channel is protected by HTTP auth.
-    pub fn with_auth(url: &str, timeout: std::time::Duration, auth_header: &str) -> Result<Self, NetError> {
+    pub fn with_auth(
+        url: &str,
+        timeout: std::time::Duration,
+        auth_header: &str,
+    ) -> Result<Self, NetError> {
         if url.is_empty() {
             return Err(NetError::Connection("stats URL is empty".into()));
         }
@@ -332,7 +336,10 @@ mod tests {
 
     #[test]
     fn stats_http_client_new() {
-        let client = StatsHttpClient::new("http://127.0.0.1:8053/json/v1", std::time::Duration::from_secs(10));
+        let client = StatsHttpClient::new(
+            "http://127.0.0.1:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        );
         assert!(client.is_ok());
     }
 
@@ -344,15 +351,22 @@ mod tests {
 
     #[test]
     fn stats_http_client_with_auth() {
-        let client =
-            StatsHttpClient::with_auth("http://127.0.0.1:8053/json/v1", std::time::Duration::from_secs(10), "Bearer test-token-123");
+        let client = StatsHttpClient::with_auth(
+            "http://127.0.0.1:8053/json/v1",
+            std::time::Duration::from_secs(10),
+            "Bearer test-token-123",
+        );
         assert!(client.is_ok());
     }
 
     #[tokio::test]
     async fn fetch_server_stats_returns_http_error_on_failure() {
         // Use a port that nothing listens on
-        let client = StatsHttpClient::new("http://127.0.0.1:19999/json/v1", std::time::Duration::from_secs(2)).unwrap();
+        let client = StatsHttpClient::new(
+            "http://127.0.0.1:19999/json/v1",
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
         let result = client.fetch_server_stats().await;
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -365,7 +379,11 @@ mod tests {
     #[tokio::test]
     async fn fetch_zone_stats_returns_error_for_missing_zone() {
         // Use a port that nothing listens on
-        let client = StatsHttpClient::new("http://127.0.0.1:19999/json/v1", std::time::Duration::from_secs(2)).unwrap();
+        let client = StatsHttpClient::new(
+            "http://127.0.0.1:19999/json/v1",
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
         let zone = DomainName::new("nonexistent.test.").unwrap();
         let result = client.fetch_zone_stats(&zone).await;
         assert!(result.is_err());
@@ -401,7 +419,10 @@ mod tests {
         assert_eq!(stats.boot_time.as_deref(), Some("2026-01-15T08:30:00Z"));
         assert_eq!(stats.config_time.as_deref(), Some("2026-01-15T08:30:05Z"));
         assert_eq!(stats.current_time.as_deref(), Some("2026-03-14T12:00:00Z"));
-        assert_eq!(stats.version.as_deref(), Some("BIND 9.20.4 (Stable Release)"));
+        assert_eq!(
+            stats.version.as_deref(),
+            Some("BIND 9.20.4 (Stable Release)")
+        );
     }
 
     #[test]
@@ -457,7 +478,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live BIND9 with statistics-channel on localhost:8053"]
     async fn integration_fetch_server_stats_from_live_bind9() {
-        let client = StatsHttpClient::new("http://127.0.0.1:8053/json/v1", std::time::Duration::from_secs(10)).unwrap();
+        let client = StatsHttpClient::new(
+            "http://127.0.0.1:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
         let stats = client.fetch_server_stats().await.unwrap();
         assert!(stats.version.is_some(), "version should be present");
         assert!(stats.boot_time.is_some(), "boot_time should be present");
@@ -466,7 +491,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live BIND9 with statistics-channel on localhost:8053"]
     async fn integration_fetch_zone_stats_from_live_bind9() {
-        let client = StatsHttpClient::new("http://127.0.0.1:8053/json/v1", std::time::Duration::from_secs(10)).unwrap();
+        let client = StatsHttpClient::new(
+            "http://127.0.0.1:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
         let zone = DomainName::new("localhost.").unwrap();
         let stats = client.fetch_zone_stats(&zone).await.unwrap();
         assert_eq!(stats.name, zone);
