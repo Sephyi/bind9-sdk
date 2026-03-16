@@ -252,7 +252,13 @@ impl<'k> RndcConnection<Authenticated<'k>> {
         // Build _ctrl table with serial, timestamp, expiry, and nonce
         let ctrl = build_ctrl_table(self.state.serial, now, self.state.nonce.as_deref());
 
-        // Build _data table with the command type
+        // The ISC rndc wire protocol uses `_data.type` as the field name for the
+        // command-type discriminator in the request and response payload. This is
+        // distinct from the wire-level type tag (0x01 = BINARY, 0x02 = TABLE) used
+        // in ISC binary encoding. Within this module, `_data.type` refers to the
+        // logical command type (e.g., "null", "status", "reload"), while the binary
+        // encoding type tags are handled in `protocol.rs`. See F-005 in the audit
+        // findings doc for the original naming ambiguity.
         let mut data = BTreeMap::new();
         data.insert("type".to_string(), IscValue::String(cmd_text.clone()));
 
