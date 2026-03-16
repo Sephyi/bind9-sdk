@@ -7,12 +7,26 @@
 
 **Goal:** Complete all remaining work for a 100% Phase 1 (v0.1.0-ready) bind9-sdk — e2e integration tests green, code quality gates met, publish-ready crate manifest.
 
-**Architecture:** Four independent work streams: (1) e2e integration tests against live BIND9 9.20 in Podman; (2) property-based and snapshot tests filling the spec gap; (3) large file splits improving maintainability; (4) publish-readiness gates. All changes are additive or internal — no public API breakage.
+**Architecture:** Five ordered work streams: (1) e2e integration tests against live BIND9 9.20 in Podman; (2) large file splits improving maintainability — done BEFORE adding new tests to avoid churn; (3) property-based tests extending existing proptest coverage; (4) insta snapshot tests for the zone serializer; (5) publish-readiness gates including mandatory review agents. All changes are additive or internal — no public API breakage.
 
 **Tech Stack:** Rust 2024, tokio, proptest, insta, napi-rs v2 (bindings placeholder), Podman rootless, BIND9 9.20, cargo-publish
 
 **Branch:** `feat/phase1-completion`
 **Depends on:** `development` at current HEAD (post audit/remediation, 426 tests)
+
+**Dialectic verification:** This plan was reviewed by GLM5 + Codex gpt-5.4 (parallel independent critiques, Opus 4.6 synthesis). 3 CRITICALs and 13 WARNs identified and integrated. Gemini 3 Pro was unavailable (quota exhausted).
+
+## Deferred Items (Not in Scope for Phase 1)
+
+The following audit findings are explicitly deferred to Phase 2+ and are NOT addressed by this plan:
+
+| ID | Description | Rationale |
+| --- | --- | --- |
+| F-012 | Dead `ClientConfig.tls` field — no transport consumes it | Full fix requires TLS/XoT transport (Phase 2). Runtime warning already emitted (commit `87d64ad`). |
+| GPT-ZONE-COL | `ZoneParse` error has line but no column | Requires public error-shape change; not a correctness blocker. Phase 2 diagnostics. |
+| GPT-DNSSEC | DNSSEC RR types use generic serialization | Phase 2+ type-specific DNSSEC work; not a safe narrow patch for Phase 1. |
+
+These items are tracked in `docs/plans/2026-03-16-audit-findings.md` § "Remaining Open Items".
 
 ## Baseline
 
@@ -164,16 +178,28 @@ Both `proptest` and `insta` are already declared in `[workspace.dependencies]` a
   Note: `u64::abs_diff` is stable since Rust 1.60, well within the 1.94 MSRV.
   After the fix, re-run the rndc integration tests to confirm they pass.
 
-- [ ] Document the OQ-007 outcome by adding a comment above `validate_response_ctrl` in `rndc/mod.rs`
-  (regardless of whether the fudge-window fix was needed):
+- [ ] Document the OQ-007 outcome by adding a comment above `validate_response_ctrl` in `rndc/mod.rs`.
+  The comment must reflect which outcome actually occurred:
+
+  **If Outcome A (strict equality passed):**
 
   ```rust
   /// Validate the `_ctrl` fields on an authenticated rndc response.
   ///
-  /// **OQ-007 resolution**: Verified against BIND9 9.20 in e2e integration tests
-  /// (2026-03-16). BIND9 echoes the client's `_tim`/`_exp` values exactly. The
-  /// fudge-window check (±`ISCCC_EXPIRY_SECS`) is retained as a defensive measure
-  /// against sub-second clock skew in future BIND9 versions.
+  /// **OQ-007 resolution (Outcome A)**: Verified against BIND9 9.20 in e2e
+  /// integration tests (2026-03-16). BIND9 echoes the client's `_tim`/`_exp`
+  /// values exactly — strict equality check is correct and retained.
+  fn validate_response_ctrl( ... ) -> Result<(), NetError> {
+  ```
+
+  **If Outcome B (fudge-window fix applied):**
+
+  ```rust
+  /// Validate the `_ctrl` fields on an authenticated rndc response.
+  ///
+  /// **OQ-007 resolution (Outcome B)**: BIND9 9.20 does NOT echo `_tim`/`_exp`
+  /// exactly — server clock skew observed. Replaced strict equality with
+  /// fudge-window tolerance (±`ISCCC_EXPIRY_SECS` = 60 seconds).
   fn validate_response_ctrl( ... ) -> Result<(), NetError> {
   ```
 
@@ -253,40 +279,46 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   }
 
   /// Helper: send a pre-built `UpdateMessage` to BIND9 and return the result.
+  ///
+  /// The `tsig_key` is passed through to `NsUpdateSender::send()` for TSIG
+  /// response verification (RFC 8945 §4.5).
   async fn send_update(
-      msg: bind9_sdk_core::update::UpdateMessage,
+      msg: &bind9_sdk_core::update::UpdateMessage,
+      tsig_key: Option<&TsigKey>,
   ) -> Result<bind9_sdk_core::update::UpdateResult, NetError> {
-      let sender = NsUpdateSender::new(dns_addr(), Duration::from_secs(5));
-      sender.send(&msg).await
+      let sender = NsUpdateSender::with_timeout(dns_addr(), Duration::from_secs(5));
+      sender.send(msg, tsig_key).await
   }
 
   // ---------------------------------------------------------------------------
-  // Test: add an A record, then verify it was accepted (NOERROR rcode).
+  // Each test is fully self-contained: it creates its own preconditions and
+  // cleans up after itself. No test depends on another test having run first.
+  // This means tests can run in any order and even in parallel if needed.
   // ---------------------------------------------------------------------------
 
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:15353"]
-  async fn nsupdate_add_a_record_noerror() {
+  async fn add_a_record_noerror() {
       update_settle().await;
 
       let zone = DomainName::new("example.com.").unwrap();
       let key = test_key();
+      let name = DomainName::new("add-test.example.com.").unwrap();
 
-      // Add test.example.com. 60 IN A 192.0.2.1
+      // Add add-test.example.com. 60 IN A 192.0.2.1
       let record = ResourceRecord {
-          name: DomainName::new("test.example.com.").unwrap(),
-          rtype: RecordType::A,
+          name: name.clone(),
           class: RecordClass::IN,
-          ttl: Ttl::new(60),
-          data: RecordData::A("192.0.2.1".parse().unwrap()),
+          ttl: Ttl::new(60).unwrap(),
+          rdata: RecordData::A("192.0.2.1".parse().unwrap()),
       };
 
-      let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+      let msg = UpdateBuilder::with_id(1, zone.clone(), RecordClass::IN)
           .add_record(record)
           .sign(&key, 0)
           .build();
 
-      let result = send_update(msg).await.expect("update send failed");
+      let result = send_update(&msg, Some(&key)).await.expect("update send failed");
 
       assert_eq!(
           result.rcode,
@@ -294,27 +326,46 @@ DNS update port is **15353** (container maps port 53 → host 15353).
           "expected NOERROR, got {:?}",
           result.rcode
       );
-  }
 
-  // ---------------------------------------------------------------------------
-  // Test: delete the A record added above, then verify NOERROR.
-  // ---------------------------------------------------------------------------
+      // Cleanup: delete the record we just added.
+      let cleanup = UpdateBuilder::with_id(99, zone, RecordClass::IN)
+          .delete_rrset(&name, RecordType::A)
+          .sign(&key, 0)
+          .build();
+      let _ = send_update(&cleanup, Some(&key)).await;
+  }
 
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:15353"]
-  async fn nsupdate_delete_a_record_noerror() {
+  async fn delete_a_record_noerror() {
       update_settle().await;
 
       let zone = DomainName::new("example.com.").unwrap();
       let key = test_key();
+      let name = DomainName::new("del-test.example.com.").unwrap();
 
-      // Delete all A records at test.example.com.
-      let msg = UpdateBuilder::with_id(2, zone, RecordClass::IN)
-          .delete_rrset(&DomainName::new("test.example.com.").unwrap(), RecordType::A)
+      // Setup: add a record so we have something to delete.
+      let record = ResourceRecord {
+          name: name.clone(),
+          class: RecordClass::IN,
+          ttl: Ttl::new(60).unwrap(),
+          rdata: RecordData::A("192.0.2.99".parse().unwrap()),
+      };
+
+      let setup = UpdateBuilder::with_id(10, zone.clone(), RecordClass::IN)
+          .add_record(record)
+          .sign(&key, 0)
+          .build();
+      send_update(&setup, Some(&key)).await.expect("setup add failed");
+      update_settle().await;
+
+      // Now delete it.
+      let msg = UpdateBuilder::with_id(11, zone, RecordClass::IN)
+          .delete_rrset(&name, RecordType::A)
           .sign(&key, 0)
           .build();
 
-      let result = send_update(msg).await.expect("update send failed");
+      let result = send_update(&msg, Some(&key)).await.expect("update send failed");
 
       assert_eq!(
           result.rcode,
@@ -324,13 +375,9 @@ DNS update port is **15353** (container maps port 53 → host 15353).
       );
   }
 
-  // ---------------------------------------------------------------------------
-  // Test: wrong TSIG key → server returns BADSIG → NetError::TsigRejected.
-  // ---------------------------------------------------------------------------
-
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:15353"]
-  async fn nsupdate_wrong_key_returns_tsig_rejected() {
+  async fn wrong_key_returns_tsig_rejected() {
       update_settle().await;
 
       let zone = DomainName::new("example.com.").unwrap();
@@ -345,10 +392,9 @@ DNS update port is **15353** (container maps port 53 → host 15353).
 
       let record = ResourceRecord {
           name: DomainName::new("wrongkey.example.com.").unwrap(),
-          rtype: RecordType::A,
           class: RecordClass::IN,
-          ttl: Ttl::new(60),
-          data: RecordData::A("192.0.2.9".parse().unwrap()),
+          ttl: Ttl::new(60).unwrap(),
+          rdata: RecordData::A("192.0.2.9".parse().unwrap()),
       };
 
       let msg = UpdateBuilder::with_id(3, zone, RecordClass::IN)
@@ -356,7 +402,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
           .sign(&wrong_key, 0)
           .build();
 
-      let err = send_update(msg).await.expect_err("expected error with wrong key");
+      let err = send_update(&msg, Some(&wrong_key)).await.expect_err("expected error with wrong key");
 
       assert!(
           matches!(err, NetError::TsigRejected { .. }),
@@ -364,13 +410,9 @@ DNS update port is **15353** (container maps port 53 → host 15353).
       );
   }
 
-  // ---------------------------------------------------------------------------
-  // Test: unsatisfied prerequisite (name does not exist) → PrerequisiteFailed.
-  // ---------------------------------------------------------------------------
-
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:15353"]
-  async fn nsupdate_unsatisfied_prerequisite_returns_prerequisite_failed() {
+  async fn unsatisfied_prerequisite_returns_prerequisite_failed() {
       update_settle().await;
 
       let zone = DomainName::new("example.com.").unwrap();
@@ -383,7 +425,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
           .sign(&key, 0)
           .build();
 
-      let err = send_update(msg).await.expect_err("expected prerequisite failure");
+      let err = send_update(&msg, Some(&key)).await.expect_err("expected prerequisite failure");
 
       assert!(
           matches!(err, NetError::PrerequisiteFailed { .. }),
@@ -408,12 +450,11 @@ DNS update port is **15353** (container maps port 53 → host 15353).
 
   Expected: all 4 tests pass.
 
-  **If `delete_a_record` fails with NXRRSET:** The record from `add_a_record` was not persisted
-  between tests. This is expected if the previous test was skipped — run only the add test first,
-  then the delete. For CI, the ordering within `--test-threads=1` is declaration order, which
-  matches the file order above.
+  **If `delete_a_record_noerror` fails with NXRRSET:** The setup add inside the delete test
+  itself failed silently. Check BIND9 container logs — the most likely cause is that the
+  TSIG key is misconfigured or the zone doesn't permit dynamic updates.
 
-  **If `nsupdate_wrong_key_returns_tsig_rejected` returns `NetError::UpdateRejected` instead of
+  **If `wrong_key_returns_tsig_rejected` returns `NetError::UpdateRejected` instead of
   `NetError::TsigRejected`:** This means `classify_update_result` is not catching the BADSIG rcode
   from the TSIG response. Check that `NsUpdateSender::send()` calls `Bind9Client::classify_update_result()`
   on the TSIG verification path and update accordingly.
@@ -442,6 +483,8 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   //!
   //! See `tests/README.md` for BIND9 setup instructions.
 
+  use std::time::Duration;
+
   use bind9_sdk_core::domain::DomainName;
   use bind9_sdk_net::stats::StatsHttpClient;
 
@@ -452,7 +495,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   #[tokio::test]
   #[ignore = "requires live BIND9 statistics-channel on localhost:8053"]
   async fn stats_fetch_server_stats_has_version() {
-      let client = StatsHttpClient::new("http://127.0.0.1:8053".to_string(), None)
+      let client = StatsHttpClient::new("http://con127.0.0.1:8053", Duration::from_secs(5))
           .expect("client construction failed");
 
       let stats = client
@@ -474,7 +517,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   #[tokio::test]
   #[ignore = "requires live BIND9 statistics-channel on localhost:8053"]
   async fn stats_fetch_zone_stats_example_com() {
-      let client = StatsHttpClient::new("http://127.0.0.1:8053".to_string(), None)
+      let client = StatsHttpClient::new("http://127.0.0.1:8053", Duration::from_secs(5))
           .expect("client construction failed");
 
       let zone_name = DomainName::new("example.com.").unwrap();
@@ -495,14 +538,15 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   }
 
   // ---------------------------------------------------------------------------
-  // Test: connect to wrong port → NetError::Http.
+  // Test: connect to wrong port → NetError::Connection (not Http — connection
+  // refused maps to Connection, not Http; Http is for non-2xx status codes).
   // ---------------------------------------------------------------------------
 
   #[tokio::test]
   #[ignore = "requires live BIND9 statistics-channel on localhost:8053"]
-  async fn stats_wrong_port_returns_http_error() {
+  async fn stats_wrong_port_returns_connection_error() {
       // Port 19999 should be closed on the test host.
-      let client = StatsHttpClient::new("http://127.0.0.1:19999".to_string(), None)
+      let client = StatsHttpClient::new("http://127.0.0.1:19999", Duration::from_secs(2))
           .expect("client construction failed");
 
       let err = client
@@ -511,8 +555,8 @@ DNS update port is **15353** (container maps port 53 → host 15353).
           .expect_err("expected error connecting to wrong port");
 
       assert!(
-          matches!(err, bind9_sdk_net::error::NetError::Http(_)),
-          "expected NetError::Http, got {err:?}"
+          matches!(err, bind9_sdk_net::error::NetError::Connection(_)),
+          "expected NetError::Connection, got {err:?}"
       );
   }
   ```
@@ -573,47 +617,51 @@ Audit finding F-005 is a documentation alignment item. Add the clarifying commen
   git commit -m "docs(net): clarify _data.type vs ISC type-tag naming (F-005)"
   ```
 
-## Chunk 2: Property-based Tests (proptest)
+## Chunk 3: Property-based Tests (proptest)
 
-**Goal:** Fill the proptest gap identified by `GPT-PROP`. Add meaningful property-based tests for
-the zone parser, TSIG sign/verify, and UpdateBuilder wire encoding. proptest + insta are already
+**Goal:** Extend the existing proptest coverage to satisfy `GPT-PROP`. proptest + insta are already
 in `bind9-sdk-core`'s `[dev-dependencies]` — no Cargo.toml changes needed for this chunk.
 
+**Existing coverage (extend, do not duplicate):**
+- `tsig.rs` already has `mod proptests` with `sign_verify_roundtrip` and
+  `sign_verify_different_message_fails` (line ~1482). New tests extend this module.
+- `zone/parser.rs` already has `mod proptests` (line ~1105). New tests extend this module.
+- `zone/serializer.rs` already has `mod roundtrip_tests` (line ~198). Snapshot tests (Chunk 4)
+  complement rather than replace these.
+
 **Files touched:**
-- `crates/bind9-sdk-core/src/zone/parser.rs` (add `mod proptests` to the existing `#[cfg(test)]` block)
-- `crates/bind9-sdk-core/src/tsig.rs` (add new proptest cases to existing `mod proptests`)
-- `crates/bind9-sdk-core/src/update.rs` (add `mod proptests` to the existing `#[cfg(test)]` block)
+- `crates/bind9-sdk-core/src/zone/parser/tests.rs` (extend existing proptests — after Chunk 2 split)
+- `crates/bind9-sdk-core/src/tsig/tests.rs` (extend existing proptests — after Chunk 2 split)
+- `crates/bind9-sdk-core/src/update/tests.rs` (add new proptests — after Chunk 2 split)
 
-**Note:** `tsig.rs` already has a `mod proptests` with `sign_verify_roundtrip` and
-`sign_verify_different_message_fails`. The new tests extend those. The other two files do not
-yet have proptest sections.
+**Depends on:** Chunk 2 (file splits) must be completed first to avoid adding tests to files
+that will be immediately split, causing avoidable churn.
 
-### Step 2.1 — Inspect existing test structure in parser.rs and update.rs
+### Step 3.1 — Inspect existing test structure in post-split files
 
-Before writing, confirm where the `#[cfg(test)]` blocks end in each file:
+After Chunk 2's file splits, tests live in dedicated files. Confirm the structure:
 
-- [ ] Check the last ~40 lines of `crates/bind9-sdk-core/src/zone/parser.rs`:
-
-  ```bash
-  tail -40 crates/bind9-sdk-core/src/zone/parser.rs
-  ```
-
-- [ ] Check the last ~40 lines of `crates/bind9-sdk-core/src/update.rs`:
+- [ ] Check the test file for the zone parser:
 
   ```bash
-  tail -40 crates/bind9-sdk-core/src/update.rs
+  cat crates/bind9-sdk-core/src/zone/parser/tests.rs | head -20
   ```
 
-  Use the output to identify the correct insertion point (before the closing `}` of the
-  existing `#[cfg(test)]` module).
+- [ ] Check the test file for update:
 
-### Step 2.2 — proptest for zone parser (no-panic + roundtrip)
+  ```bash
+  cat crates/bind9-sdk-core/src/update/tests.rs | head -20
+  ```
 
-The zone parser already has unit tests in `parser.rs`. Add a `mod proptests` sub-module
-inside the existing `#[cfg(test)] mod tests { ... }` block.
+  Use the output to identify the correct insertion point for new proptests.
 
-- [ ] Add the following to the end of the `#[cfg(test)]` block in
-  `crates/bind9-sdk-core/src/zone/parser.rs`, before its closing `}`:
+### Step 3.2 — proptest for zone parser (no-panic + roundtrip)
+
+The zone parser already has proptests (moved to `zone/parser/tests.rs` by Chunk 2). Extend
+the existing `mod proptests` with additional property tests.
+
+- [ ] Add the following to the existing proptests in
+  `crates/bind9-sdk-core/src/zone/parser/tests.rs`:
 
   ```rust
       mod proptests {
@@ -628,9 +676,9 @@ inside the existing `#[cfg(test)] mod tests { ... }` block.
               /// or any other `Err`, but it must not panic or abort.
               #[test]
               fn zone_parser_never_panics(input in "\\PC*") {
-                  // parse_zone_file is the internal entry point; use it directly.
+                  use crate::zone::ZoneFile;
                   // We only care that no panic occurs — errors are fine.
-                  let _ = parse_zone_file(&input, None, None);
+                  let _ = ZoneFile::parse(&input);
               }
 
               /// DomainName::new must never panic on arbitrary input.
@@ -662,13 +710,9 @@ inside the existing `#[cfg(test)] mod tests { ... }` block.
       }
   ```
 
-  **Note on `parse_zone_file`:** This is the package-internal function exposed by `parser.rs`.
-  If its signature differs (e.g., takes a `ParseOptions` struct or `origin: Option<&DomainName>`),
-  adjust the call to match — use whatever minimal call compiles. Check with:
-
-  ```bash
-  grep "pub\|pub(crate) fn parse_zone_file" crates/bind9-sdk-core/src/zone/parser.rs | head -5
-  ```
+  **Note:** `ZoneFile::parse(input)` is the public entry point (`zone/mod.rs:86`). It delegates
+  to the internal `parser::parse_zone(input, None)`. Using the public API ensures proptests
+  exercise the same code path as users.
 
 - [ ] Run the new tests:
 
@@ -681,17 +725,18 @@ inside the existing `#[cfg(test)] mod tests { ... }` block.
 - [ ] Commit:
 
   ```bash
-  git add crates/bind9-sdk-core/src/zone/parser.rs
-  git commit -m "test(core): add proptest no-panic and DomainName invariant tests for zone parser"
+  git add crates/bind9-sdk-core/src/zone/parser/tests.rs
+  git commit -m "test(core): extend zone parser proptests — no-panic and DomainName invariants"
   ```
 
-### Step 2.3 — proptest for TSIG: cross-key failure + wrong-algorithm failure
+### Step 3.3 — proptest for TSIG: cross-key failure + MAC length invariant
 
-The existing `mod proptests` in `tsig.rs` covers sign/verify roundtrip and different-message failure.
-Add two more:
+The existing `mod proptests` in `tsig/tests.rs` covers sign/verify roundtrip and different-message
+failure. Extend with two more. Note: `TsigKey::new()` accepts any key ≥1 byte (only empty keys are
+rejected; short keys get a warning under `std` but succeed).
 
-- [ ] Add the following inside the existing `mod proptests { proptest! { ... } }` block in
-  `crates/bind9-sdk-core/src/tsig.rs` (inside the existing `proptest!` macro invocation):
+- [ ] Add the following inside the existing `proptest!` macro invocation in
+  `crates/bind9-sdk-core/src/tsig/tests.rs`:
 
   ```rust
           /// Signing with one key and verifying with a different key must always fail.
@@ -750,14 +795,14 @@ Add two more:
 - [ ] Commit:
 
   ```bash
-  git add crates/bind9-sdk-core/src/tsig.rs
+  git add crates/bind9-sdk-core/src/tsig/tests.rs
   git commit -m "test(core): extend TSIG proptests — cross-key failure and MAC length invariant"
   ```
 
-### Step 2.4 — proptest for UpdateBuilder wire encoding invariants
+### Step 3.4 — proptest for UpdateBuilder wire encoding invariants
 
-- [ ] Add a `mod proptests` inside the existing `#[cfg(test)]` block in
-  `crates/bind9-sdk-core/src/update.rs`, before the final `}`:
+- [ ] Add a `mod proptests` to the test file
+  `crates/bind9-sdk-core/src/update/tests.rs`:
 
   ```rust
       mod proptests {
@@ -801,11 +846,11 @@ Add two more:
                   );
               }
 
-              /// The QR bit (bit 15 of flags, bytes 2–3) is always set in UPDATE messages.
+              /// The opcode field (bits 11–14 of flags) is always 5 (UPDATE) in messages
+              /// produced by UpdateBuilder.
               ///
-              /// RFC 2136 §2: the QR bit is set to 1 in response messages;
-              /// in UPDATE messages (opcode 5) the QR bit is 0 for requests.
-              /// This test verifies the opcode field (bits 11–14) is 5 (UPDATE).
+              /// Note: QR=0 for UPDATE requests (QR=1 is response-only per RFC 1035 §4.1.1).
+              /// This test verifies the opcode, not QR.
               #[test]
               fn opcode_is_update(
                   id in 0u16..=u16::MAX,
@@ -849,15 +894,17 @@ Add two more:
 - [ ] Commit:
 
   ```bash
-  git add crates/bind9-sdk-core/src/update.rs
+  git add crates/bind9-sdk-core/src/update/tests.rs
   git commit -m "test(core): add proptest invariants for UpdateBuilder wire encoding"
   ```
 
-## Chunk 3: Snapshot Tests (insta)
+## Chunk 4: Snapshot Tests (insta)
 
 **Goal:** Fill the `GPT-SNAP` gap by adding insta snapshot tests for the zone serializer.
 These tests catch silent regressions in serialized output format. `insta` is already in
-`bind9-sdk-core`'s `[dev-dependencies]`.
+`bind9-sdk-core`'s `[dev-dependencies]`. The zone serializer already has `mod roundtrip_tests`
+(line ~198 in `serializer.rs`) — snapshot tests complement those with deterministic golden-file
+comparisons.
 
 **Files touched:**
 - `crates/bind9-sdk-core/src/zone/serializer.rs` (add `mod snapshot_tests`)
@@ -867,7 +914,7 @@ These tests catch silent regressions in serialized output format. `insta` is alr
 then run `cargo insta review` to bless the initial snapshots. Re-run `cargo test` — tests pass.
 Commit the `snapshots/` directory alongside the test code.
 
-### Step 3.1 — Inspect the zone serializer's public surface
+### Step 4.1 — Inspect the zone serializer's public surface
 
 - [ ] Read the top 50 lines of `crates/bind9-sdk-core/src/zone/serializer.rs` to understand
   the `ZoneFile` → `String` or `serialize()` API:
@@ -887,7 +934,7 @@ Commit the `snapshots/` directory alongside the test code.
 
   Record the exact function signatures before writing tests.
 
-### Step 3.2 — Add snapshot tests for zone serializer
+### Step 4.2 — Add snapshot tests for zone serializer
 
 - [ ] Add a `mod snapshot_tests` inside the existing `#[cfg(test)]` block in
   `crates/bind9-sdk-core/src/zone/serializer.rs` (or create a new `#[cfg(test)]` block if
@@ -901,30 +948,28 @@ Commit the `snapshots/` directory alongside the test code.
       use alloc::string::String;
 
       use crate::domain::DomainName;
-      use crate::protocol::RecordType;
       use crate::rdata::RecordData;
       use crate::record::{RecordClass, ResourceRecord, Ttl};
-      use crate::zone::mod_::ZoneFile; // adjust path to match actual import
+      use crate::zone::ZoneFile;
 
       /// Build a minimal zone file with one SOA and one A record for snapshot testing.
       fn minimal_zone() -> ZoneFile {
-          // Build by parsing a known-good zone file string.
-          // This avoids depending on internal ZoneFile constructor details.
+          // Build by parsing a known-good zone file string via the public API.
           let input = "\
+  $ORIGIN example.com.\n\
   $TTL 3600\n\
   @ IN SOA ns1.example.com. admin.example.com. (\n\
       2026031601 3600 900 604800 86400 )\n\
   @ IN NS ns1.example.com.\n\
   ns1 IN A 127.0.0.1\n\
   ";
-          let origin = DomainName::new("example.com.").unwrap();
-          crate::zone::parser::parse_zone_file(input, Some(&origin), None)
-              .expect("minimal zone parse failed")
+          ZoneFile::parse(input).expect("minimal zone parse failed")
       }
 
       /// Build a zone file with one record of each common type.
       fn multi_rtype_zone() -> ZoneFile {
           let input = "\
+  $ORIGIN example.org.\n\
   $TTL 300\n\
   @ IN SOA ns1.example.org. admin.example.org. ( 2026031601 3600 900 604800 86400 )\n\
   @ IN NS ns1.example.org.\n\
@@ -935,9 +980,7 @@ Commit the `snapshots/` directory alongside the test code.
   www IN CNAME example.org.\n\
   @ IN CAA 0 issue \"letsencrypt.org\"\n\
   ";
-          let origin = DomainName::new("example.org.").unwrap();
-          crate::zone::parser::parse_zone_file(input, Some(&origin), None)
-              .expect("multi-rtype zone parse failed")
+          ZoneFile::parse(input).expect("multi-rtype zone parse failed")
       }
 
       #[test]
@@ -958,9 +1001,8 @@ Commit the `snapshots/` directory alongside the test code.
       fn snapshot_roundtrip_minimal_zone() {
           // parse → serialize → parse → serialize: both serializations must match.
           let zone1 = minimal_zone();
-          let origin = DomainName::new("example.com.").unwrap();
           let serialized1 = zone1.serialize();
-          let zone2 = crate::zone::parser::parse_zone_file(&serialized1, Some(&origin), None)
+          let zone2 = ZoneFile::parse(&serialized1)
               .expect("round-trip re-parse failed");
           let serialized2 = zone2.serialize();
           // Snapshot the round-tripped output — this catches any non-idempotent serialization.
@@ -974,18 +1016,9 @@ Commit the `snapshots/` directory alongside the test code.
   }
   ```
 
-  **Adjust the `ZoneFile` import and `serialize()` call** to match the actual API.
-  Common possibilities:
-  - `zone.to_string()` if `Display` is implemented
-  - `zone.serialize()` returning `String`
-  - `serializer::serialize(&zone)` as a free function
-
-  Check with:
-
-  ```bash
-  grep -n "fn serialize\|fn to_string\|impl Display" \
-    crates/bind9-sdk-core/src/zone/serializer.rs | head -10
-  ```
+  **API verified:** `ZoneFile::serialize(&self) -> String` exists at `zone/mod.rs:99`.
+  It delegates to `serializer::serialize(self)` internally. The `ZoneFile` import path
+  is `crate::zone::ZoneFile`.
 
 - [ ] Run the snapshot tests for the first time (they will fail because no snapshots exist):
 
@@ -1040,11 +1073,18 @@ Commit the `snapshots/` directory alongside the test code.
   git commit -m "test(core): add insta snapshot tests for zone serializer (GPT-SNAP)"
   ```
 
-## Chunk 4: Large File Splits
+## Chunk 2: Large File Splits
 
 **Goal:** Split the three files that exceed 1000 lines into submodules. These are purely internal
 refactors — no public API changes, no semantic changes. All existing tests must continue to pass
 after each split.
+
+**IMPORTANT — Execute BEFORE Chunks 3/4:** This chunk MUST be completed before adding new
+proptest/insta tests (Chunks 3/4). Adding tests to files that are immediately split causes
+avoidable churn and larger review surfaces. Split first, then add tests to the split modules.
+
+**Architectural note:** File splitting is an architectural refactor. Run `/dialectic-verify` on the
+final split result before proceeding to Chunk 3.
 
 **Files affected:**
 
@@ -1064,7 +1104,7 @@ after each split.
    `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` to confirm nothing broke.
 6. Commit.
 
-### Step 4.1 — Split `tsig.rs` into `tsig/` submodule
+### Step 2.1 — Split `tsig.rs` into `tsig/` submodule
 
 **Proposed split:**
 
@@ -1196,7 +1236,7 @@ Before starting, scan the current `tsig.rs` to map imports and internal function
   git commit -m "refactor(core): split tsig.rs (1518 lines) into tsig/ submodule"
   ```
 
-### Step 4.2 — Split `update.rs` into `update/` submodule
+### Step 2.2 — Split `update.rs` into `update/` submodule
 
 **Proposed split:**
 
@@ -1262,7 +1302,7 @@ Before starting:
   git commit -m "refactor(core): split update.rs (1342 lines) into update/ submodule"
   ```
 
-### Step 4.3 — Split `zone/parser.rs` into `zone/parser/` submodule
+### Step 2.3 — Split `zone/parser.rs` into `zone/parser/` submodule
 
 **Proposed split:**
 
@@ -1326,7 +1366,7 @@ Before starting:
   git commit -m "refactor(core): split zone/parser.rs (1189 lines) into zone/parser/ submodule"
   ```
 
-### Step 4.4 — Post-split workspace validation
+### Step 2.4 — Post-split workspace validation
 
 After all three splits, run the full workspace check:
 
@@ -1346,13 +1386,16 @@ After all three splits, run the full workspace check:
 
   Expected: no warnings.
 
-- [ ] WASM check:
+- [ ] WASM check (core crate only — `bind9-sdk-net` uses tokio/reqwest which are not WASM-compatible):
 
   ```bash
-  cargo check --workspace --target wasm32-unknown-unknown
+  cargo check -p bind9-sdk-core --target wasm32-unknown-unknown
   ```
 
   Expected: `Finished` with no errors.
+
+- [ ] Run `/dialectic-verify` on the split result (architectural refactor requires verification
+  per CLAUDE.md § Verification Workflow).
 
 - [ ] Commit a summary if no final commit was needed:
 
@@ -1551,7 +1594,35 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
   git commit -m "chore: add keywords and categories to Cargo.toml for crates.io discoverability"
   ```
 
-### Step 5.5 — Final `cargo audit` and `cargo deny check`
+### Step 5.5 — Mandatory pre-release review agents
+
+Per CLAUDE.md § Verification Workflow, run all three mandatory review agents before release:
+
+- [ ] Run `cargo-dep-auditor`:
+
+  Dispatch the `cargo-dep-auditor` agent to audit workspace dependencies for outdated versions,
+  yanked crates, and security advisories. Address any CRITICAL or HIGH findings.
+
+- [ ] Run `rust-security-reviewer`:
+
+  Dispatch the `rust-security-reviewer` agent to audit TSIG/crypto key exposure, DNS parsing
+  safety, rndc input validation, RFC 2136 injection vectors, WASM boundary, zeroization, and
+  NIS2 logging compliance. Address any CRITICAL findings.
+
+- [ ] Run `api-compat-reviewer`:
+
+  Dispatch the `api-compat-reviewer` agent to verify pub API surface, `#[non_exhaustive]` enums,
+  Send+Sync bounds, re-export coverage, and semver compatibility. Address any findings that
+  would break the v0.1.0 public API contract.
+
+- [ ] Commit any fixes from review agents:
+
+  ```bash
+  git add -u
+  git commit -m "fix: address pre-release review agent findings"
+  ```
+
+### Step 5.6 — Final `cargo audit` and `cargo deny check`
 
 - [ ] Run the dependency security audit:
 
@@ -1577,7 +1648,7 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
 
   Expected: `PASS` or only informational warnings.
 
-### Step 5.6 — Final `cargo publish --dry-run` with all changes applied
+### Step 5.7 — Final `cargo publish --dry-run` with all changes applied
 
 - [ ] Re-run the dry-run publish after all Chunk 5 changes:
 
@@ -1589,7 +1660,7 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
 
   Expected: `Uploading bind9-sdk vX.Y.Z` (dry-run; not actually uploaded) with no fatal errors.
 
-### Step 5.7 — Full workspace final quality gate
+### Step 5.8 — Full workspace final quality gate
 
 - [ ] Run the complete quality gate:
 
@@ -1597,10 +1668,11 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
   cargo fmt --check --all
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace 2>&1 | grep "test result"
-  cargo check --workspace --target wasm32-unknown-unknown
+  cargo check -p bind9-sdk-core --target wasm32-unknown-unknown
   ```
 
-  All four commands must succeed. The test count should be at least 426 (baseline) + new tests
+  All four commands must succeed. Note: the WASM check targets `bind9-sdk-core` only —
+  `bind9-sdk-net` uses tokio/reqwest which are not WASM-compatible (by design). The test count should be at least 426 (baseline) + new tests
   from Chunks 2–3.
 
 - [ ] Commit any final fixups:
@@ -1610,7 +1682,7 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
   git commit -m "chore: final quality gate pass before phase1 completion tag"
   ```
 
-### Step 5.8 — Open a PR from `feat/phase1-completion` to `development`
+### Step 5.9 — Open a PR from `feat/phase1-completion` to `development`
 
 - [ ] Push the branch:
 
@@ -1659,7 +1731,7 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
   ## Test plan
 
   - [ ] `cargo test --workspace` — all tests pass
-  - [ ] `cargo check --workspace --target wasm32-unknown-unknown` — WASM clean
+  - [ ] `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` — core WASM clean
   - [ ] `cargo clippy --workspace --all-targets -- -D warnings` — clippy clean
   - [ ] Integration tests with live BIND9: `cargo test --workspace -- --ignored --test-threads=1`
   - [ ] `cargo publish --dry-run -p bind9-sdk` — no fatal errors
@@ -1667,12 +1739,14 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
 
 ## Appendix: Known Edge Cases
 
-### nsupdate test ordering
+### nsupdate test independence
 
-The `add` and `delete` integration tests in `nsupdate_integration.rs` are stateful:
-`delete` depends on `add` having run first. Running them with `--test-threads=1` guarantees
-declaration order. If flakiness occurs, add an explicit `update_settle()` call at the start
-of the `delete` test and verify the record exists with a DNS query before attempting deletion.
+Each integration test in `nsupdate_integration.rs` is fully self-contained. Tests that
+need preconditions (e.g., `delete_a_record_noerror` needs a record to exist) create their
+own setup state within the test body and clean up after themselves. No test depends on
+another test having run first. This means tests are safe to run in any order, including
+concurrently. The `--test-threads=1` flag is used only to avoid overloading the BIND9
+container, not to enforce ordering.
 
 ### insta snapshot path
 
@@ -1711,7 +1785,16 @@ circular `use` paths within the new submodule.
 
 ### OQ-007 fudge-window condition
 
-If the existing strict-equality check passes in live BIND9 9.20 testing (i.e., BIND9 echoes
-the exact integer values back), do NOT apply the fudge-window fix. Leave the strict check
-as-is. The fudge window is a purely defensive change that only applies if there is evidence
-of clock skew in practice. Document the OQ-007 outcome either way.
+Two mutually exclusive outcomes exist:
+
+- **Outcome A (strict equality):** If live BIND9 9.20 testing shows that BIND9 echoes the
+  exact `_tim`/`_exp` integer values back, the existing strict-equality check is correct.
+  Do NOT apply the fudge-window fix. Leave the strict check as-is.
+
+- **Outcome B (fudge window):** If BIND9 applies clock skew or rounding to the returned
+  values, replace the strict-equality check with a fudge-window comparison using
+  `ISCCC_EXPIRY_SECS` (defined in `rndc/mod.rs`, value: 60). The fudge window should
+  verify that `|returned - sent| <= ISCCC_EXPIRY_SECS`.
+
+Only one outcome applies. Step 1.3 tests for Outcome A first. If it passes, Outcome B is
+skipped entirely. Document the OQ-007 result either way.
