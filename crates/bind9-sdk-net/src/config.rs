@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
+use bind9_sdk_core::protocol::Rcode;
 use bind9_sdk_core::traits::{
     DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneStats,
 };
@@ -75,6 +76,11 @@ impl Bind9Client {
     /// This does not establish any connections — connections are created
     /// on demand by trait method implementations.
     pub fn new(config: ClientConfig) -> Self {
+        if config.tls.is_some() {
+            tracing::warn!(
+                "ClientConfig.tls is configured but TLS transports are not implemented yet"
+            );
+        }
         Self { config }
     }
 
@@ -102,6 +108,21 @@ impl Bind9Client {
         tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| NetError::Timeout(timeout))?
+    }
+
+    /// Convert a raw update result into the high-level error taxonomy.
+    fn classify_update_result(result: UpdateResult) -> Result<UpdateResult, NetError> {
+        match result.rcode {
+            Rcode::NoError => Ok(result),
+            Rcode::NxDomain | Rcode::YxDomain | Rcode::NxRrset | Rcode::YxRrset => {
+                Err(NetError::PrerequisiteFailed {
+                    rcode: result.rcode,
+                })
+            }
+            _ => Err(NetError::UpdateRejected {
+                rcode: result.rcode.to_string(),
+            }),
+        }
     }
 }
 
@@ -200,7 +221,7 @@ impl DynamicUpdater for Bind9Client {
         } else {
             None
         };
-        sender.send(update, key).await
+        Self::classify_update_result(sender.send(update, key).await?)
     }
 }
 
@@ -209,6 +230,7 @@ mod tests {
     use super::*;
 
     use crate::config::test_key;
+    use bind9_sdk_core::protocol::Rcode;
 
     #[test]
     fn client_config_construction() {
@@ -272,6 +294,42 @@ mod tests {
             timeout: Duration::from_secs(10),
         };
         assert!(config.tls.is_some());
+    }
+
+    #[test]
+    fn classify_update_result_returns_success() {
+        let result = UpdateResult {
+            rcode: Rcode::NoError,
+            id: 0x1234,
+        };
+        let classified = Bind9Client::classify_update_result(result.clone()).unwrap();
+        assert_eq!(classified, result);
+    }
+
+    #[test]
+    fn classify_update_result_maps_prerequisite_failure() {
+        let err = Bind9Client::classify_update_result(UpdateResult {
+            rcode: Rcode::NxRrset,
+            id: 0x2222,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            NetError::PrerequisiteFailed {
+                rcode: Rcode::NxRrset
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_update_result_maps_general_rejection() {
+        let err = Bind9Client::classify_update_result(UpdateResult {
+            rcode: Rcode::Refused,
+            id: 0x3333,
+        })
+        .unwrap_err();
+        assert!(matches!(err, NetError::UpdateRejected { .. }));
+        assert!(err.to_string().contains("REFUSED"));
     }
 }
 

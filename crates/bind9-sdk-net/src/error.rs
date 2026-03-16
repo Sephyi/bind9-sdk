@@ -4,6 +4,8 @@
 
 use std::time::Duration;
 
+use bind9_sdk_core::protocol::Rcode;
+
 /// Errors from the `bind9-sdk-net` crate.
 ///
 /// Covers network failures, protocol errors, authentication failures,
@@ -38,6 +40,14 @@ pub enum NetError {
     /// HTTP error from the statistics-channel.
     #[error("HTTP error: {status}")]
     Http { status: u16, body: String },
+
+    /// DNS update prerequisite failed with a typed RFC 2136 RCODE.
+    #[error("DNS update prerequisite failed: {rcode}")]
+    PrerequisiteFailed { rcode: Rcode },
+
+    /// DNS update TSIG authentication was explicitly rejected.
+    #[error("DNS update TSIG rejected: {message} (code {code})")]
+    TsigRejected { code: u16, message: String },
 
     /// DNS server rejected an RFC 2136 update.
     #[error("DNS update rejected: {rcode}")]
@@ -95,6 +105,23 @@ mod tests {
             body: "unavailable".into(),
         };
         assert_eq!(err.to_string(), "HTTP error: 503");
+    }
+
+    #[test]
+    fn prerequisite_failed_display() {
+        let err = NetError::PrerequisiteFailed {
+            rcode: Rcode::NxDomain,
+        };
+        assert_eq!(err.to_string(), "DNS update prerequisite failed: NXDOMAIN");
+    }
+
+    #[test]
+    fn tsig_rejected_display() {
+        let err = NetError::TsigRejected {
+            code: 17,
+            message: "BADKEY".into(),
+        };
+        assert_eq!(err.to_string(), "DNS update TSIG rejected: BADKEY (code 17)");
     }
 
     #[test]

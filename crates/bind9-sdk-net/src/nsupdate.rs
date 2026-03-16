@@ -59,6 +59,17 @@ fn is_truncated(response: &[u8]) -> bool {
 /// TSIG record type value (RFC 8945).
 const TSIG_TYPE: u16 = 250;
 
+/// Human-readable TSIG error names from RFC 8945 / DNS RCODE registry.
+fn tsig_error_name(code: u16) -> &'static str {
+    match code {
+        16 => "BADSIG",
+        17 => "BADKEY",
+        18 => "BADTIME",
+        22 => "BADTRUNC",
+        _ => "TSIGERROR",
+    }
+}
+
 /// Skip an uncompressed or compressed DNS name in wire format.
 ///
 /// Advances `pos` past the name. Returns `Err` if the wire is truncated.
@@ -230,10 +241,10 @@ impl NsUpdateSender {
 
                 // Per RFC 8945 §5.2: check TSIG error before using MAC for chaining
                 if response_tsig.error != 0 {
-                    return Err(NetError::Protocol(format!(
-                        "response TSIG error: {}",
-                        response_tsig.error
-                    )));
+                    return Err(NetError::TsigRejected {
+                        code: response_tsig.error,
+                        message: tsig_error_name(response_tsig.error).to_string(),
+                    });
                 }
 
                 // The message bytes for verification = response without TSIG, ARCOUNT decremented
