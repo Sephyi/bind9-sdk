@@ -25,27 +25,68 @@
 //!
 //! The typestate pattern ensures at compile time that `command()` cannot
 //! be called on an unauthenticated connection.
+//!
+//! # Authentication protocol
+//!
+//! The rndc handshake is a two-step HMAC-authenticated exchange:
+//!
+//! 1. Client sends a signed "null" command with serial, timestamp, and expiry
+//! 2. Server responds with a nonce (used in all subsequent commands)
+//! 3. Each command message includes the nonce and a fresh HMAC signature
+//!
+//! The HMAC covers the encoded `_ctrl` and `_data` table entries but NOT
+//! the `_auth` entry or the version header.
 
 pub mod command;
 pub(crate) mod protocol;
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use bind9_sdk_core::tsig::TsigKey;
+use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 
 use crate::error::NetError;
 
 use self::command::{RndcCommand, RndcResponse};
-use self::protocol::{IscMessage, frame_message, read_frame_length};
+use self::protocol::{IscMessage, IscValue, frame_message, read_frame_length};
+
+/// Fixed buffer size for isccc HMAC auth values.
+///
+/// The `_auth.hsha` field is always exactly 89 bytes:
+/// `[1-byte algorithm tag][base64 HMAC digest][NUL padding]`
+///
+/// - SHA256: 1 + 44 + 44 = 89
+/// - SHA512: 1 + 88 + 0  = 89
+/// - SHA1:   1 + 28 + 60 = 89
+const ISCCC_HMAC_BUF_SIZE: usize = 89;
+
+/// Default message expiry window in seconds.
+///
+/// Messages are valid for this many seconds after creation. BIND9's
+/// default is 60 seconds.
+const ISCCC_EXPIRY_SECS: u64 = 60;
 
 /// Typestate marker: connection is not yet authenticated.
 pub struct Unauthenticated;
 
 /// Typestate marker: connection has been authenticated with HMAC.
-pub struct Authenticated;
+///
+/// Holds the TSIG key reference, serial counter, and server nonce
+/// needed to sign subsequent command messages.
+pub struct Authenticated<'k> {
+    /// TSIG key used for HMAC signing of all messages.
+    key: &'k TsigKey,
+    /// Monotonically increasing message serial number.
+    serial: u32,
+    /// Server-provided nonce from the auth handshake response.
+    /// Echoed in all subsequent command messages.
+    nonce: Option<String>,
+}
 
 /// A connection to a BIND9 rndc control channel.
 ///
@@ -57,7 +98,7 @@ pub struct Authenticated;
 ///
 /// The rndc protocol uses:
 /// - 4-byte big-endian length prefix (NOT 2-byte DNS TCP)
-/// - ISC binary key-value message encoding
+/// - ISC binary key-value message encoding (isccc format)
 /// - HMAC-based mutual authentication
 ///
 /// # Example
@@ -70,7 +111,7 @@ pub struct Authenticated;
 /// ```
 pub struct RndcConnection<State = Unauthenticated> {
     stream: TcpStream,
-    _state: core::marker::PhantomData<State>,
+    state: State,
 }
 
 impl RndcConnection<Unauthenticated> {
@@ -86,57 +127,56 @@ impl RndcConnection<Unauthenticated> {
         tracing::debug!("connected to rndc at {addr}");
         Ok(RndcConnection {
             stream,
-            _state: core::marker::PhantomData,
+            state: Unauthenticated,
         })
     }
 
     /// Authenticate with the BIND9 server using HMAC.
     ///
-    /// Sends the `_ctrl` handshake message signed with the provided key.
-    /// On success, consumes the unauthenticated connection and returns
-    /// an authenticated connection that can send commands.
+    /// Sends a signed "null" command handshake. On success, consumes the
+    /// unauthenticated connection and returns an authenticated connection
+    /// that can send commands.
     ///
-    /// # Authentication sequence (approximate)
+    /// # Authentication handshake
     ///
-    /// 1. Client sends `_ctrl` message with nonce, HMAC-signed
-    /// 2. Server validates HMAC, responds success/failure
-    ///
-    /// TODO: Verify exact handshake sequence against BIND9 source.
-    /// The current implementation is based on the spec description and
-    /// may need adjustment after wire capture verification.
+    /// 1. Client builds `_ctrl` (serial, timestamp, expiry) and `_data` (type=null)
+    /// 2. HMAC is computed over the encoded `_ctrl` + `_data` body
+    /// 3. Client sends message with `_auth.hsha` containing the HMAC
+    /// 4. Server responds with a nonce in `_ctrl._nonce`
+    /// 5. Nonce is stored for use in subsequent command messages
     pub async fn authenticate(
         mut self,
         key: &TsigKey,
-    ) -> Result<RndcConnection<Authenticated>, NetError> {
+    ) -> Result<RndcConnection<Authenticated<'_>>, NetError> {
         tracing::debug!("authenticating rndc connection");
 
-        // Build the auth handshake message
-        // TODO: Verify _ctrl message structure against BIND9 source.
-        // The nonce and HMAC placement below is approximate.
-        let mut auth_msg = IscMessage::new();
-        auth_msg.insert_string("_ctrl", "null");
+        // Starting serial derived from current time for uniqueness across connections
+        let now = current_unix_time()?;
+        let serial = (now & 0xFFFF_FFFF) as u32;
 
-        // TODO: The actual BIND9 handshake likely includes:
-        // - A nonce value
-        // - Timestamp for replay protection
-        // - HMAC computed over specific fields
-        // These details must be verified against BIND9 source before
-        // integration testing.
+        // Build _ctrl table: serial, timestamp, expiry
+        let ctrl = build_ctrl_table(serial, now, None);
 
-        // Sign the serialized message with HMAC
-        let payload = auth_msg.encode()?;
-        let mac = key.sign(&payload);
+        // Build _data table: type = "null" (auth handshake command)
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
 
-        // Build the outer message with the HMAC
-        let mut signed_msg = IscMessage::new();
-        signed_msg.insert_string("_auth", base64_encode(&mac));
-        // Re-include the original message fields
-        for (k, v) in auth_msg.data {
-            signed_msg.data.insert(k, v);
-        }
+        // Compute HMAC over encoded _ctrl + _data body (excludes _auth and version)
+        let hmac_value = sign_rndc_body(key, &ctrl, &data)?;
+
+        // Build _auth table with HMAC value
+        let mut auth = BTreeMap::new();
+        auth.insert("hsha".to_string(), IscValue::Binary(hmac_value));
+
+        // Assemble the full message: _auth + _ctrl + _data
+        // BTreeMap sorts alphabetically, so order is: _auth, _ctrl, _data
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", auth);
+        msg.insert_map("_ctrl", ctrl);
+        msg.insert_map("_data", data);
 
         // Send the framed message
-        let frame = frame_message(&signed_msg)?;
+        let frame = frame_message(&msg)?;
         self.stream
             .write_all(&frame)
             .await
@@ -145,42 +185,95 @@ impl RndcConnection<Unauthenticated> {
         // Read the server's response
         let response = read_isc_message(&mut self.stream).await?;
 
-        // Check for authentication success
-        // TODO: Verify the success indicator field name against BIND9 source.
-        let result = response.get_string("_ctrl");
-        if result != Some("null") {
-            let err_text = response
-                .get_string("_err")
-                .or(response.get_string("result"))
-                .unwrap_or("unknown auth error");
-            return Err(NetError::AuthFailed {
-                reason: err_text.to_string(),
+        // Extract nonce from server's _ctrl table
+        let nonce = response
+            .get_map("_ctrl")
+            .and_then(|ctrl_map| match ctrl_map.get("_nonce") {
+                Some(IscValue::String(s)) => Some(s.clone()),
+                _ => None,
             });
+
+        // Check for authentication success via _data.result
+        // "0" = success, anything else = error
+        let result_code = response
+            .get_map("_data")
+            .and_then(|data_map| match data_map.get("result") {
+                Some(IscValue::String(s)) => Some(s.as_str()),
+                _ => None,
+            });
+
+        match result_code {
+            Some("0") => {
+                tracing::debug!(
+                    "rndc authentication successful (nonce: {})",
+                    nonce.is_some()
+                );
+            }
+            Some(code) => {
+                // Server returned a non-zero result code
+                let err_text = extract_error_text(&response)
+                    .unwrap_or("server rejected authentication");
+                return Err(NetError::AuthFailed {
+                    reason: format!("result code {code}: {err_text}"),
+                });
+            }
+            None => {
+                // No _data.result field — unexpected response format
+                return Err(NetError::AuthFailed {
+                    reason: "server response missing _data.result field".to_string(),
+                });
+            }
         }
 
-        tracing::debug!("rndc authentication successful");
         Ok(RndcConnection {
             stream: self.stream,
-            _state: core::marker::PhantomData,
+            state: Authenticated {
+                key,
+                serial,
+                nonce,
+            },
         })
     }
 }
 
-impl RndcConnection<Authenticated> {
+impl<'k> RndcConnection<Authenticated<'k>> {
     /// Send an rndc command and receive the response.
     ///
+    /// Each command is signed with the HMAC key and includes the server's
+    /// nonce from the authentication handshake. The serial counter is
+    /// incremented for each command.
+    ///
     /// The connection remains open and can be reused for subsequent commands.
-    /// The TCP stream is mutably borrowed for the duration of the command.
     pub async fn command(&mut self, cmd: RndcCommand) -> Result<RndcResponse, NetError> {
         tracing::debug!("sending rndc command: {cmd}");
 
-        // Build the command message
-        // TODO: Verify command message structure against BIND9 source.
-        let mut msg = IscMessage::new();
-        msg.insert_string("_ctrl", "command");
-        msg.insert_string("type", cmd.to_command_string());
+        // Increment serial for this command
+        self.state.serial = self.state.serial.wrapping_add(1);
+        let now = current_unix_time()?;
 
-        // Send
+        // Build _ctrl table with serial, timestamp, expiry, and nonce
+        let ctrl = build_ctrl_table(self.state.serial, now, self.state.nonce.as_deref());
+
+        // Build _data table with the command type
+        let mut data = BTreeMap::new();
+        data.insert(
+            "type".to_string(),
+            IscValue::String(cmd.to_command_string()),
+        );
+
+        // Compute HMAC over encoded _ctrl + _data body
+        let hmac_value = sign_rndc_body(self.state.key, &ctrl, &data)?;
+
+        // Build _auth table with HMAC value
+        let mut auth = BTreeMap::new();
+        auth.insert("hsha".to_string(), IscValue::Binary(hmac_value));
+
+        // Assemble and send the full message
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", auth);
+        msg.insert_map("_ctrl", ctrl);
+        msg.insert_map("_data", data);
+
         let frame = frame_message(&msg)?;
         self.stream
             .write_all(&frame)
@@ -190,16 +283,39 @@ impl RndcConnection<Authenticated> {
         // Read response
         let response = read_isc_message(&mut self.stream).await?;
 
-        // Extract response text
-        // TODO: Verify response field names against BIND9 source.
-        let text = response
-            .get_string("text")
-            .or(response.get_string("_data"))
-            .unwrap_or("")
-            .to_string();
+        // Extract result code and text from _data table
+        let data_map = response.get_map("_data");
 
-        tracing::debug!("rndc command response received ({} bytes)", text.len());
-        Ok(RndcResponse::from_text(&text))
+        let result_code = data_map
+            .and_then(|d| match d.get("result") {
+                Some(IscValue::String(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let text = data_map
+            .and_then(|d| match d.get("text") {
+                Some(IscValue::String(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        tracing::debug!(
+            "rndc command response: result={result_code}, text_len={}",
+            text.len()
+        );
+
+        // result "0" = success, anything else = error
+        if result_code == "0" {
+            Ok(RndcResponse::from_text(&text))
+        } else {
+            let err_text = if text.is_empty() {
+                format!("rndc command failed with result code {result_code}")
+            } else {
+                text
+            };
+            Ok(RndcResponse::from_text(&format!("rndc: {err_text}")))
+        }
     }
 
     /// Close the rndc connection gracefully.
@@ -214,6 +330,109 @@ impl RndcConnection<Authenticated> {
             .map_err(|e| NetError::Connection(format!("failed to close connection: {e}")))?;
         Ok(())
     }
+}
+
+// -- Helper functions --
+
+/// Build the `_ctrl` table for an rndc message.
+///
+/// Contains serial number, timestamp, expiry, and optionally the server nonce.
+/// All values are stored as ASCII decimal strings (isccc convention).
+fn build_ctrl_table(
+    serial: u32,
+    now_secs: u64,
+    nonce: Option<&str>,
+) -> BTreeMap<String, IscValue> {
+    let mut ctrl = BTreeMap::new();
+    ctrl.insert(
+        "_ser".to_string(),
+        IscValue::String(serial.to_string()),
+    );
+    ctrl.insert(
+        "_tim".to_string(),
+        IscValue::String(now_secs.to_string()),
+    );
+    ctrl.insert(
+        "_exp".to_string(),
+        IscValue::String((now_secs + ISCCC_EXPIRY_SECS).to_string()),
+    );
+    if let Some(n) = nonce {
+        ctrl.insert("_nonce".to_string(), IscValue::String(n.to_string()));
+    }
+    ctrl
+}
+
+/// Compute the HMAC value for an rndc message.
+///
+/// The HMAC covers the serialized body of `_ctrl` and `_data` table entries,
+/// excluding `_auth` and the version header. The result is the 89-byte
+/// `_auth.hsha` binary value: `[algorithm byte][base64 HMAC digest][NUL padding]`
+fn sign_rndc_body(
+    key: &TsigKey,
+    ctrl: &BTreeMap<String, IscValue>,
+    data: &BTreeMap<String, IscValue>,
+) -> Result<Vec<u8>, NetError> {
+    // Serialize just _ctrl and _data for HMAC input (no _auth, no version)
+    let mut sign_msg = IscMessage::new();
+    sign_msg.insert_map("_ctrl", ctrl.clone());
+    sign_msg.insert_map("_data", data.clone());
+    let body = sign_msg.encode_body()?;
+
+    // Compute HMAC digest
+    let digest = key.sign(&body);
+
+    // Build the 89-byte auth value: algo_byte + base64(digest) + NUL padding
+    let algo_byte = isccc_algorithm_byte(key.algorithm());
+    let b64 = base64_encode(&digest);
+
+    let mut buf = Vec::with_capacity(ISCCC_HMAC_BUF_SIZE);
+    buf.push(algo_byte);
+    buf.extend_from_slice(b64.as_bytes());
+    // NUL-pad to fixed 89-byte size
+    buf.resize(ISCCC_HMAC_BUF_SIZE, 0);
+
+    Ok(buf)
+}
+
+/// Map a TSIG algorithm to its isccc algorithm byte.
+///
+/// Values from BIND9 source `lib/isccc/include/isccc/types.h`:
+/// - ISCCC_ALG_HMACSHA1   = 0xA1 (161)
+/// - ISCCC_ALG_HMACSHA224 = 0xA2 (162) -- not supported by this SDK
+/// - ISCCC_ALG_HMACSHA256 = 0xA3 (163)
+/// - ISCCC_ALG_HMACSHA384 = 0xA4 (164) -- not supported by this SDK
+/// - ISCCC_ALG_HMACSHA512 = 0xA5 (165)
+fn isccc_algorithm_byte(algo: TsigAlgorithm) -> u8 {
+    #[allow(deprecated)]
+    match algo {
+        TsigAlgorithm::HmacSha1 => 0xA1,
+        TsigAlgorithm::HmacSha256 => 0xA3,
+        TsigAlgorithm::HmacSha512 => 0xA5,
+        _ => unreachable!("unsupported TSIG algorithm for rndc"),
+    }
+}
+
+/// Get the current Unix timestamp in seconds.
+fn current_unix_time() -> Result<u64, NetError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| NetError::Protocol(format!("system clock error: {e}")))
+}
+
+/// Extract error text from a server response.
+///
+/// Checks `_data.err` first, then `_data.text` as a fallback.
+fn extract_error_text(response: &IscMessage) -> Option<&str> {
+    response.get_map("_data").and_then(|d| {
+        match d.get("err") {
+            Some(IscValue::String(s)) => Some(s.as_str()),
+            _ => match d.get("text") {
+                Some(IscValue::String(s)) => Some(s.as_str()),
+                _ => None,
+            },
+        }
+    })
 }
 
 /// Read a framed ISC message from a TCP stream.
@@ -253,11 +472,8 @@ async fn read_isc_message(stream: &mut TcpStream) -> Result<IscMessage, NetError
     IscMessage::decode(&payload)
 }
 
-/// Base64-encode bytes for HMAC values in ISC messages.
-///
-/// Uses standard base64 encoding (not URL-safe).
+/// Base64-encode bytes using standard encoding.
 fn base64_encode(data: &[u8]) -> String {
-    use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
@@ -294,8 +510,189 @@ mod tests {
             T: Sized,
         {
         }
-        _check_method_exists::<RndcConnection<Authenticated>>();
+        _check_method_exists::<RndcConnection<Authenticated<'static>>>();
     }
+
+    // -- Helper function unit tests --
+
+    #[test]
+    fn isccc_algorithm_byte_sha256() {
+        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha256), 0xA3);
+    }
+
+    #[test]
+    fn isccc_algorithm_byte_sha512() {
+        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha512), 0xA5);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn isccc_algorithm_byte_sha1() {
+        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha1), 0xA1);
+    }
+
+    #[test]
+    fn build_ctrl_table_without_nonce() {
+        let ctrl = build_ctrl_table(42, 1000, None);
+        assert_eq!(
+            ctrl.get("_ser"),
+            Some(&IscValue::String("42".to_string()))
+        );
+        assert_eq!(
+            ctrl.get("_tim"),
+            Some(&IscValue::String("1000".to_string()))
+        );
+        assert_eq!(
+            ctrl.get("_exp"),
+            Some(&IscValue::String("1060".to_string()))
+        );
+        assert!(!ctrl.contains_key("_nonce"));
+    }
+
+    #[test]
+    fn build_ctrl_table_with_nonce() {
+        let ctrl = build_ctrl_table(1, 2000, Some("abc123"));
+        assert_eq!(
+            ctrl.get("_nonce"),
+            Some(&IscValue::String("abc123".to_string()))
+        );
+        assert_eq!(
+            ctrl.get("_ser"),
+            Some(&IscValue::String("1".to_string()))
+        );
+    }
+
+    #[test]
+    fn sign_rndc_body_produces_89_bytes() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xAA; 32],
+        )
+        .unwrap();
+
+        let ctrl = build_ctrl_table(1, 1000, None);
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+        assert_eq!(
+            hmac.len(),
+            ISCCC_HMAC_BUF_SIZE,
+            "HMAC value must be exactly {ISCCC_HMAC_BUF_SIZE} bytes"
+        );
+    }
+
+    #[test]
+    fn sign_rndc_body_starts_with_algorithm_byte() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xBB; 32],
+        )
+        .unwrap();
+
+        let ctrl = build_ctrl_table(1, 1000, None);
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+        assert_eq!(hmac[0], 0xA3, "first byte must be SHA256 algorithm tag");
+    }
+
+    #[test]
+    fn sign_rndc_body_sha512_starts_with_0xa5() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha512,
+            vec![0xCC; 64],
+        )
+        .unwrap();
+
+        let ctrl = build_ctrl_table(1, 1000, None);
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+        assert_eq!(hmac[0], 0xA5, "first byte must be SHA512 algorithm tag");
+        assert_eq!(hmac.len(), ISCCC_HMAC_BUF_SIZE);
+    }
+
+    #[test]
+    fn sign_rndc_body_contains_valid_base64_after_algo_byte() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xDD; 32],
+        )
+        .unwrap();
+
+        let ctrl = build_ctrl_table(1, 1000, None);
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+
+        // After algo byte, next 44 bytes should be valid base64 for SHA256
+        let b64_portion = &hmac[1..45];
+        let b64_str = std::str::from_utf8(b64_portion).expect("base64 should be valid UTF-8");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64_str)
+            .expect("should be valid base64");
+        assert_eq!(decoded.len(), 32, "decoded HMAC-SHA256 should be 32 bytes");
+    }
+
+    #[test]
+    fn sign_rndc_body_nul_padded_to_89_bytes() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xEE; 32],
+        )
+        .unwrap();
+
+        let ctrl = build_ctrl_table(1, 1000, None);
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("null".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+
+        // SHA256: 1 algo + 44 base64 = 45 content bytes, rest should be NUL
+        for (i, &byte) in hmac[45..].iter().enumerate() {
+            assert_eq!(
+                byte, 0,
+                "byte at offset {} should be NUL padding, got 0x{:02x}",
+                45 + i,
+                byte
+            );
+        }
+    }
+
+    #[test]
+    fn current_unix_time_returns_reasonable_value() {
+        let now = current_unix_time().unwrap();
+        // Should be after 2024-01-01 (1704067200) and before 2030-01-01 (1893456000)
+        assert!(
+            now > 1_704_067_200,
+            "timestamp {now} should be after 2024"
+        );
+        assert!(
+            now < 1_893_456_000,
+            "timestamp {now} should be before 2030"
+        );
+    }
+
+    // -- Framing tests (using duplex streams) --
 
     #[tokio::test]
     async fn read_isc_message_from_mock_stream() {

@@ -5,7 +5,7 @@ error[E0599]: no method named `command` found for struct `RndcConnection` in the
    |          ^^^^^^^ method not found in `RndcConnection`
    |
    = note: the method was found for
-           - `RndcConnection<Authenticated>`
+           - `RndcConnection<Authenticated<'k>>`
 
 error[E0282]: type annotations needed
   --> tests/compile-fail/rndc_unauthenticated_command.rs:16:5

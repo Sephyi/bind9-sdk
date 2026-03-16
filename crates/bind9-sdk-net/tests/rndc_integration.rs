@@ -8,12 +8,27 @@
 //! - BIND9 9.20 running on localhost:9953
 //! - An rndc key configured in named.conf matching the test key below
 //!
-//! Run with: `cargo test -p bind9-sdk-net -- --ignored rndc_integration`
+//! Run with: `cargo test -p bind9-sdk-net --test rndc_integration -- --ignored`
+//!
+//! **Note:** BIND9's control channel handles one connection at a time.
+//! Tests must run serially (`--test-threads=1`) and include a brief delay
+//! to let the server clean up between connections.
 //!
 //! See `tests/README.md` for BIND9 setup instructions.
 
+use std::time::Duration;
+
 use bind9_sdk_net::rndc::RndcConnection;
 use bind9_sdk_net::rndc::command::RndcCommand;
+
+/// Brief delay to let BIND9's control channel release the previous connection.
+///
+/// BIND9's rndc handler is single-connection; without this delay,
+/// back-to-back tests can get EOF when the server hasn't finished
+/// tearing down the previous session.
+async fn rndc_settle() {
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
 
 /// Test rndc key for integration tests.
 ///
@@ -41,6 +56,7 @@ fn test_key() -> bind9_sdk_core::tsig::TsigKey {
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_connect_and_status() {
+    rndc_settle().await;
     let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 
@@ -63,6 +79,7 @@ async fn rndc_connect_and_status() {
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_reload() {
+    rndc_settle().await;
     let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 
@@ -81,6 +98,7 @@ async fn rndc_reload() {
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_wrong_key_fails_auth() {
+    rndc_settle().await;
     use bind9_sdk_core::domain::DomainName;
     use bind9_sdk_core::tsig::TsigAlgorithm;
 
@@ -99,6 +117,7 @@ async fn rndc_wrong_key_fails_auth() {
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
 async fn rndc_multiple_commands_on_same_connection() {
+    rndc_settle().await;
     let addr = "127.0.0.1:9953".parse().unwrap();
     let key = test_key();
 

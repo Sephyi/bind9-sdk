@@ -2,19 +2,23 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-//! ISC binary message encoding for the rndc wire protocol.
+//! ISC binary message encoding for the rndc wire protocol (isccc).
 //!
 //! The rndc protocol uses a custom binary key-value format, NOT DNS wire format.
 //! Messages are collections of key-value pairs where keys are strings and values
-//! are either strings or nested maps. Each string is length-prefixed (1-byte length
-//! for keys, 4-byte big-endian length for values).
+//! are either binary data or nested maps. Each key is length-prefixed (1-byte
+//! length). Each value has a 1-byte type tag and 4-byte big-endian length prefix.
 //!
-//! # Wire format reference
+//! # Wire format (per key-value pair)
 //!
-//! The encoding is derived from BIND9 source (`lib/isccfg/`). The format is
-//! stable across BIND9 minor versions.
+//! ```text
+//! [1-byte key length] [key bytes]
+//! [1-byte type tag]   -- 0x01 = binary, 0x02 = table
+//! [4-byte BE value length] [value bytes]
+//! ```
 //!
-//! TODO: Verify all encoding details against BIND9 source before v0.1.0 release.
+//! Type tags verified against BIND9 source (`lib/isccc/cc.c`) and live wire
+//! captures from BIND 9.20.18.
 
 use std::collections::BTreeMap;
 
@@ -25,20 +29,23 @@ use crate::error::NetError;
 /// Prevents stack overflow from deeply nested (potentially malicious) messages.
 const MAX_DECODE_DEPTH: usize = 32;
 
-/// ISC message version constant.
-///
-/// TODO: Verify against BIND9 source -- this is the version field
-/// in the rndc protocol handshake.
+/// ISC message version constant (always 1).
 const ISC_MSG_VERSION: u32 = 1;
 
+/// Type tag for binary/string data (isccc SEXPRTYPE_VALUE).
+const ISCCC_TYPE_BINARY: u8 = 0x01;
+
+/// Type tag for table/map (isccc SEXPRTYPE_ALIST).
+const ISCCC_TYPE_TABLE: u8 = 0x02;
+
 /// A value in an ISC binary message.
-///
-/// Values are either UTF-8 strings or nested key-value maps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IscValue {
-    /// A UTF-8 string value.
+    /// A UTF-8 string value (wire type: BINARY 0x01).
     String(String),
-    /// A nested key-value map.
+    /// Raw binary data (wire type: BINARY 0x01, same as String on the wire).
+    Binary(Vec<u8>),
+    /// A nested key-value map (wire type: TABLE 0x02).
     Map(BTreeMap<String, IscValue>),
 }
 
@@ -63,17 +70,24 @@ impl IscMessage {
     }
 
     /// Insert a string value.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn insert_string(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.data.insert(key.into(), IscValue::String(value.into()));
     }
 
+    /// Insert a raw binary value.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn insert_binary(&mut self, key: impl Into<String>, value: Vec<u8>) {
+        self.data.insert(key.into(), IscValue::Binary(value));
+    }
+
     /// Insert a nested map value.
-    #[allow(dead_code)]
     pub(crate) fn insert_map(&mut self, key: impl Into<String>, value: BTreeMap<String, IscValue>) {
         self.data.insert(key.into(), IscValue::Map(value));
     }
 
     /// Get a string value by key.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn get_string(&self, key: &str) -> Option<&str> {
         match self.data.get(key) {
             Some(IscValue::String(s)) => Some(s),
@@ -81,8 +95,16 @@ impl IscMessage {
         }
     }
 
+    /// Get a raw binary value by key.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn get_binary(&self, key: &str) -> Option<&[u8]> {
+        match self.data.get(key) {
+            Some(IscValue::Binary(b)) => Some(b),
+            _ => None,
+        }
+    }
+
     /// Get a nested map by key.
-    #[allow(dead_code)]
     pub(crate) fn get_map(&self, key: &str) -> Option<&BTreeMap<String, IscValue>> {
         match self.data.get(key) {
             Some(IscValue::Map(m)) => Some(m),
@@ -90,33 +112,32 @@ impl IscMessage {
         }
     }
 
-    /// Encode this message to ISC binary format.
+    /// Encode this message to ISC binary format with version header.
     ///
-    /// The output does NOT include the 4-byte length prefix -- that is
-    /// added by the framing layer.
+    /// The output does NOT include the 4-byte framing length prefix -- that is
+    /// added by [`frame_message`].
     ///
-    /// # Wire format (per key-value pair)
-    ///
-    /// ```text
-    /// [1-byte key length] [key bytes]
-    /// [1-byte type tag]  -- 0x00 = string, 0x01 = map
-    /// [4-byte BE value length] [value bytes]
-    /// ```
-    ///
-    /// TODO: Verify type tag values against BIND9 source.
+    /// Returns: `[4-byte version][encoded table entries]`
     pub(crate) fn encode(&self) -> Result<Vec<u8>, NetError> {
         let mut buf = Vec::new();
-        // Version header
-        // TODO: Verify version encoding against BIND9 source
         buf.extend_from_slice(&ISC_MSG_VERSION.to_be_bytes());
+        Self::encode_map(&self.data, &mut buf)?;
+        Ok(buf)
+    }
+
+    /// Encode just the table entries without the version header.
+    ///
+    /// Used for computing HMAC signatures: the HMAC covers the serialized
+    /// table entries (excluding `_auth`) but NOT the version header.
+    pub(crate) fn encode_body(&self) -> Result<Vec<u8>, NetError> {
+        let mut buf = Vec::new();
         Self::encode_map(&self.data, &mut buf)?;
         Ok(buf)
     }
 
     /// Decode an ISC message from binary format.
     ///
-    /// The input must NOT include the 4-byte length prefix -- the framing
-    /// layer strips that before calling decode.
+    /// The input must NOT include the 4-byte framing length prefix.
     pub(crate) fn decode(data: &[u8]) -> Result<Self, NetError> {
         if data.len() < 4 {
             return Err(NetError::Protocol("ISC message too short".into()));
@@ -135,7 +156,6 @@ impl IscMessage {
     fn encode_map(map: &BTreeMap<String, IscValue>, buf: &mut Vec<u8>) -> Result<(), NetError> {
         for (key, value) in map {
             // Key: 1-byte length + key bytes
-            // TODO: Verify key length encoding -- BIND9 may use different sizes
             let key_bytes = key.as_bytes();
             let key_len = u8::try_from(key_bytes.len()).map_err(|_| {
                 NetError::Protocol(format!(
@@ -146,10 +166,10 @@ impl IscMessage {
             buf.push(key_len);
             buf.extend_from_slice(key_bytes);
 
+            // Type tag + 4-byte BE value length + value bytes
             match value {
                 IscValue::String(s) => {
-                    // Type tag: 0x00 = string
-                    buf.push(0x00);
+                    buf.push(ISCCC_TYPE_BINARY);
                     let val_bytes = s.as_bytes();
                     let val_len = u32::try_from(val_bytes.len()).map_err(|_| {
                         NetError::Protocol(format!(
@@ -160,9 +180,19 @@ impl IscMessage {
                     buf.extend_from_slice(&val_len.to_be_bytes());
                     buf.extend_from_slice(val_bytes);
                 }
+                IscValue::Binary(b) => {
+                    buf.push(ISCCC_TYPE_BINARY);
+                    let val_len = u32::try_from(b.len()).map_err(|_| {
+                        NetError::Protocol(format!(
+                            "ISC binary value exceeds 4GB: {} bytes",
+                            b.len()
+                        ))
+                    })?;
+                    buf.extend_from_slice(&val_len.to_be_bytes());
+                    buf.extend_from_slice(b);
+                }
                 IscValue::Map(m) => {
-                    // Type tag: 0x01 = map
-                    buf.push(0x01);
+                    buf.push(ISCCC_TYPE_TABLE);
                     // Encode the nested map into a temporary buffer to get its length
                     let mut nested = Vec::new();
                     Self::encode_map(m, &mut nested)?;
@@ -239,17 +269,17 @@ impl IscMessage {
             }
 
             let value = match type_tag {
-                0x00 => {
-                    // String value
-                    let s =
-                        String::from_utf8(data[*pos..*pos + val_len].to_vec()).map_err(|e| {
-                            NetError::Protocol(format!("ISC message value is not valid UTF-8: {e}"))
-                        })?;
+                ISCCC_TYPE_BINARY => {
+                    let raw = data[*pos..*pos + val_len].to_vec();
                     *pos += val_len;
-                    IscValue::String(s)
+                    // Try UTF-8; if valid, store as String for convenience.
+                    // HMAC auth values contain non-UTF-8 bytes and become Binary.
+                    match String::from_utf8(raw) {
+                        Ok(s) => IscValue::String(s),
+                        Err(e) => IscValue::Binary(e.into_bytes()),
+                    }
                 }
-                0x01 => {
-                    // Nested map
+                ISCCC_TYPE_TABLE => {
                     let end = *pos + val_len;
                     let mut nested_pos = *pos;
                     let nested_map = Self::decode_map(&data[..end], &mut nested_pos, depth + 1)?;
@@ -310,6 +340,14 @@ mod tests {
         msg.insert_string("_ctrl", "command");
         assert_eq!(msg.get_string("_ctrl"), Some("command"));
         assert_eq!(msg.get_string("missing"), None);
+    }
+
+    #[test]
+    fn isc_message_insert_and_get_binary() {
+        let mut msg = IscMessage::new();
+        msg.insert_binary("hmac", vec![0xA3, 0x01, 0x02]);
+        assert_eq!(msg.get_binary("hmac"), Some([0xA3, 0x01, 0x02].as_slice()));
+        assert_eq!(msg.get_binary("missing"), None);
     }
 
     #[test]
@@ -406,12 +444,55 @@ mod tests {
     }
 
     #[test]
+    fn encode_body_omits_version_header() {
+        let mut msg = IscMessage::new();
+        msg.insert_string("key", "value");
+        let full = msg.encode().unwrap();
+        let body = msg.encode_body().unwrap();
+        // Full = version(4) + body
+        assert_eq!(full.len(), 4 + body.len());
+        assert_eq!(&full[4..], &body);
+    }
+
+    #[test]
     fn isc_message_encode_empty_string_value() {
         let mut msg = IscMessage::new();
         msg.insert_string("key", "");
         let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(decoded.get_string("key"), Some(""));
+    }
+
+    #[test]
+    fn binary_value_roundtrip_non_utf8() {
+        let mut msg = IscMessage::new();
+        let raw = vec![0xA3, 0x01, 0xFF, 0x00];
+        msg.insert_binary("hmac", raw.clone());
+        let encoded = msg.encode().unwrap();
+        let decoded = IscMessage::decode(&encoded).unwrap();
+        // Non-UTF-8 binary data decodes as Binary variant
+        assert_eq!(decoded.get_binary("hmac"), Some(raw.as_slice()));
+    }
+
+    #[test]
+    fn string_type_tag_is_0x01() {
+        let mut msg = IscMessage::new();
+        msg.insert_string("k", "v");
+        let body = msg.encode_body().unwrap();
+        // body: [1-byte key_len=1] [key='k'] [type_tag] [4-byte val_len] [val='v']
+        assert_eq!(body[0], 1); // key length
+        assert_eq!(body[1], b'k'); // key
+        assert_eq!(body[2], 0x01); // type tag = BINARY
+    }
+
+    #[test]
+    fn map_type_tag_is_0x02() {
+        let mut msg = IscMessage::new();
+        msg.insert_map("m", BTreeMap::new());
+        let body = msg.encode_body().unwrap();
+        assert_eq!(body[0], 1); // key length
+        assert_eq!(body[1], b'm'); // key
+        assert_eq!(body[2], 0x02); // type tag = TABLE
     }
 
     // -- Error case tests --
@@ -458,7 +539,7 @@ mod tests {
         let mut data = vec![0x00, 0x00, 0x00, 0x01];
         data.push(2);
         data.extend_from_slice(b"ab");
-        data.push(0x00);
+        data.push(ISCCC_TYPE_BINARY);
         data.extend_from_slice(&100u32.to_be_bytes());
         let result = IscMessage::decode(&data);
         assert!(result.is_err());
@@ -502,30 +583,17 @@ mod tests {
 
     #[test]
     fn isc_message_decode_depth_limit() {
-        // Build a message with nesting depth > MAX_DECODE_DEPTH
-        // Each nesting level: 1-byte key_len + key + 1-byte type_tag(0x01) + 4-byte val_len + nested
-        let mut data = vec![0x00, 0x00, 0x00, 0x01]; // version
-        for _ in 0..=MAX_DECODE_DEPTH + 1 {
-            data.push(1); // key length
-            data.push(b'k'); // key
-            data.push(0x01); // type tag: map
-
-            // Value length: remaining nesting bytes (we'll just make it large enough)
-            // We don't need it to be exact since the depth check fires first
-        }
-        // This won't decode cleanly, but we need to craft it so the depth check fires.
-        // Instead, encode a valid deeply nested message programmatically.
         fn build_nested(depth: usize) -> Vec<u8> {
             let mut buf = Vec::new();
-            buf.push(1); // key length
-            buf.push(b'k'); // key byte
+            buf.push(1);
+            buf.push(b'k');
             if depth == 0 {
-                buf.push(0x00); // string type
+                buf.push(ISCCC_TYPE_BINARY);
                 let val = b"leaf";
                 buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
                 buf.extend_from_slice(val);
             } else {
-                buf.push(0x01); // map type
+                buf.push(ISCCC_TYPE_TABLE);
                 let nested = build_nested(depth - 1);
                 buf.extend_from_slice(&(nested.len() as u32).to_be_bytes());
                 buf.extend_from_slice(&nested);
@@ -547,18 +615,17 @@ mod tests {
 
     #[test]
     fn isc_message_decode_valid_nesting_within_limit() {
-        // 3 levels of nesting should work fine
         fn build_nested(depth: usize) -> Vec<u8> {
             let mut buf = Vec::new();
             buf.push(1);
             buf.push(b'k');
             if depth == 0 {
-                buf.push(0x00);
+                buf.push(ISCCC_TYPE_BINARY);
                 let val = b"ok";
                 buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
                 buf.extend_from_slice(val);
             } else {
-                buf.push(0x01);
+                buf.push(ISCCC_TYPE_TABLE);
                 let nested = build_nested(depth - 1);
                 buf.extend_from_slice(&(nested.len() as u32).to_be_bytes());
                 buf.extend_from_slice(&nested);
