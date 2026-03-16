@@ -7,29 +7,80 @@
 // for static dispatch only. See coding architecture spec §5.2.
 #![allow(async_fn_in_trait)]
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
+use crate::record::{RecordClass, Serial};
 use crate::update::{UpdateMessage, UpdateResult};
 use crate::zone::{Zone, ZoneSummary};
 
-// Placeholder types — fleshed out in subsequent worktrees.
-
 /// Server status information from `rndc status`.
+///
+/// Populated by the net crate from an rndc status response.
+/// Fields that the parser cannot extract are left as defaults.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServerStatus;
+#[non_exhaustive]
+pub struct ServerStatus {
+    /// BIND version string (e.g., `"BIND 9.20.4"`).
+    pub version: String,
+    /// ISO 8601 timestamp of when the server started, if available.
+    pub running_since: Option<String>,
+    /// Number of reloads since server start.
+    pub reload_count: u32,
+    /// Whether the server reports itself as running.
+    pub server_up: bool,
+    /// Full raw text of the rndc status response for unparsed fields.
+    pub raw_text: String,
+}
 
 /// A zone that has been frozen via `rndc freeze`.
+///
+/// Returned by `NamedControl::freeze()`. Contains the zone identity
+/// so callers can confirm which zone was frozen.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrozenZone;
+#[non_exhaustive]
+pub struct FrozenZone {
+    /// The domain name of the frozen zone.
+    pub name: DomainName,
+    /// The DNS class of the frozen zone.
+    pub class: RecordClass,
+}
 
-/// Server-level statistics.
+/// Server-level statistics from the BIND9 statistics-channel JSON API.
+///
+/// Populated by the net crate from HTTP `/json/v1/server`. Counter
+/// fields (queries, opcodes, rcodes) are added by WT-4 implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServerStats;
+#[non_exhaustive]
+pub struct ServerStats {
+    /// ISO 8601 timestamp of server boot.
+    pub boot_time: String,
+    /// ISO 8601 timestamp of last configuration load.
+    pub config_time: String,
+    /// ISO 8601 timestamp of the stats snapshot.
+    pub current_time: String,
+    /// BIND version string (e.g., `"BIND 9.20.4 (Stable Release)"`).
+    pub version: String,
+}
 
-/// Zone-level statistics.
+/// Zone-level statistics from the BIND9 statistics-channel JSON API.
+///
+/// Populated by the net crate from HTTP `/json/v1/zones`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZoneStats;
+#[non_exhaustive]
+pub struct ZoneStats {
+    /// The domain name of the zone.
+    pub name: DomainName,
+    /// The DNS class of the zone.
+    pub class: RecordClass,
+    /// The current SOA serial number.
+    pub serial: Serial,
+    /// Number of resource records in the zone.
+    pub record_count: u32,
+    /// Zone type (e.g., `"primary"`, `"secondary"`).
+    pub zone_type: String,
+}
 
 /// rndc server management.
 ///
@@ -76,6 +127,8 @@ pub trait StatsClient: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use super::*;
     use crate::error::CoreError;
     use crate::protocol::Rcode;
@@ -88,7 +141,13 @@ mod tests {
         type Error = CoreError;
 
         async fn status(&self) -> Result<ServerStatus, CoreError> {
-            Ok(ServerStatus)
+            Ok(ServerStatus {
+                version: String::from("BIND 9.20.4"),
+                running_since: Some(String::from("2026-01-15T08:30:00Z")),
+                reload_count: 0,
+                server_up: true,
+                raw_text: String::from("server is up and running"),
+            })
         }
 
         async fn reload(&self) -> Result<(), CoreError> {
@@ -99,8 +158,11 @@ mod tests {
             Ok(())
         }
 
-        async fn freeze(&self, _zone: &DomainName) -> Result<FrozenZone, CoreError> {
-            Ok(FrozenZone)
+        async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, CoreError> {
+            Ok(FrozenZone {
+                name: zone.clone(),
+                class: RecordClass::IN,
+            })
         }
     }
 
@@ -156,11 +218,22 @@ mod tests {
         type Error = CoreError;
 
         async fn server_stats(&self) -> Result<ServerStats, CoreError> {
-            Ok(ServerStats)
+            Ok(ServerStats {
+                boot_time: String::from("2026-01-15T08:30:00Z"),
+                config_time: String::from("2026-01-15T08:30:05Z"),
+                current_time: String::from("2026-03-14T12:00:00Z"),
+                version: String::from("BIND 9.20.4"),
+            })
         }
 
-        async fn zone_stats(&self, _zone: &DomainName) -> Result<ZoneStats, CoreError> {
-            Ok(ZoneStats)
+        async fn zone_stats(&self, zone: &DomainName) -> Result<ZoneStats, CoreError> {
+            Ok(ZoneStats {
+                name: zone.clone(),
+                class: RecordClass::IN,
+                serial: Serial::new(2026031401),
+                record_count: 42,
+                zone_type: String::from("primary"),
+            })
         }
     }
 
