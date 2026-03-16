@@ -205,15 +205,9 @@ impl RndcConnection<Unauthenticated> {
 
         match result_code {
             Some("0") => {
-                if nonce.is_none() {
-                    return Err(NetError::AuthFailed {
-                        reason: "server response missing _ctrl._nonce field".to_string(),
-                    });
-                }
-                tracing::debug!(
-                    "rndc authentication successful (nonce: {})",
-                    nonce.is_some()
-                );
+                // verify_authenticated_response already required _nonce presence via
+                // validate_response_ctrl's ok_or_else, so nonce is guaranteed Some here.
+                tracing::debug!("rndc authentication successful (nonce present: true)");
             }
             Some(code) => {
                 // Server returned a non-zero result code
