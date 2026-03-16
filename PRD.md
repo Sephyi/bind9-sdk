@@ -6,9 +6,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # bind9-sdk — Product Requirements Document
 
-**Version**: v0.5
+**Version**: v0.6
 **Date**: 2026-03-16
-**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete (post-merge hardening applied), Wave 2 next
+**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 in progress (WT-3 + WT-4 parallel)
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -18,11 +18,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 | Version | Date | Summary |
 | --- | --- | --- |
-| 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
-| 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
+| 0.6 | 2026-03-16 | Wave 2 started: pre-fix populated 4 placeholder structs with real fields, WT-3 (rndc protocol) + WT-4 (stats/nsupdate) worktrees created and implementation in progress. |
 | 0.5 | 2026-03-16 | Post-merge corrections: test count 242→245 (225 core + 19 net + 1 doc after post-merge fixes). Two CRITICAL review findings fixed (TSIG canonicalization via `write_wire_canonical`, explicit timestamp in `sign()`). Wave 2 plan updated with WT-5 (TSIG/update hardening). |
 | 0.4 | 2026-03-16 | Phase 1b Wave 1 completed — zone parser (165 tests), TSIG RFC 8945 (TsigKey with zeroization), UpdateBuilder RFC 2136 (typestate Unsigned→Signed), net foundation (NetError, TlsConfig, ClientConfig). 309 new tests, 245 total after merge + post-merge fixes. |
 | 0.3 | 2026-03-14 | Phase 1a (Core Foundation) completed — 9 tasks, 11 commits, 57 tests. Added implementation progress tracker (§12.1). Resolved OQ-001 (`no_std` confirmed). New decisions: DEC-005 through DEC-008 (async traits, core::error::Error, thiserror no_std, RRSIG original_ttl). |
+| 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
+| 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
 
 </details>
 
@@ -30,7 +31,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 > **"The BIND9 management SDK that should have existed a decade ago."**
 
-`bind9-sdk` is a Rust-native library for programmatic BIND9 DNS server management. It implements the full rndc wire protocol, RFC 1035 zone file parsing and serialization, RFC 2136 dynamic updates (nsupdate), IXFR/AXFR zone transfer, and the BIND9 statistics-channel JSON API — all in one cohesive, type-safe Rust crate with zero shell subprocess dependencies.
+`bind9-sdk` is a Rust-native library for programmatic BIND9 DNS server manage
+
+ment. It implements the full rndc wire protocol, RFC 1035 zone file parsing and serialization, RFC 2136 dynamic updates (nsupdate), IXFR/AXFR zone transfer, and the BIND9 statistics-channel JSON API — all in one cohesive, type-safe Rust crate with zero shell subprocess dependencies.
 
 It ships as three coordinated artifacts from a single codebase: a Rust crate on crates.io, a native Node.js/Bun addon via napi-rs v3, and a WASM fallback bundle (also via napi-rs v3) for browser environments. The npm package fills a gap that is structurally empty: as of 2026 there is not a single maintained TypeScript or JavaScript library for BIND9 management on npm.
 
@@ -1036,12 +1039,14 @@ Testing: 225 core + 19 net + 1 doc = **245 tests passing** across workspace. Pro
 
 Post-merge fixes (commit `1dde207`): Two CRITICAL findings from dialectic verification (Codex gpt-5.4 + GLM5) fixed immediately — (1) TSIG canonicalization: added `DomainName::write_wire_canonical()` for case-insensitive wire encoding per RFC 8945, (2) explicit timestamp parameter in `TsigRecord::sign()` instead of implicit `SystemTime::now()` (enables deterministic testing and `no_std` compatibility).
 
-#### Phase 1b Wave 2: rndc Wire Protocol + Stats/nsupdate + Hardening — NOT STARTED
+#### Phase 1b Wave 2: rndc Wire Protocol + Stats/nsupdate + Hardening — IN PROGRESS
 
-Planned worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for full breakdown):
-- **WT-3**: rndc wire protocol client (custom TCP framing, ISC message encoding) — no review items
-- **WT-4**: statistics-channel HTTP client + nsupdate sender — absorbs TSIG response verification (TSIG-002 HIGH), fudge window validation (TSIG-004), RFC 8945 known-answer vectors (TEST-001), TSIG wire parsing (TEST-002)
-- **WT-5**: TSIG/update hardening — new worktree from review findings: zeroize MAC/wire_bytes in TsigRecord (SEC-001), TsigRecord Debug redaction (SEC-002), key length validation warning (SEC-003), RRsetExistsWithData prerequisite (RFC2136-001), request_mac for multi-message TSIG (TSIG-005), exhaustive algorithm tests (TEST-003), update wire roundtrip tests (TEST-004)
+Pre-fix (commit `fb83f0f`): Populated 4 placeholder structs with real fields on `development` — `ServerStatus` (version, running_since, reload_count, server_up, raw_text), `FrozenZone` (name, class), `ServerStats` (boot_time, config_time, current_time, version), `ZoneStats` (name, class, serial, record_count, zone_type). All `#[non_exhaustive]` for future extension. Re-exported from `bind9-sdk-core`.
+
+Active worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for full breakdown):
+- **WT-3** (`feat/rndc-protocol`): rndc wire protocol client (custom TCP framing, ISC message encoding) — IN PROGRESS, 4 chunks / 12 tasks
+- **WT-4** (`feat/stats-nsupdate`): statistics-channel HTTP client + nsupdate sender — IN PROGRESS, 4 chunks / 15 tasks. Absorbs TSIG response verification (TSIG-002 HIGH), fudge window validation (TSIG-004), RFC 8945 known-answer vectors (TEST-001), TSIG wire parsing (TEST-002)
+- **WT-5**: TSIG/update hardening — PLANNED (after WT-3 + WT-4 merge). Review findings: zeroize MAC/wire_bytes in TsigRecord (SEC-001), TsigRecord Debug redaction (SEC-002), key length validation warning (SEC-003), RRsetExistsWithData prerequisite (RFC2136-001), request_mac for multi-message TSIG (TSIG-005), exhaustive algorithm tests (TEST-003), update wire roundtrip tests (TEST-004)
 
 ## 13. Success Metrics
 
