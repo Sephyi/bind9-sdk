@@ -850,5 +850,49 @@ mod proptests {
             let mac = key.sign(&msg1);
             prop_assert!(key.verify(&msg2, &mac).is_err());
         }
+
+        /// Signing with one key and verifying with a different key must always fail.
+        #[test]
+        fn sign_with_key_a_verify_with_key_b_fails(
+            key_a_bytes in proptest::collection::vec(any::<u8>(), 16..=32),
+            key_b_bytes in proptest::collection::vec(any::<u8>(), 16..=32),
+            message in proptest::collection::vec(any::<u8>(), 0..=256),
+        ) {
+            prop_assume!(key_a_bytes != key_b_bytes);
+            let key_a = TsigKey::new(
+                DomainName::new("key-a.").unwrap(),
+                TsigAlgorithm::HmacSha256,
+                key_a_bytes,
+            ).unwrap();
+            let key_b = TsigKey::new(
+                DomainName::new("key-b.").unwrap(),
+                TsigAlgorithm::HmacSha256,
+                key_b_bytes,
+            ).unwrap();
+            let mac = key_a.sign(&message);
+            prop_assert!(
+                key_b.verify(&message, &mac).is_err(),
+                "different keys should not produce the same MAC"
+            );
+        }
+
+        /// MAC length matches the algorithm's declared mac_length() for all inputs.
+        #[test]
+        fn mac_length_matches_algorithm(
+            key_bytes in proptest::collection::vec(any::<u8>(), 1..=64),
+            message in proptest::collection::vec(any::<u8>(), 0..=256),
+        ) {
+            let key = TsigKey::new(
+                DomainName::new("len-key.").unwrap(),
+                TsigAlgorithm::HmacSha256,
+                key_bytes,
+            ).unwrap();
+            let mac = key.sign(&message);
+            prop_assert_eq!(
+                mac.len(),
+                TsigAlgorithm::HmacSha256.mac_length(),
+                "MAC length must equal algorithm mac_length()"
+            );
+        }
     }
 }

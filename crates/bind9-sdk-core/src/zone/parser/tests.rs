@@ -618,4 +618,30 @@ proptest! {
             "record count mismatch after roundtrip"
         );
     }
+
+    /// The zone parser must never panic on arbitrary UTF-8 input (extended coverage).
+    ///
+    /// Err is acceptable; panic is not.
+    #[test]
+    fn zone_parser_never_panics(input in "\\PC*") {
+        let _ = ZoneFile::parse(&input);
+    }
+
+    /// DomainName::new must never panic on arbitrary input.
+    #[test]
+    fn domain_name_new_never_panics(input in "\\PC*") {
+        let _ = DomainName::new(&input);
+    }
+
+    /// Simple single-label FQDNs always parse successfully.
+    #[test]
+    fn domain_name_simple_fqdn_always_ok(
+        label in "[a-z][a-z0-9]{0,30}",
+    ) {
+        let fqdn = alloc::format!("{label}.");
+        prop_assert!(
+            DomainName::new(&fqdn).is_ok(),
+            "expected Ok for simple FQDN `{fqdn}`"
+        );
+    }
 }

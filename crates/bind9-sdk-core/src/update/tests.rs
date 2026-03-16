@@ -627,3 +627,49 @@ fn unsigned_and_signed_produce_different_bytes() {
     assert_ne!(unsigned.as_bytes(), signed.as_bytes());
     assert!(signed.as_bytes().len() > unsigned.as_bytes().len());
 }
+
+mod proptests {
+    use super::*;
+    use crate::domain::DomainName;
+    use crate::record::RecordClass;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Wire-encoded update messages are always at least 12 bytes (DNS header).
+        #[test]
+        fn wire_length_at_least_dns_header(id in 0u16..=u16::MAX) {
+            let zone = DomainName::new("example.com.").unwrap();
+            let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
+                .build_unsigned();
+            prop_assert!(
+                msg.as_bytes().len() >= 12,
+                "wire message too short: {} bytes", msg.as_bytes().len()
+            );
+        }
+
+        /// ZOCOUNT field (bytes 4–5) is always exactly 1 in every UPDATE message.
+        ///
+        /// RFC 2136 §2 requires exactly one zone section entry.
+        #[test]
+        fn zocount_is_always_one(id in 0u16..=u16::MAX) {
+            let zone = DomainName::new("example.com.").unwrap();
+            let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
+                .build_unsigned();
+            let bytes = msg.as_bytes();
+            let zocount = u16::from_be_bytes([bytes[4], bytes[5]]);
+            prop_assert_eq!(zocount, 1, "ZOCOUNT must be 1, got {}", zocount);
+        }
+
+        /// The opcode field is always 5 (UPDATE) in messages produced by UpdateBuilder.
+        #[test]
+        fn opcode_is_update(id in 0u16..=u16::MAX) {
+            let zone = DomainName::new("example.com.").unwrap();
+            let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
+                .build_unsigned();
+            let bytes = msg.as_bytes();
+            let flags = u16::from_be_bytes([bytes[2], bytes[3]]);
+            let opcode = (flags >> 11) & 0x0F;
+            prop_assert_eq!(opcode, 5, "opcode must be 5 (UPDATE), got {}", opcode);
+        }
+    }
+}
