@@ -20,6 +20,11 @@ use std::collections::BTreeMap;
 
 use crate::error::NetError;
 
+/// Maximum nesting depth for ISC message maps.
+///
+/// Prevents stack overflow from deeply nested (potentially malicious) messages.
+const MAX_DECODE_DEPTH: usize = 32;
+
 /// ISC message version constant.
 ///
 /// TODO: Verify against BIND9 source -- this is the version field
@@ -99,13 +104,13 @@ impl IscMessage {
     /// ```
     ///
     /// TODO: Verify type tag values against BIND9 source.
-    pub(crate) fn encode(&self) -> Vec<u8> {
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, NetError> {
         let mut buf = Vec::new();
         // Version header
         // TODO: Verify version encoding against BIND9 source
         buf.extend_from_slice(&ISC_MSG_VERSION.to_be_bytes());
-        Self::encode_map(&self.data, &mut buf);
-        buf
+        Self::encode_map(&self.data, &mut buf)?;
+        Ok(buf)
     }
 
     /// Decode an ISC message from binary format.
@@ -123,16 +128,22 @@ impl IscMessage {
             )));
         }
         let mut pos = 4;
-        let map = Self::decode_map(data, &mut pos)?;
+        let map = Self::decode_map(data, &mut pos, 0)?;
         Ok(IscMessage { data: map })
     }
 
-    fn encode_map(map: &BTreeMap<String, IscValue>, buf: &mut Vec<u8>) {
+    fn encode_map(map: &BTreeMap<String, IscValue>, buf: &mut Vec<u8>) -> Result<(), NetError> {
         for (key, value) in map {
             // Key: 1-byte length + key bytes
             // TODO: Verify key length encoding -- BIND9 may use different sizes
             let key_bytes = key.as_bytes();
-            buf.push(u8::try_from(key_bytes.len()).expect("ISC message keys must be <= 255 bytes"));
+            let key_len = u8::try_from(key_bytes.len()).map_err(|_| {
+                NetError::Protocol(format!(
+                    "ISC message key exceeds 255 bytes: {} bytes",
+                    key_bytes.len()
+                ))
+            })?;
+            buf.push(key_len);
             buf.extend_from_slice(key_bytes);
 
             match value {
@@ -140,11 +151,13 @@ impl IscMessage {
                     // Type tag: 0x00 = string
                     buf.push(0x00);
                     let val_bytes = s.as_bytes();
-                    buf.extend_from_slice(
-                        &u32::try_from(val_bytes.len())
-                            .expect("ISC string value too large")
-                            .to_be_bytes(),
-                    );
+                    let val_len = u32::try_from(val_bytes.len()).map_err(|_| {
+                        NetError::Protocol(format!(
+                            "ISC string value exceeds 4GB: {} bytes",
+                            val_bytes.len()
+                        ))
+                    })?;
+                    buf.extend_from_slice(&val_len.to_be_bytes());
                     buf.extend_from_slice(val_bytes);
                 }
                 IscValue::Map(m) => {
@@ -152,19 +165,31 @@ impl IscMessage {
                     buf.push(0x01);
                     // Encode the nested map into a temporary buffer to get its length
                     let mut nested = Vec::new();
-                    Self::encode_map(m, &mut nested);
-                    buf.extend_from_slice(
-                        &u32::try_from(nested.len())
-                            .expect("ISC nested map too large")
-                            .to_be_bytes(),
-                    );
+                    Self::encode_map(m, &mut nested)?;
+                    let nested_len = u32::try_from(nested.len()).map_err(|_| {
+                        NetError::Protocol(format!(
+                            "ISC nested map exceeds 4GB: {} bytes",
+                            nested.len()
+                        ))
+                    })?;
+                    buf.extend_from_slice(&nested_len.to_be_bytes());
                     buf.extend_from_slice(&nested);
                 }
             }
         }
+        Ok(())
     }
 
-    fn decode_map(data: &[u8], pos: &mut usize) -> Result<BTreeMap<String, IscValue>, NetError> {
+    fn decode_map(
+        data: &[u8],
+        pos: &mut usize,
+        depth: usize,
+    ) -> Result<BTreeMap<String, IscValue>, NetError> {
+        if depth > MAX_DECODE_DEPTH {
+            return Err(NetError::Protocol(format!(
+                "ISC message exceeds maximum nesting depth ({MAX_DECODE_DEPTH})"
+            )));
+        }
         let mut map = BTreeMap::new();
         while *pos < data.len() {
             // Key length (1 byte)
@@ -227,7 +252,7 @@ impl IscMessage {
                     // Nested map
                     let end = *pos + val_len;
                     let mut nested_pos = *pos;
-                    let nested_map = Self::decode_map(&data[..end], &mut nested_pos)?;
+                    let nested_map = Self::decode_map(&data[..end], &mut nested_pos, depth + 1)?;
                     *pos = end;
                     IscValue::Map(nested_map)
                 }
@@ -248,13 +273,15 @@ impl IscMessage {
 ///
 /// The rndc protocol uses 4-byte length prefixes, NOT the 2-byte DNS TCP length.
 /// This is the most common rndc client implementation bug.
-pub(crate) fn frame_message(msg: &IscMessage) -> Vec<u8> {
-    let payload = msg.encode();
-    let len = u32::try_from(payload.len()).expect("ISC message exceeds 4GB");
+pub(crate) fn frame_message(msg: &IscMessage) -> Result<Vec<u8>, NetError> {
+    let payload = msg.encode()?;
+    let len = u32::try_from(payload.len()).map_err(|_| {
+        NetError::Protocol(format!("ISC message exceeds 4GB: {} bytes", payload.len()))
+    })?;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(&payload);
-    frame
+    Ok(frame)
 }
 
 /// Extract the payload length from a 4-byte big-endian length prefix.
@@ -314,7 +341,7 @@ mod tests {
     #[test]
     fn isc_message_encode_decode_roundtrip_empty() {
         let msg = IscMessage::new();
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
@@ -323,7 +350,7 @@ mod tests {
     fn isc_message_encode_decode_roundtrip_single_string() {
         let mut msg = IscMessage::new();
         msg.insert_string("type", "command");
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
@@ -334,7 +361,7 @@ mod tests {
         msg.insert_string("_ctrl", "command");
         msg.insert_string("_data", "status");
         msg.insert_string("_nonce", "abc123");
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
@@ -350,7 +377,7 @@ mod tests {
         nested.insert("args".to_string(), IscValue::String(String::new()));
         msg.insert_map("_data", nested);
         msg.insert_string("_ctrl", "command");
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
@@ -366,7 +393,7 @@ mod tests {
         let mut outer = BTreeMap::new();
         outer.insert("reload".to_string(), IscValue::Map(inner));
         msg.insert_map("_data", outer);
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
     }
@@ -374,7 +401,7 @@ mod tests {
     #[test]
     fn isc_message_encode_starts_with_version() {
         let msg = IscMessage::new();
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         assert_eq!(&encoded[..4], &[0x00, 0x00, 0x00, 0x01]);
     }
 
@@ -382,7 +409,7 @@ mod tests {
     fn isc_message_encode_empty_string_value() {
         let mut msg = IscMessage::new();
         msg.insert_string("key", "");
-        let encoded = msg.encode();
+        let encoded = msg.encode().unwrap();
         let decoded = IscMessage::decode(&encoded).unwrap();
         assert_eq!(decoded.get_string("key"), Some(""));
     }
@@ -459,13 +486,99 @@ mod tests {
         );
     }
 
+    #[test]
+    fn isc_message_encode_key_too_long() {
+        let mut msg = IscMessage::new();
+        let long_key = "k".repeat(256);
+        msg.insert_string(&long_key, "value");
+        let result = msg.encode();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("exceeds 255 bytes"),
+            "expected 'exceeds 255 bytes' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn isc_message_decode_depth_limit() {
+        // Build a message with nesting depth > MAX_DECODE_DEPTH
+        // Each nesting level: 1-byte key_len + key + 1-byte type_tag(0x01) + 4-byte val_len + nested
+        let mut data = vec![0x00, 0x00, 0x00, 0x01]; // version
+        for _ in 0..=MAX_DECODE_DEPTH + 1 {
+            data.push(1); // key length
+            data.push(b'k'); // key
+            data.push(0x01); // type tag: map
+                             // Value length: remaining nesting bytes (we'll just make it large enough)
+                             // We don't need it to be exact since the depth check fires first
+        }
+        // This won't decode cleanly, but we need to craft it so the depth check fires.
+        // Instead, encode a valid deeply nested message programmatically.
+        fn build_nested(depth: usize) -> Vec<u8> {
+            let mut buf = Vec::new();
+            buf.push(1); // key length
+            buf.push(b'k'); // key byte
+            if depth == 0 {
+                buf.push(0x00); // string type
+                let val = b"leaf";
+                buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
+                buf.extend_from_slice(val);
+            } else {
+                buf.push(0x01); // map type
+                let nested = build_nested(depth - 1);
+                buf.extend_from_slice(&(nested.len() as u32).to_be_bytes());
+                buf.extend_from_slice(&nested);
+            }
+            buf
+        }
+
+        let mut msg_data = vec![0x00, 0x00, 0x00, 0x01]; // version
+        msg_data.extend_from_slice(&build_nested(MAX_DECODE_DEPTH + 5));
+
+        let result = IscMessage::decode(&msg_data);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nesting depth"),
+            "expected 'nesting depth' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn isc_message_decode_valid_nesting_within_limit() {
+        // 3 levels of nesting should work fine
+        fn build_nested(depth: usize) -> Vec<u8> {
+            let mut buf = Vec::new();
+            buf.push(1);
+            buf.push(b'k');
+            if depth == 0 {
+                buf.push(0x00);
+                let val = b"ok";
+                buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
+                buf.extend_from_slice(val);
+            } else {
+                buf.push(0x01);
+                let nested = build_nested(depth - 1);
+                buf.extend_from_slice(&(nested.len() as u32).to_be_bytes());
+                buf.extend_from_slice(&nested);
+            }
+            buf
+        }
+
+        let mut msg_data = vec![0x00, 0x00, 0x00, 0x01];
+        msg_data.extend_from_slice(&build_nested(3));
+
+        let result = IscMessage::decode(&msg_data);
+        assert!(result.is_ok(), "3-level nesting should succeed");
+    }
+
     // -- Framing tests --
 
     #[test]
     fn frame_message_prepends_length() {
         let mut msg = IscMessage::new();
         msg.insert_string("cmd", "status");
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg).unwrap();
         let payload_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
         assert_eq!(payload_len as usize, frame.len() - 4);
         let decoded = IscMessage::decode(&frame[4..]).unwrap();
@@ -475,7 +588,7 @@ mod tests {
     #[test]
     fn frame_message_empty_message() {
         let msg = IscMessage::new();
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg).unwrap();
         let payload_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]);
         assert_eq!(payload_len, 4);
     }
@@ -509,7 +622,7 @@ mod tests {
         msg.insert_map("_data", data);
         msg.insert_string("_ctrl", "command");
 
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg).unwrap();
         let payload_len = read_frame_length(&<[u8; 4]>::try_from(&frame[..4]).unwrap());
         let decoded = IscMessage::decode(&frame[4..4 + payload_len as usize]).unwrap();
         assert_eq!(decoded, msg);

@@ -124,7 +124,7 @@ impl RndcConnection<Unauthenticated> {
         // integration testing.
 
         // Sign the serialized message with HMAC
-        let payload = auth_msg.encode();
+        let payload = auth_msg.encode()?;
         let mac = key.sign(&payload);
 
         // Build the outer message with the HMAC
@@ -136,7 +136,7 @@ impl RndcConnection<Unauthenticated> {
         }
 
         // Send the framed message
-        let frame = frame_message(&signed_msg);
+        let frame = frame_message(&signed_msg)?;
         self.stream
             .write_all(&frame)
             .await
@@ -179,7 +179,7 @@ impl RndcConnection<Authenticated> {
         msg.insert_string("type", cmd.to_command_string());
 
         // Send
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg)?;
         self.stream
             .write_all(&frame)
             .await
@@ -303,7 +303,7 @@ mod tests {
         // Write a valid framed ISC message
         let mut msg = IscMessage::new();
         msg.insert_string("test", "value");
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg).unwrap();
         let frame_len = frame.len();
 
         // Spawn writer
@@ -332,7 +332,7 @@ mod tests {
         msg.insert_string("_ctrl", "command");
         msg.insert_string("type", "status");
 
-        let frame = frame_message(&msg);
+        let frame = frame_message(&msg).unwrap();
 
         // Writer sends the frame
         let write_handle = tokio::spawn(async move {
@@ -365,8 +365,8 @@ mod tests {
         let mut msg2 = IscMessage::new();
         msg2.insert_string("seq", "2");
 
-        let frame1 = frame_message(&msg1);
-        let frame2 = frame_message(&msg2);
+        let frame1 = frame_message(&msg1).unwrap();
+        let frame2 = frame_message(&msg2).unwrap();
 
         let write_handle = tokio::spawn(async move {
             client_write.write_all(&frame1).await.unwrap();
