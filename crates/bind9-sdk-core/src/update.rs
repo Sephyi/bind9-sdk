@@ -4,6 +4,8 @@
 
 use alloc::vec::Vec;
 
+use zeroize::Zeroizing;
+
 use crate::domain::DomainName;
 use crate::protocol::{Rcode, RecordType};
 use crate::record::{RecordClass, ResourceRecord};
@@ -156,6 +158,10 @@ impl UpdateBuilder<Unsigned> {
         rtype: RecordType,
         records: Vec<ResourceRecord>,
     ) -> Self {
+        assert!(
+            !records.is_empty(),
+            "RrsetExistsWithData requires non-empty records"
+        );
         self.prerequisites.push(Prerequisite::RrsetExistsWithData {
             name: name.clone(),
             rtype,
@@ -263,7 +269,7 @@ impl UpdateBuilder<Unsigned> {
                 message: UpdateMessage {
                     wire_bytes: wire,
                     id: self.id,
-                    request_mac: Some(request_mac),
+                    request_mac: Some(Zeroizing::new(request_mac)),
                     pre_tsig_len: Some(pre_tsig_len),
                 },
             },
@@ -285,7 +291,8 @@ pub struct UpdateMessage {
     pub(crate) id: u16,
     /// The request TSIG MAC, if the message was signed.
     /// Used by the net crate for response TSIG verification (RFC 8945 §4.5).
-    pub(crate) request_mac: Option<Vec<u8>>,
+    /// Wrapped in `Zeroizing` so the MAC is wiped from memory on drop.
+    pub(crate) request_mac: Option<Zeroizing<Vec<u8>>>,
     /// Length of the message before the TSIG record was appended.
     /// The response verifier needs the pre-TSIG bytes to reconstruct the MAC input.
     pub(crate) pre_tsig_len: Option<usize>,
@@ -307,7 +314,7 @@ impl UpdateMessage {
     /// Returns `None` for unsigned messages. Used by the transport layer
     /// to verify response TSIG per RFC 8945 §4.5.
     pub fn request_mac(&self) -> Option<&[u8]> {
-        self.request_mac.as_deref()
+        self.request_mac.as_ref().map(|z| z.as_slice())
     }
 
     /// Whether this message was signed with TSIG.
@@ -853,6 +860,18 @@ mod tests {
             .build_unsigned();
         assert_eq!(msg.id(), 42);
         assert!(!msg.as_bytes().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "empty")]
+    fn prerequisite_rejects_empty_rrset_exists_with_data() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let _builder = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .require_rrset_exists_with_data(
+                &DomainName::new("test.example.com.").unwrap(),
+                RecordType::A,
+                alloc::vec![],
+            );
     }
 
     // --- Wire format tests ---
