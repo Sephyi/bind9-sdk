@@ -5,8 +5,8 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::zone::ZoneFile;
 use crate::zone::rdata_text;
+use crate::zone::ZoneFile;
 
 /// Serialize a ZoneFile to canonical zone file text format.
 pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
@@ -270,5 +270,68 @@ sub.example.com. 600 IN A 10.0.0.1
         let output = zf.serialize();
         let zf2 = ZoneFile::parse(&output).unwrap();
         assert_eq!(zf.origin, zf2.origin);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    extern crate alloc;
+    use crate::zone::ZoneFile;
+
+    /// Snapshot the exact text output of the minimal zone serializer.
+    /// Any change to formatting or field ordering will cause this test to fail,
+    /// making serializer regressions immediately visible.
+    #[test]
+    fn snapshot_minimal_zone_serialization() {
+        let input = "\
+$ORIGIN example.com.
+$TTL 3600
+example.com. 3600 IN SOA ns1.example.com. admin.example.com. 2026031401 3600 900 604800 86400
+example.com. 3600 IN NS ns1.example.com.
+example.com. 3600 IN A 192.0.2.1
+";
+        let zf = ZoneFile::parse(input).unwrap();
+        let output = zf.serialize();
+        insta::assert_snapshot!(output);
+    }
+
+    /// Snapshot serialization of a zone with multiple record types.
+    /// Verifies owner elision (same owner on consecutive records) and correct
+    /// rdata text for A, AAAA, MX, CNAME, and TXT.
+    #[test]
+    fn snapshot_multi_rtype_zone_serialization() {
+        let input = "\
+$ORIGIN example.com.
+$TTL 300
+example.com. 300 IN SOA ns1.example.com. admin.example.com. 1 3600 900 604800 86400
+example.com. 300 IN NS ns1.example.com.
+example.com. 300 IN A 192.0.2.1
+example.com. 300 IN AAAA 2001:db8::1
+example.com. 300 IN MX 10 mail.example.com.
+www.example.com. 300 IN CNAME example.com.
+example.com. 300 IN TXT \"v=spf1 ~all\"
+";
+        let zf = ZoneFile::parse(input).unwrap();
+        let output = zf.serialize();
+        insta::assert_snapshot!(output);
+    }
+
+    /// Snapshot the second serialization pass of a parsed+re-serialized zone.
+    /// If the serializer output is stable, parse(serialize(parse(x))) must equal
+    /// parse(serialize(x)), i.e., the second pass is idempotent.
+    #[test]
+    fn snapshot_roundtrip_minimal_zone() {
+        let input = "\
+$ORIGIN example.com.
+$TTL 3600
+example.com. 3600 IN SOA ns1.example.com. admin.example.com. 2026031401 3600 900 604800 86400
+example.com. 3600 IN NS ns1.example.com.
+example.com. 3600 IN A 192.0.2.1
+";
+        let zf = ZoneFile::parse(input).unwrap();
+        let serialized = zf.serialize();
+        let zf2 = ZoneFile::parse(&serialized).unwrap();
+        let serialized2 = zf2.serialize();
+        insta::assert_snapshot!(serialized2);
     }
 }

@@ -1,0 +1,13 @@
+---
+source: crates/bind9-sdk-core/src/zone/serializer.rs
+expression: output
+---
+$ORIGIN example.com.
+$TTL 300
+example.com.	300	IN	SOA	ns1.example.com. admin.example.com. 1 3600 900 604800 86400
+	300	IN	NS	ns1.example.com.
+	300	IN	A	192.0.2.1
+	300	IN	AAAA	2001:db8::1
+	300	IN	MX	10 mail.example.com.
+www.example.com.	300	IN	CNAME	example.com.
+example.com.	300	IN	TXT	"v=spf1 ~all"
