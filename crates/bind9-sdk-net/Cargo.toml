@@ -27,3 +27,5 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"
+tokio = { workspace = true }
+insta = { workspace = true }
