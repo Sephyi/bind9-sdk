@@ -107,13 +107,13 @@ Both `proptest` and `insta` are already declared in `[workspace.dependencies]` a
   ```bash
   # rndc control channel
   nc -z 127.0.0.1 9953 && echo "rndc OK"
-  # stats channel
-  curl -sf http://127.0.0.1:8053/ | head -c 200
+  # stats channel (JSON endpoint — root `/` returns XML, not JSON)
+  curl -sf http://127.0.0.1:8053/json/v1/server | head -c 200
   # DNS query
   dig @127.0.0.1 -p 15353 example.com SOA +short
   ```
 
-  Expected: `rndc OK`, non-empty JSON fragment, and the SOA record for example.com
+  Expected: `rndc OK`, non-empty JSON object (`{"json-stats-version":...}`), and the SOA record for example.com
   (`ns1.example.com. admin.example.com. 2026031601 3600 900 604800 86400`).
 
 ### Step 1.3 — Verify existing rndc integration tests + OQ-007
@@ -495,7 +495,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
   #[tokio::test]
   #[ignore = "requires live BIND9 statistics-channel on localhost:8053"]
   async fn stats_fetch_server_stats_has_version() {
-      let client = StatsHttpClient::new("http://con127.0.0.1:8053", Duration::from_secs(5))
+      let client = StatsHttpClient::new("http://127.0.0.1:8053", Duration::from_secs(5))
           .expect("client construction failed");
 
       let stats = client
@@ -528,12 +528,9 @@ DNS update port is **15353** (container maps port 53 → host 15353).
 
       // The test zone file sets serial = 2026031601.
       // After dynamic updates in nsupdate tests, the serial may have been
-      // incremented — we only check it is non-zero.
-      assert!(
-          stats.serial.is_some(),
-          "expected a serial in ZoneStats for example.com"
-      );
-      let serial = stats.serial.unwrap();
+      // incremented — we only check it is >= the initial value.
+      // ZoneStats.serial is `Serial` (not Option), accessed via `.value() -> u32`.
+      let serial = stats.serial.value();
       assert!(serial >= 2026031601, "serial {serial} is less than initial value 2026031601");
   }
 
@@ -1407,8 +1404,9 @@ After all three splits, run the full workspace check:
 
 ## Chunk 5: Publish Readiness + Doc Gaps
 
-**Goal:** Make `cargo publish --dry-run -p bind9-sdk` pass, fill missing doc coverage,
-resolve OQ-005 as a decision gate, and run the final quality checks.
+**Goal:** Validate packaging structure via `cargo publish --dry-run`, fill missing doc coverage,
+record OQ-005 deferral, and run the final quality checks. Actual crates.io publishing is not
+in scope — license warnings from the dry-run are expected and non-blocking.
 
 **Files touched:**
 - `bind9-sdk/Cargo.toml`
@@ -1436,8 +1434,8 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
 
   **Expected outcome for the license field:**
   `PolyForm-Noncommercial-1.0.0` is not an SPDX identifier recognized by crates.io's validator.
-  The dry-run may succeed with a warning, or fail with an error about the unrecognized license.
-  This feeds directly into the OQ-005 decision gate (Step 5.2).
+  The dry-run may warn or error about the unrecognized license. This is expected and non-blocking —
+  OQ-005 is deferred (no release planned). The dry-run validates packaging structure, not publish readiness.
 
 - [ ] Also run for each internal crate:
 
@@ -1446,50 +1444,24 @@ resolve OQ-005 as a decision gate, and run the final quality checks.
   cargo publish --dry-run -p bind9-sdk-net 2>&1 | tail -10
   ```
 
-### Step 5.2 — DECISION GATE: Resolve OQ-005 (License)
+### Step 5.2 — OQ-005 (License): Deferred
 
-**This step requires a human decision before proceeding to actual `cargo publish`.**
+**Decision: No crates.io release is planned for this phase.** The license question (OQ-005)
+remains open — PolyForm-Noncommercial-1.0.0 stays as-is. No `Cargo.toml` changes needed.
 
-- [ ] Document the OQ-005 resolution options:
+The `cargo publish --dry-run` in Steps 5.1/5.7 may warn about the non-SPDX license identifier.
+This is expected and acceptable since actual publishing is not in scope.
 
-  **Option A — Keep PolyForm-Noncommercial-1.0.0 (current)**
-  - Pros: protects commercial use
-  - Cons: not OSI-approved, not in SPDX, crates.io will require `license-file` field instead of
-    `license`, ecosystem tools may not recognize it, discourages contribution
+- [ ] Update the PRD `OQ-005` row to reflect the deferral:
 
-  **Option B — Dual-license MIT/Apache-2.0**
-  - Standard Rust ecosystem convention
-  - Maximizes ecosystem adoption
-  - Requires changing the `license` field in all `Cargo.toml` files, updating `REUSE.toml`,
-    and replacing all SPDX headers in source files
+  Change from: `PENDING — must resolve before publish`
+  Change to: `DEFERRED — no release planned; resolve before any crates.io publish`
 
-  **Option C — Delayed decision**
-  - Publish to a private registry or skip crates.io for v0.1.0
-  - Move OQ-005 to Phase 2 with a hard deadline before crates.io submit
-
-  **If the decision is to proceed with PolyForm-Noncommercial:**
-  Add `license-file = "LICENSE"` to each `Cargo.toml` and ensure `LICENSE` exists at the
-  workspace root with the PolyForm-Noncommercial 1.0.0 text. Remove the `license` field from
-  `Cargo.toml` (crates.io accepts one or the other, not both, for non-SPDX licenses).
-
-  **If the decision is to switch to MIT/Apache-2.0:**
-  - Change `license = "PolyForm-Noncommercial-1.0.0"` to `license = "MIT OR Apache-2.0"` in
-    `[workspace.package]`
-  - Update `REUSE.toml` to reflect the new SPDX identifiers
-  - Replace all `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` lines in `.rs` files
-  - Replace all `# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` lines in `.toml` files
-  - Replace all `<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->` in `.md` files
-  - Add `LICENSE-MIT` and `LICENSE-APACHE` files at the workspace root
-
-- [ ] **[HUMAN DECISION REQUIRED]** Record the decision in a commit message and update the
-  PRD `OQ-005` row from `PENDING — must resolve before publish` to `RESOLVED — <chosen option>`.
-
-- [ ] Commit the OQ-005 resolution:
+- [ ] Commit:
 
   ```bash
-  git add Cargo.toml bind9-sdk/Cargo.toml crates/*/Cargo.toml PRD.md
-  # also add any SPDX header changes if switching licenses
-  git commit -m "chore: resolve OQ-005 — license decision: <chosen option>"
+  git add PRD.md
+  git commit -m "docs(prd): defer OQ-005 license decision — no release planned for Phase 1"
   ```
 
 ### Step 5.3 — Documentation coverage audit
@@ -1658,7 +1630,9 @@ Per CLAUDE.md § Verification Workflow, run all three mandatory review agents be
   cargo publish --dry-run -p bind9-sdk 2>&1
   ```
 
-  Expected: `Uploading bind9-sdk vX.Y.Z` (dry-run; not actually uploaded) with no fatal errors.
+  Expected: `Uploading bind9-sdk vX.Y.Z` (dry-run; not actually uploaded). License warnings
+  about `PolyForm-Noncommercial-1.0.0` are expected and non-blocking (OQ-005 deferred). Only
+  fatal packaging errors (missing fields, broken deps) need fixing.
 
 ### Step 5.8 — Full workspace final quality gate
 
@@ -1723,10 +1697,10 @@ Per CLAUDE.md § Verification Workflow, run all three mandatory review agents be
   - `zone/parser.rs` (1189 L) → `zone/parser/` submodule
 
   **Stream 5: Publish Readiness**
-  - OQ-005 license decision recorded
+  - OQ-005 license decision deferred (no release planned)
   - Missing doc comments filled
   - `keywords` + `categories` added to Cargo.toml
-  - `cargo audit`, `cargo deny check`, `cargo publish --dry-run` all pass
+  - `cargo audit`, `cargo deny check` pass; `cargo publish --dry-run` validates packaging (license warnings expected)
 
   ## Test plan
 
@@ -1734,7 +1708,7 @@ Per CLAUDE.md § Verification Workflow, run all three mandatory review agents be
   - [ ] `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` — core WASM clean
   - [ ] `cargo clippy --workspace --all-targets -- -D warnings` — clippy clean
   - [ ] Integration tests with live BIND9: `cargo test --workspace -- --ignored --test-threads=1`
-  - [ ] `cargo publish --dry-run -p bind9-sdk` — no fatal errors
+  - [ ] `cargo publish --dry-run -p bind9-sdk` — no fatal packaging errors (license warnings expected)
   ```
 
 ## Appendix: Known Edge Cases
