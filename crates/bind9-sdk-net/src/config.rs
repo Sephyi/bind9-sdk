@@ -5,8 +5,13 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use bind9_sdk_core::domain::DomainName;
+use bind9_sdk_core::traits::{FrozenZone, NamedControl, ServerStatus};
 use bind9_sdk_core::tsig::TsigKey;
 
+use crate::error::NetError;
+use crate::rndc::RndcConnection;
+use crate::rndc::command::{RndcCommand, make_frozen_zone, parse_server_status};
 use crate::tls::TlsConfig;
 
 /// Configuration for connecting to a BIND9 server.
@@ -33,12 +38,24 @@ pub struct ClientConfig {
     pub timeout: Duration,
 }
 
-/// Client for managing a BIND9 DNS server.
+/// A client for managing a BIND9 server.
 ///
-/// This is the primary entry point for the `bind9-sdk-net` crate.
-/// In Phase 1, this is a skeleton that holds configuration. Wave 2
-/// implementation plans will add trait implementations for
-/// `NamedControl`, `DynamicUpdater`, and `StatsClient`.
+/// Implements the management traits from `bind9-sdk-core` using the
+/// rndc wire protocol for server control, HTTP for statistics, and
+/// DNS over UDP/TCP for dynamic updates.
+///
+/// # Connection management
+///
+/// Each trait method call establishes a new rndc connection, authenticates,
+/// sends the command, and closes the connection. This matches the behavior
+/// of the `rndc` CLI tool. For bulk operations, consider using
+/// `RndcConnection` directly for connection reuse.
+///
+/// # Thread safety
+///
+/// `Bind9Client` is `Send + Sync` and can be shared across tasks.
+/// Each method call creates its own TCP connection, so concurrent
+/// calls are safe.
 pub struct Bind9Client {
     config: ClientConfig,
 }
@@ -47,7 +64,7 @@ impl Bind9Client {
     /// Create a new BIND9 client with the given configuration.
     ///
     /// This does not establish any connections — connections are created
-    /// on demand by trait method implementations (added in Wave 2).
+    /// on demand by trait method implementations.
     pub fn new(config: ClientConfig) -> Self {
         Self { config }
     }
@@ -55,6 +72,77 @@ impl Bind9Client {
     /// Access the client configuration.
     pub fn config(&self) -> &ClientConfig {
         &self.config
+    }
+
+    /// Execute a single rndc command using a fresh connection.
+    ///
+    /// Connects, authenticates, sends the command, reads the response,
+    /// and closes the connection.
+    async fn rndc_command(
+        &self,
+        cmd: RndcCommand,
+    ) -> Result<crate::rndc::command::RndcResponse, NetError> {
+        let conn = RndcConnection::connect(self.config.rndc_addr).await?;
+        let mut conn = conn.authenticate(&self.config.rndc_key).await?;
+        let resp = conn.command(cmd).await?;
+        conn.close().await?;
+        Ok(resp)
+    }
+}
+
+impl NamedControl for Bind9Client {
+    type Error = NetError;
+
+    async fn status(&self) -> Result<ServerStatus, NetError> {
+        let resp = self.rndc_command(RndcCommand::Status).await?;
+        if !resp.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc status failed: {}",
+                resp.text
+            )));
+        }
+        Ok(parse_server_status(&resp.text))
+    }
+
+    async fn reload(&self) -> Result<(), NetError> {
+        let resp = self.rndc_command(RndcCommand::Reload).await?;
+        if !resp.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc reload failed: {}",
+                resp.text
+            )));
+        }
+        Ok(())
+    }
+
+    async fn reload_zone(&self, zone: &DomainName) -> Result<(), NetError> {
+        let resp = self
+            .rndc_command(RndcCommand::ReloadZone {
+                zone: zone.to_string(),
+            })
+            .await?;
+        if !resp.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc reload zone failed: {}",
+                resp.text
+            )));
+        }
+        Ok(())
+    }
+
+    async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, NetError> {
+        let resp = self
+            .rndc_command(RndcCommand::Freeze {
+                zone: zone.to_string(),
+            })
+            .await?;
+        if !resp.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc freeze failed: {}",
+                resp.text
+            )));
+        }
+        Ok(make_frozen_zone(zone))
     }
 }
 
