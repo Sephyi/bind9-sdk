@@ -184,6 +184,7 @@ impl RndcConnection<Unauthenticated> {
 
         // Read the server's response
         let response = read_isc_message(&mut self.stream).await?;
+        verify_authenticated_response(key, &response, serial, now, None, Some("null"))?;
 
         // Extract nonce from server's _ctrl table
         let nonce = response
@@ -204,6 +205,11 @@ impl RndcConnection<Unauthenticated> {
 
         match result_code {
             Some("0") => {
+                if nonce.is_none() {
+                    return Err(NetError::AuthFailed {
+                        reason: "server response missing _ctrl._nonce field".to_string(),
+                    });
+                }
                 tracing::debug!(
                     "rndc authentication successful (nonce: {})",
                     nonce.is_some()
@@ -212,7 +218,7 @@ impl RndcConnection<Unauthenticated> {
             Some(code) => {
                 // Server returned a non-zero result code
                 let err_text = extract_error_text(&response)
-                    .unwrap_or("server rejected authentication");
+                    .unwrap_or_else(|| "server rejected authentication".to_string());
                 return Err(NetError::AuthFailed {
                     reason: format!("result code {code}: {err_text}"),
                 });
@@ -245,7 +251,8 @@ impl<'k> RndcConnection<Authenticated<'k>> {
     ///
     /// The connection remains open and can be reused for subsequent commands.
     pub async fn command(&mut self, cmd: RndcCommand) -> Result<RndcResponse, NetError> {
-        tracing::debug!("sending rndc command: {cmd}");
+        let cmd_text = cmd.to_command_string();
+        tracing::debug!("sending rndc command: {cmd_text}");
 
         // Increment serial for this command
         self.state.serial = self.state.serial.wrapping_add(1);
@@ -256,10 +263,7 @@ impl<'k> RndcConnection<Authenticated<'k>> {
 
         // Build _data table with the command type
         let mut data = BTreeMap::new();
-        data.insert(
-            "type".to_string(),
-            IscValue::String(cmd.to_command_string()),
-        );
+        data.insert("type".to_string(), IscValue::String(cmd_text.clone()));
 
         // Compute HMAC over encoded _ctrl + _data body
         let hmac_value = sign_rndc_body(self.state.key, &ctrl, &data)?;
@@ -282,6 +286,14 @@ impl<'k> RndcConnection<Authenticated<'k>> {
 
         // Read response
         let response = read_isc_message(&mut self.stream).await?;
+        verify_authenticated_response(
+            self.state.key,
+            &response,
+            self.state.serial,
+            now,
+            self.state.nonce.as_deref(),
+            Some(&cmd_text),
+        )?;
 
         // Extract result code and text from _data table
         let data_map = response.get_map("_data");
@@ -293,12 +305,7 @@ impl<'k> RndcConnection<Authenticated<'k>> {
             })
             .unwrap_or_default();
 
-        let text = data_map
-            .and_then(|d| match d.get("text") {
-                Some(IscValue::String(s)) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let text = data_map.and_then(extract_response_text).unwrap_or_default();
 
         tracing::debug!(
             "rndc command response: result={result_code}, text_len={}",
@@ -420,19 +427,180 @@ fn current_unix_time() -> Result<u64, NetError> {
         .map_err(|e| NetError::Protocol(format!("system clock error: {e}")))
 }
 
+/// Verify the HMAC and control fields on an authenticated server response.
+///
+/// BIND9 signs replies with `_auth.hsha` over the `_ctrl` and `_data` tables
+/// and echoes the request serial/timestamps. Replies also carry `_rpl=1` and
+/// the negotiated nonce.
+fn verify_authenticated_response(
+    key: &TsigKey,
+    response: &IscMessage,
+    expected_serial: u32,
+    expected_time: u64,
+    expected_nonce: Option<&str>,
+    expected_type: Option<&str>,
+) -> Result<(), NetError> {
+    let auth = response.get_map("_auth").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _auth table".to_string(),
+    })?;
+    let ctrl = response.get_map("_ctrl").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl table".to_string(),
+    })?;
+    let data = response.get_map("_data").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _data table".to_string(),
+    })?;
+
+    let expected_hmac = sign_rndc_body(key, ctrl, data)?;
+    let received_hmac = match auth.get("hsha") {
+        Some(IscValue::Binary(bytes)) => bytes,
+        _ => {
+            return Err(NetError::AuthFailed {
+                reason: "server response missing _auth.hsha binary field".to_string(),
+            });
+        }
+    };
+    if expected_hmac.as_slice() != received_hmac.as_slice() {
+        return Err(NetError::AuthFailed {
+            reason: "server response HMAC verification failed".to_string(),
+        });
+    }
+
+    validate_response_ctrl(ctrl, expected_serial, expected_time, expected_nonce)?;
+
+    if let Some(expected_type) = expected_type
+        && let Some(actual_type) = map_string(data, "type")
+        && actual_type != expected_type
+    {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response type mismatch: expected `{expected_type}`, got `{actual_type}`"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// Validate replay-relevant `_ctrl` fields on a server response.
+fn validate_response_ctrl(
+    ctrl: &BTreeMap<String, IscValue>,
+    expected_serial: u32,
+    expected_time: u64,
+    expected_nonce: Option<&str>,
+) -> Result<(), NetError> {
+    let expected_expiry = expected_time + ISCCC_EXPIRY_SECS;
+    let serial = map_string(ctrl, "_ser").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl._ser".to_string(),
+    })?;
+    if serial != expected_serial.to_string() {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response serial mismatch: expected `{expected_serial}`, got `{serial}`"
+            ),
+        });
+    }
+
+    let timestamp = map_string(ctrl, "_tim").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl._tim".to_string(),
+    })?;
+    if timestamp != expected_time.to_string() {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response timestamp mismatch: expected `{expected_time}`, got `{timestamp}`"
+            ),
+        });
+    }
+
+    let expiry = map_string(ctrl, "_exp").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl._exp".to_string(),
+    })?;
+    if expiry != expected_expiry.to_string() {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response expiry mismatch: expected `{expected_expiry}`, got `{expiry}`"
+            ),
+        });
+    }
+
+    let reply_flag = map_string(ctrl, "_rpl").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl._rpl".to_string(),
+    })?;
+    if reply_flag != "1" {
+        return Err(NetError::AuthFailed {
+            reason: format!("server response has invalid _ctrl._rpl `{reply_flag}`"),
+        });
+    }
+
+    let nonce = map_string(ctrl, "_nonce").ok_or_else(|| NetError::AuthFailed {
+        reason: "server response missing _ctrl._nonce".to_string(),
+    })?;
+    if let Some(expected_nonce) = expected_nonce && nonce != expected_nonce {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response nonce mismatch: expected `{expected_nonce}`, got `{nonce}`"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// Read a string field from an ISC map.
+fn map_string<'a>(map: &'a BTreeMap<String, IscValue>, key: &str) -> Option<&'a str> {
+    match map.get(key) {
+        Some(IscValue::String(value)) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
 /// Extract error text from a server response.
 ///
 /// Checks `_data.err` first, then `_data.text` as a fallback.
-fn extract_error_text(response: &IscMessage) -> Option<&str> {
+fn extract_error_text(response: &IscMessage) -> Option<String> {
     response.get_map("_data").and_then(|d| {
-        match d.get("err") {
-            Some(IscValue::String(s)) => Some(s.as_str()),
-            _ => match d.get("text") {
-                Some(IscValue::String(s)) => Some(s.as_str()),
-                _ => None,
-            },
-        }
+        extract_data_field(d, "err")
+            .or_else(|| extract_data_field(d, "text"))
+            .or_else(|| render_unstructured_fields(d))
     })
+}
+
+/// Extract displayable text from an rndc response body.
+fn extract_response_text(data: &BTreeMap<String, IscValue>) -> Option<String> {
+    extract_data_field(data, "text").or_else(|| render_unstructured_fields(data))
+}
+
+/// Extract and render a named field from an ISC data map.
+fn extract_data_field(data: &BTreeMap<String, IscValue>, key: &str) -> Option<String> {
+    data.get(key).map(render_isc_value)
+}
+
+/// Render any fields other than `result`/`type` for human-readable fallback text.
+fn render_unstructured_fields(data: &BTreeMap<String, IscValue>) -> Option<String> {
+    let rendered: Vec<String> = data
+        .iter()
+        .filter(|(key, _)| key.as_str() != "result" && key.as_str() != "type")
+        .map(|(key, value)| format!("{key}: {}", render_isc_value(value)))
+        .collect();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered.join("\n"))
+    }
+}
+
+/// Render an ISC value into deterministic debug text.
+fn render_isc_value(value: &IscValue) -> String {
+    match value {
+        IscValue::String(s) => s.clone(),
+        IscValue::Binary(bytes) => base64_encode(bytes),
+        IscValue::Map(map) => {
+            let fields: Vec<String> = map
+                .iter()
+                .map(|(key, nested)| format!("{key}: {}", render_isc_value(nested)))
+                .collect();
+            format!("{{{}}}", fields.join(", "))
+        }
+    }
 }
 
 /// Read a framed ISC message from a TCP stream.
@@ -690,6 +858,134 @@ mod tests {
             now < 1_893_456_000,
             "timestamp {now} should be before 2030"
         );
+    }
+
+    #[test]
+    fn verify_authenticated_response_accepts_valid_reply() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xAA; 32],
+        )
+        .unwrap();
+
+        let ctrl = {
+            let mut ctrl = build_ctrl_table(42, 1_710_000_000, Some("abc123"));
+            ctrl.insert("_rpl".to_string(), IscValue::String("1".to_string()));
+            ctrl
+        };
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("status".to_string()));
+        data.insert("result".to_string(), IscValue::String("0".to_string()));
+        data.insert(
+            "text".to_string(),
+            IscValue::String("server is up and running".to_string()),
+        );
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+        let mut auth = BTreeMap::new();
+        auth.insert("hsha".to_string(), IscValue::Binary(hmac));
+
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", auth);
+        msg.insert_map("_ctrl", ctrl);
+        msg.insert_map("_data", data);
+
+        assert!(
+            verify_authenticated_response(
+                &key,
+                &msg,
+                42,
+                1_710_000_000,
+                Some("abc123"),
+                Some("status"),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn verify_authenticated_response_rejects_nonce_mismatch() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xAB; 32],
+        )
+        .unwrap();
+
+        let ctrl = {
+            let mut ctrl = build_ctrl_table(7, 1_710_000_001, Some("server-nonce"));
+            ctrl.insert("_rpl".to_string(), IscValue::String("1".to_string()));
+            ctrl
+        };
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String("status".to_string()));
+        data.insert("result".to_string(), IscValue::String("0".to_string()));
+
+        let hmac = sign_rndc_body(&key, &ctrl, &data).unwrap();
+        let mut auth = BTreeMap::new();
+        auth.insert("hsha".to_string(), IscValue::Binary(hmac));
+
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", auth);
+        msg.insert_map("_ctrl", ctrl);
+        msg.insert_map("_data", data);
+
+        let err = verify_authenticated_response(
+            &key,
+            &msg,
+            7,
+            1_710_000_001,
+            Some("client-nonce"),
+            Some("status"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, NetError::AuthFailed { .. }));
+        assert!(err.to_string().contains("nonce mismatch"));
+    }
+
+    #[test]
+    fn extract_error_text_renders_nested_maps() {
+        let mut err_map = BTreeMap::new();
+        err_map.insert(
+            "message".to_string(),
+            IscValue::String("permission denied".to_string()),
+        );
+        err_map.insert("zone".to_string(), IscValue::String("example.com".to_string()));
+
+        let mut data = BTreeMap::new();
+        data.insert("err".to_string(), IscValue::Map(err_map));
+
+        let mut msg = IscMessage::new();
+        msg.insert_map("_data", data);
+
+        let text = extract_error_text(&msg).unwrap();
+        assert!(text.contains("message: permission denied"));
+        assert!(text.contains("zone: example.com"));
+    }
+
+    #[test]
+    fn extract_response_text_falls_back_to_nested_fields() {
+        let mut details = BTreeMap::new();
+        details.insert(
+            "serial".to_string(),
+            IscValue::String("2026031601".to_string()),
+        );
+        details.insert(
+            "state".to_string(),
+            IscValue::String("running".to_string()),
+        );
+
+        let mut data = BTreeMap::new();
+        data.insert("result".to_string(), IscValue::String("0".to_string()));
+        data.insert("details".to_string(), IscValue::Map(details));
+
+        let text = extract_response_text(&data).unwrap();
+        assert!(text.contains("details: {serial: 2026031601, state: running}"));
     }
 
     // -- Framing tests (using duplex streams) --
