@@ -92,6 +92,7 @@ impl fmt::Display for Serial {
 
 /// DNS record class (RFC 1035 §3.2.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum RecordClass {
     /// Internet (1) — the only class used in practice
     IN,

@@ -5,8 +5,8 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::zone::ZoneFile;
 use crate::zone::rdata_text;
+use crate::zone::ZoneFile;
 
 /// Serialize a ZoneFile to canonical zone file text format.
 pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
@@ -30,7 +30,7 @@ pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
                 "\t{}\t{}\t{}\t{}\n",
                 rr.ttl.value(),
                 rr.class,
-                rdata_type_str(&rr.rdata),
+                rdata_type_string(&rr.rdata),
                 rdata_text::serialize_rdata(&rr.rdata),
             ));
         } else {
@@ -39,7 +39,7 @@ pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
                 rr.name,
                 rr.ttl.value(),
                 rr.class,
-                rdata_type_str(&rr.rdata),
+                rdata_type_string(&rr.rdata),
                 rdata_text::serialize_rdata(&rr.rdata),
             ));
         }
@@ -51,31 +51,34 @@ pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
 }
 
 /// Get the type keyword string for a RecordData variant.
-fn rdata_type_str(rdata: &crate::rdata::RecordData) -> &'static str {
+///
+/// For known types, returns the static mnemonic. For `Unknown`, returns
+/// the RFC 3597 `TYPE{n}` format via the caller-provided buffer.
+fn rdata_type_string(rdata: &crate::rdata::RecordData) -> String {
     use crate::rdata::RecordData;
     match rdata {
-        RecordData::A(_) => "A",
-        RecordData::Aaaa(_) => "AAAA",
-        RecordData::Cname(_) => "CNAME",
-        RecordData::Ns(_) => "NS",
-        RecordData::Ptr(_) => "PTR",
-        RecordData::Soa { .. } => "SOA",
-        RecordData::Mx { .. } => "MX",
-        RecordData::Txt(_) => "TXT",
-        RecordData::Srv { .. } => "SRV",
-        RecordData::Caa { .. } => "CAA",
-        RecordData::Dnskey { .. } => "DNSKEY",
-        RecordData::Rrsig { .. } => "RRSIG",
-        RecordData::Nsec { .. } => "NSEC",
-        RecordData::Nsec3 { .. } => "NSEC3",
-        RecordData::Ds { .. } => "DS",
-        RecordData::Cds { .. } => "CDS",
-        RecordData::Cdnskey { .. } => "CDNSKEY",
-        RecordData::Tlsa { .. } => "TLSA",
-        RecordData::Sshfp { .. } => "SSHFP",
-        RecordData::Csync { .. } => "CSYNC",
-        RecordData::Rp { .. } => "RP",
-        RecordData::Unknown { .. } => "TYPE",
+        RecordData::A(_) => String::from("A"),
+        RecordData::Aaaa(_) => String::from("AAAA"),
+        RecordData::Cname(_) => String::from("CNAME"),
+        RecordData::Ns(_) => String::from("NS"),
+        RecordData::Ptr(_) => String::from("PTR"),
+        RecordData::Soa { .. } => String::from("SOA"),
+        RecordData::Mx { .. } => String::from("MX"),
+        RecordData::Txt(_) => String::from("TXT"),
+        RecordData::Srv { .. } => String::from("SRV"),
+        RecordData::Caa { .. } => String::from("CAA"),
+        RecordData::Dnskey { .. } => String::from("DNSKEY"),
+        RecordData::Rrsig { .. } => String::from("RRSIG"),
+        RecordData::Nsec { .. } => String::from("NSEC"),
+        RecordData::Nsec3 { .. } => String::from("NSEC3"),
+        RecordData::Ds { .. } => String::from("DS"),
+        RecordData::Cds { .. } => String::from("CDS"),
+        RecordData::Cdnskey { .. } => String::from("CDNSKEY"),
+        RecordData::Tlsa { .. } => String::from("TLSA"),
+        RecordData::Sshfp { .. } => String::from("SSHFP"),
+        RecordData::Csync { .. } => String::from("CSYNC"),
+        RecordData::Rp { .. } => String::from("RP"),
+        RecordData::Unknown { rtype, .. } => format!("TYPE{rtype}"),
     }
 }
 

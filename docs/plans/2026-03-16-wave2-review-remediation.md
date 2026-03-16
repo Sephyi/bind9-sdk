@@ -5,7 +5,7 @@
 
 **Source**: Dialectic verification (Codex gpt-5.4 + GLM5) of Wave 1 TSIG/update/net code
 **Date**: 2026-03-16
-**Status**: PLANNED
+**Status**: COMPLETE — all items delivered in WT-3/WT-4/WT-5 and post-WT-5 hardening
 
 Two CRITICAL findings (canonicalization + timestamp) were fixed immediately in `1dde207`.
 This plan covers the remaining HIGH/MEDIUM/LOW items to fold into Wave 2 worktrees.

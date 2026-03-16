@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+#![forbid(unsafe_code)]
+
 pub mod config;
 pub mod error;
 pub mod nsupdate;

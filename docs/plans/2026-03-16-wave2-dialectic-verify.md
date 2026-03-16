@@ -123,6 +123,8 @@ Gemini 3 Pro failed (429 rate limit). Retried with Gemini 2.5 Pro reading actual
 | F-035 (G-007) | **ACCEPT WARN** | **New angle on F-009.** `ServerStats` uses `String` defaults for missing JSON fields instead of `Option<String>`. Conflates absent data with empty string. |
 | F-036 (G-008) | **ACCEPT WARN** | **New, significant.** TSIG-002 (response verification) was explicitly scheduled for WT-4 in remediation plan but not implemented. PRD changelog incorrectly claims delivery. Must be addressed in WT-5 or PRD corrected. |
 
+**Status**: RESOLVED — All accepted findings remediated in WT-5 + post-WT-5 hardening + audit-remediation commit
+
 ## Final Verdict
 
 **PASS** — No accepted CRITICAL blockers.

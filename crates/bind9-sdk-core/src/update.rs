@@ -15,6 +15,7 @@ use crate::record::{RecordClass, ResourceRecord};
 /// Prerequisites are checked by the server before any updates are applied.
 /// If any prerequisite fails, the entire update is rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Prerequisite {
     /// An RRset with this name and type must exist (any data).
     RrsetExists { name: DomainName, rtype: RecordType },
@@ -47,6 +48,7 @@ impl Prerequisite {
 
 /// An update operation for an RFC 2136 dynamic update (§2.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UpdateEntry {
     /// Add a resource record to the zone.
     AddRecord(ResourceRecord),
@@ -157,17 +159,18 @@ impl UpdateBuilder<Unsigned> {
         name: &DomainName,
         rtype: RecordType,
         records: Vec<ResourceRecord>,
-    ) -> Self {
-        assert!(
-            !records.is_empty(),
-            "RrsetExistsWithData requires non-empty records"
-        );
+    ) -> Result<Self, crate::error::CoreError> {
+        if records.is_empty() {
+            return Err(crate::error::CoreError::InvalidRecord(
+                "RrsetExistsWithData requires non-empty records".into(),
+            ));
+        }
         self.prerequisites.push(Prerequisite::RrsetExistsWithData {
             name: name.clone(),
             rtype,
             records,
         });
-        self
+        Ok(self)
     }
 
     /// Add a resource record to the zone (RFC 2136 §2.5.1).
@@ -863,15 +866,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "empty")]
     fn prerequisite_rejects_empty_rrset_exists_with_data() {
         let zone = DomainName::new("example.com.").unwrap();
-        let _builder = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+        let result = UpdateBuilder::with_id(1, zone, RecordClass::IN)
             .require_rrset_exists_with_data(
                 &DomainName::new("test.example.com.").unwrap(),
                 RecordType::A,
                 alloc::vec![],
             );
+        assert!(result.is_err(), "empty records should return Err");
     }
 
     // --- Wire format tests ---
@@ -939,6 +942,7 @@ mod tests {
         };
         let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
             .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
+            .unwrap()
             .build_unsigned();
         let bytes = msg.as_bytes();
 
@@ -958,6 +962,7 @@ mod tests {
         };
         let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
             .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr])
+            .unwrap()
             .build_unsigned();
         let bytes = msg.as_bytes();
 
@@ -1016,6 +1021,7 @@ mod tests {
         };
         let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
             .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
+            .unwrap()
             .require_rrset_exists(&name, RecordType::Aaaa)
             .build_unsigned();
         let bytes = msg.as_bytes();
