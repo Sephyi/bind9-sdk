@@ -196,12 +196,13 @@ impl RndcConnection<Unauthenticated> {
 
         // Check for authentication success via _data.result
         // "0" = success, anything else = error
-        let result_code = response
-            .get_map("_data")
-            .and_then(|data_map| match data_map.get("result") {
-                Some(IscValue::String(s)) => Some(s.as_str()),
-                _ => None,
-            });
+        let result_code =
+            response
+                .get_map("_data")
+                .and_then(|data_map| match data_map.get("result") {
+                    Some(IscValue::String(s)) => Some(s.as_str()),
+                    _ => None,
+                });
 
         match result_code {
             Some("0") => {
@@ -227,11 +228,7 @@ impl RndcConnection<Unauthenticated> {
 
         Ok(RndcConnection {
             stream: self.stream,
-            state: Authenticated {
-                key,
-                serial,
-                nonce,
-            },
+            state: Authenticated { key, serial, nonce },
         })
     }
 }
@@ -339,20 +336,10 @@ impl<'k> RndcConnection<Authenticated<'k>> {
 ///
 /// Contains serial number, timestamp, expiry, and optionally the server nonce.
 /// All values are stored as ASCII decimal strings (isccc convention).
-fn build_ctrl_table(
-    serial: u32,
-    now_secs: u64,
-    nonce: Option<&str>,
-) -> BTreeMap<String, IscValue> {
+fn build_ctrl_table(serial: u32, now_secs: u64, nonce: Option<&str>) -> BTreeMap<String, IscValue> {
     let mut ctrl = BTreeMap::new();
-    ctrl.insert(
-        "_ser".to_string(),
-        IscValue::String(serial.to_string()),
-    );
-    ctrl.insert(
-        "_tim".to_string(),
-        IscValue::String(now_secs.to_string()),
-    );
+    ctrl.insert("_ser".to_string(), IscValue::String(serial.to_string()));
+    ctrl.insert("_tim".to_string(), IscValue::String(now_secs.to_string()));
     ctrl.insert(
         "_exp".to_string(),
         IscValue::String((now_secs + ISCCC_EXPIRY_SECS).to_string()),
@@ -434,15 +421,21 @@ fn verify_authenticated_response(
     expected_nonce: Option<&str>,
     expected_type: Option<&str>,
 ) -> Result<(), NetError> {
-    let auth = response.get_map("_auth").ok_or_else(|| NetError::AuthFailed {
-        reason: "server response missing _auth table".to_string(),
-    })?;
-    let ctrl = response.get_map("_ctrl").ok_or_else(|| NetError::AuthFailed {
-        reason: "server response missing _ctrl table".to_string(),
-    })?;
-    let data = response.get_map("_data").ok_or_else(|| NetError::AuthFailed {
-        reason: "server response missing _data table".to_string(),
-    })?;
+    let auth = response
+        .get_map("_auth")
+        .ok_or_else(|| NetError::AuthFailed {
+            reason: "server response missing _auth table".to_string(),
+        })?;
+    let ctrl = response
+        .get_map("_ctrl")
+        .ok_or_else(|| NetError::AuthFailed {
+            reason: "server response missing _ctrl table".to_string(),
+        })?;
+    let data = response
+        .get_map("_data")
+        .ok_or_else(|| NetError::AuthFailed {
+            reason: "server response missing _data table".to_string(),
+        })?;
 
     let expected_hmac = sign_rndc_body(key, ctrl, data)?;
     let received_hmac = match auth.get("hsha") {
@@ -528,7 +521,9 @@ fn validate_response_ctrl(
     let nonce = map_string(ctrl, "_nonce").ok_or_else(|| NetError::AuthFailed {
         reason: "server response missing _ctrl._nonce".to_string(),
     })?;
-    if let Some(expected_nonce) = expected_nonce && nonce != expected_nonce {
+    if let Some(expected_nonce) = expected_nonce
+        && nonce != expected_nonce
+    {
         return Err(NetError::AuthFailed {
             reason: format!(
                 "server response nonce mismatch: expected `{expected_nonce}`, got `{nonce}`"
@@ -696,10 +691,7 @@ mod tests {
     #[test]
     fn build_ctrl_table_without_nonce() {
         let ctrl = build_ctrl_table(42, 1000, None);
-        assert_eq!(
-            ctrl.get("_ser"),
-            Some(&IscValue::String("42".to_string()))
-        );
+        assert_eq!(ctrl.get("_ser"), Some(&IscValue::String("42".to_string())));
         assert_eq!(
             ctrl.get("_tim"),
             Some(&IscValue::String("1000".to_string()))
@@ -718,10 +710,7 @@ mod tests {
             ctrl.get("_nonce"),
             Some(&IscValue::String("abc123".to_string()))
         );
-        assert_eq!(
-            ctrl.get("_ser"),
-            Some(&IscValue::String("1".to_string()))
-        );
+        assert_eq!(ctrl.get("_ser"), Some(&IscValue::String("1".to_string())));
     }
 
     #[test]
@@ -832,7 +821,8 @@ mod tests {
         // SHA256: 1 algo + 44 base64 = 45 content bytes, rest should be NUL
         for (i, &byte) in hmac[45..].iter().enumerate() {
             assert_eq!(
-                byte, 0,
+                byte,
+                0,
                 "byte at offset {} should be NUL padding, got 0x{:02x}",
                 45 + i,
                 byte
@@ -844,14 +834,8 @@ mod tests {
     fn current_unix_time_returns_reasonable_value() {
         let now = current_unix_time().unwrap();
         // Should be after 2024-01-01 (1704067200) and before 2030-01-01 (1893456000)
-        assert!(
-            now > 1_704_067_200,
-            "timestamp {now} should be after 2024"
-        );
-        assert!(
-            now < 1_893_456_000,
-            "timestamp {now} should be before 2030"
-        );
+        assert!(now > 1_704_067_200, "timestamp {now} should be after 2024");
+        assert!(now < 1_893_456_000, "timestamp {now} should be before 2030");
     }
 
     #[test]
@@ -949,7 +933,10 @@ mod tests {
             "message".to_string(),
             IscValue::String("permission denied".to_string()),
         );
-        err_map.insert("zone".to_string(), IscValue::String("example.com".to_string()));
+        err_map.insert(
+            "zone".to_string(),
+            IscValue::String("example.com".to_string()),
+        );
 
         let mut data = BTreeMap::new();
         data.insert("err".to_string(), IscValue::Map(err_map));
@@ -969,10 +956,7 @@ mod tests {
             "serial".to_string(),
             IscValue::String("2026031601".to_string()),
         );
-        details.insert(
-            "state".to_string(),
-            IscValue::String("running".to_string()),
-        );
+        details.insert("state".to_string(), IscValue::String("running".to_string()));
 
         let mut data = BTreeMap::new();
         data.insert("result".to_string(), IscValue::String("0".to_string()));

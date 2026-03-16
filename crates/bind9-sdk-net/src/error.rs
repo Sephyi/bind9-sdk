@@ -121,7 +121,10 @@ mod tests {
             code: 17,
             message: "BADKEY".into(),
         };
-        assert_eq!(err.to_string(), "DNS update TSIG rejected: BADKEY (code 17)");
+        assert_eq!(
+            err.to_string(),
+            "DNS update TSIG rejected: BADKEY (code 17)"
+        );
     }
 
     #[test]
