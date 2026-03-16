@@ -400,6 +400,234 @@ impl TsigRecord {
             wire_bytes: Zeroizing::new(wire),
         }
     }
+
+    /// Parse a TSIG pseudo-record from wire format bytes.
+    ///
+    /// The input should be the complete TSIG record starting from the owner name
+    /// (key name). Returns `Err` if the wire format is invalid or truncated.
+    pub fn parse_from_wire(wire: &[u8]) -> Result<Self, CoreError> {
+        let mut pos = 0;
+
+        // Owner name (key name) in wire format
+        let key_name_str = read_wire_name(wire, &mut pos)?;
+        let key_name = DomainName::new(&key_name_str)
+            .map_err(|e| CoreError::Tsig(alloc::format!("invalid TSIG key name: {e}")))?;
+
+        // TYPE (must be 250 = TSIG)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG type".into()));
+        }
+        let rtype = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        pos += 2;
+        if rtype != 250 {
+            return Err(CoreError::Tsig(alloc::format!(
+                "expected TSIG type 250, got {rtype}"
+            )));
+        }
+
+        // CLASS (must be 255 = ANY)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG class".into()));
+        }
+        let rclass = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        pos += 2;
+        if rclass != 255 {
+            return Err(CoreError::Tsig(alloc::format!(
+                "expected TSIG class ANY (255), got {rclass}"
+            )));
+        }
+
+        // TTL (must be 0)
+        if pos + 4 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG TTL".into()));
+        }
+        pos += 4; // skip TTL
+
+        // RDLENGTH
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG RDLENGTH".into()));
+        }
+        let rdlength = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
+        pos += 2;
+
+        if pos + rdlength > wire.len() {
+            return Err(CoreError::Tsig("TSIG RDATA truncated".into()));
+        }
+
+        // RDATA: Algorithm name
+        let alg_name_str = read_wire_name(wire, &mut pos)?;
+        let algorithm = match alg_name_str.to_lowercase().as_str() {
+            "hmac-sha256." => TsigAlgorithm::HmacSha256,
+            "hmac-sha512." => TsigAlgorithm::HmacSha512,
+            #[allow(deprecated)]
+            "hmac-sha1." => TsigAlgorithm::HmacSha1,
+            other => {
+                return Err(CoreError::Tsig(alloc::format!(
+                    "unsupported TSIG algorithm: {other}"
+                )));
+            }
+        };
+
+        // RDATA: Time signed (48-bit, 6 bytes)
+        if pos + 6 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG time_signed".into()));
+        }
+        let mut time_bytes = [0u8; 8];
+        time_bytes[2..8].copy_from_slice(&wire[pos..pos + 6]);
+        let time_signed = u64::from_be_bytes(time_bytes);
+        pos += 6;
+
+        // RDATA: Fudge (16-bit)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG fudge".into()));
+        }
+        let fudge = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        pos += 2;
+
+        // RDATA: MAC size (16-bit)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG MAC size".into()));
+        }
+        let mac_size = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
+        pos += 2;
+
+        // RDATA: MAC
+        if pos + mac_size > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG MAC".into()));
+        }
+        let mac = wire[pos..pos + mac_size].to_vec();
+        pos += mac_size;
+
+        // RDATA: Original ID (16-bit)
+        if pos + 2 > wire.len() {
+            return Err(CoreError::Tsig("truncated TSIG original ID".into()));
+        }
+        let original_id = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        pos += 2;
+
+        // Skip error (16-bit) and other_len (16-bit) + other_data
+        // These are parsed but not stored in TsigRecord currently
+
+        Ok(TsigRecord {
+            key_name,
+            algorithm,
+            time_signed,
+            fudge,
+            mac: Zeroizing::new(mac),
+            original_id,
+            wire_bytes: Zeroizing::new(wire.to_vec()),
+        })
+    }
+
+    /// Verify that the TSIG timestamp is within the fudge window of `now`.
+    ///
+    /// Per RFC 8945 §5.2.3, if |time_signed - now| > fudge, reject with BADTIME.
+    pub fn verify_time(&self, now: u64) -> Result<(), CoreError> {
+        let diff = if now > self.time_signed {
+            now - self.time_signed
+        } else {
+            self.time_signed - now
+        };
+        if diff > self.fudge as u64 {
+            return Err(CoreError::Tsig(alloc::format!(
+                "TSIG time outside fudge window: signed={}, now={}, fudge={}",
+                self.time_signed,
+                now,
+                self.fudge
+            )));
+        }
+        Ok(())
+    }
+
+    /// Verify a TSIG-signed DNS response.
+    ///
+    /// Per RFC 8945 §4.5: reconstruct MAC input from request MAC + response
+    /// message + TSIG variables, then verify. Also checks fudge window.
+    ///
+    /// `response_message` is the DNS response WITHOUT the TSIG record.
+    /// `request_mac` is the MAC from the original request's TSIG.
+    pub fn verify_response(
+        key: &TsigKey,
+        response_message: &[u8],
+        response_tsig: &TsigRecord,
+        request_mac: &[u8],
+        now: u64,
+    ) -> Result<(), CoreError> {
+        // Check fudge window
+        response_tsig.verify_time(now)?;
+
+        // Reconstruct TSIG variables (same layout as in new())
+        let mut tsig_vars = Vec::new();
+
+        // Key name in canonical wire format
+        key.name.write_wire_canonical(&mut tsig_vars);
+
+        // Class: ANY (255)
+        tsig_vars.extend_from_slice(&255u16.to_be_bytes());
+
+        // TTL: 0
+        tsig_vars.extend_from_slice(&0u32.to_be_bytes());
+
+        // Algorithm name in canonical wire format
+        let alg_name = key.algorithm.dns_name();
+        let alg_domain = DomainName::new(alg_name).expect("algorithm DNS name is always valid");
+        alg_domain.write_wire_canonical(&mut tsig_vars);
+
+        // Time signed: 48-bit
+        tsig_vars.extend_from_slice(&response_tsig.time_signed.to_be_bytes()[2..8]);
+
+        // Fudge: 16-bit
+        tsig_vars.extend_from_slice(&response_tsig.fudge.to_be_bytes());
+
+        // Error: 16-bit (0)
+        tsig_vars.extend_from_slice(&0u16.to_be_bytes());
+
+        // Other length: 16-bit (0)
+        tsig_vars.extend_from_slice(&0u16.to_be_bytes());
+
+        // Build MAC input: request_mac (length-prefixed) + response + tsig_vars
+        let mut mac_input =
+            Vec::with_capacity(2 + request_mac.len() + response_message.len() + tsig_vars.len());
+        mac_input.extend_from_slice(&(request_mac.len() as u16).to_be_bytes());
+        mac_input.extend_from_slice(request_mac);
+        mac_input.extend_from_slice(response_message);
+        mac_input.extend_from_slice(&tsig_vars);
+
+        key.verify(&mac_input, &response_tsig.mac)
+    }
+}
+
+/// Read an uncompressed wire-format domain name from `data` at `pos`.
+/// Returns the parsed name string (with trailing dot) and advances `pos`.
+fn read_wire_name(data: &[u8], pos: &mut usize) -> Result<alloc::string::String, CoreError> {
+    use alloc::string::String;
+    let mut labels: Vec<String> = Vec::new();
+    loop {
+        if *pos >= data.len() {
+            return Err(CoreError::Tsig("truncated wire name".into()));
+        }
+        let len = data[*pos] as usize;
+        *pos += 1;
+        if len == 0 {
+            break;
+        }
+        // Reject compression pointers (top 2 bits set)
+        if len & 0xC0 != 0 {
+            return Err(CoreError::Tsig(
+                "compressed names not supported in TSIG".into(),
+            ));
+        }
+        if *pos + len > data.len() {
+            return Err(CoreError::Tsig("truncated wire name label".into()));
+        }
+        let label = core::str::from_utf8(&data[*pos..*pos + len])
+            .map_err(|_| CoreError::Tsig("invalid UTF-8 in wire name".into()))?;
+        labels.push(String::from(label));
+        *pos += len;
+    }
+    let mut name = labels.join(".");
+    name.push('.');
+    Ok(name)
 }
 
 #[cfg(test)]
@@ -892,6 +1120,182 @@ mod tests {
             &*r1.mac, &*r2.mac,
             "Including request_mac must change the output MAC"
         );
+    }
+
+    // --- parse_from_wire tests ---
+
+    #[test]
+    fn tsig_record_wire_roundtrip() {
+        let key = TsigKey::new(
+            DomainName::new("rt-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xDD; 32],
+        )
+        .unwrap();
+        let message =
+            alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let ts = 1710000000u64;
+        let original = TsigRecord::new(&key, &message, ts, None);
+
+        let parsed = TsigRecord::parse_from_wire(&original.wire_bytes).unwrap();
+        assert_eq!(parsed.key_name, original.key_name);
+        assert_eq!(parsed.algorithm, original.algorithm);
+        assert_eq!(parsed.time_signed, original.time_signed);
+        assert_eq!(parsed.fudge, original.fudge);
+        assert_eq!(&*parsed.mac, &*original.mac);
+        assert_eq!(parsed.original_id, original.original_id);
+    }
+
+    #[test]
+    fn parse_from_wire_rejects_truncated() {
+        let result = TsigRecord::parse_from_wire(&[0x03, b'k', b'e', b'y']);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_from_wire_rejects_wrong_type() {
+        let key = TsigKey::new(
+            DomainName::new("k.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        let mut bad_wire = record.wire_bytes.to_vec();
+        // Corrupt the TYPE field (right after the owner name)
+        // Owner name for "k." is [1, b'k', 0] = 3 bytes
+        bad_wire[3] = 0x00; // TYPE high byte
+        bad_wire[4] = 0x01; // TYPE = 1 (A) instead of 250 (TSIG)
+        let result = TsigRecord::parse_from_wire(&bad_wire);
+        assert!(result.is_err());
+    }
+
+    // --- verify_time tests ---
+
+    #[test]
+    fn tsig_verify_time_rejects_expired_fudge() {
+        let key = TsigKey::new(
+            DomainName::new("fudge-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        let now = 1710000000 + 600; // 10 minutes later, outside 300s fudge
+        assert!(record.verify_time(now).is_err());
+    }
+
+    #[test]
+    fn tsig_verify_time_accepts_within_fudge() {
+        let key = TsigKey::new(
+            DomainName::new("fudge-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        let now = 1710000000 + 100; // within 300s fudge
+        assert!(record.verify_time(now).is_ok());
+    }
+
+    #[test]
+    fn tsig_verify_time_accepts_exact_boundary() {
+        let key = TsigKey::new(
+            DomainName::new("fudge-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        // Exactly at fudge boundary
+        assert!(record.verify_time(1710000000 + 300).is_ok());
+        assert!(record.verify_time(1710000000 - 300).is_ok());
+        // One past boundary
+        assert!(record.verify_time(1710000000 + 301).is_err());
+    }
+
+    // --- verify_response tests ---
+
+    #[test]
+    fn tsig_verify_response_valid() {
+        let key = TsigKey::new(
+            DomainName::new("resp-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let request_msg =
+            alloc::vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let ts = 1710000000u64;
+        let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+
+        // Simulate a response signed with request_mac chaining
+        let response_msg =
+            alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+
+        let result = TsigRecord::verify_response(
+            &key,
+            &response_msg,
+            &response_tsig,
+            &request_tsig.mac,
+            ts + 1,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn tsig_verify_response_wrong_mac_rejected() {
+        let key = TsigKey::new(
+            DomainName::new("resp-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let request_msg = alloc::vec![0u8; 12];
+        let ts = 1710000000u64;
+        let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+
+        let response_msg =
+            alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        // Sign with wrong request_mac
+        let wrong_mac = alloc::vec![0xFF; 32];
+        let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&wrong_mac));
+
+        let result = TsigRecord::verify_response(
+            &key,
+            &response_msg,
+            &response_tsig,
+            &request_tsig.mac,
+            ts + 1,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tsig_verify_response_expired_fudge_rejected() {
+        let key = TsigKey::new(
+            DomainName::new("resp-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xAA; 32],
+        )
+        .unwrap();
+        let request_msg = alloc::vec![0u8; 12];
+        let ts = 1710000000u64;
+        let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+
+        let response_msg = alloc::vec![0u8; 12];
+        let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+
+        // now is far outside fudge window
+        let result = TsigRecord::verify_response(
+            &key,
+            &response_msg,
+            &response_tsig,
+            &request_tsig.mac,
+            ts + 600,
+        );
+        assert!(result.is_err());
     }
 
     // --- Proptests ---
