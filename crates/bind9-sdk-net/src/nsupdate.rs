@@ -243,10 +243,9 @@ impl NsUpdateSender {
                     "response TSIG verified successfully"
                 );
             } else {
-                tracing::warn!(
-                    server = %self.server,
-                    "signed request but response contains no TSIG record"
-                );
+                return Err(NetError::Protocol(
+                    "signed request but response contains no TSIG record".into(),
+                ));
             }
         }
 

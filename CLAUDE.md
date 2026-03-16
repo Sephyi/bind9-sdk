@@ -58,7 +58,7 @@ bind9-sdk/                     ← git repo root (this directory)
 │   │   └── src/rndc/          ← rndc wire protocol submodule
 │   └── bind9-sdk-bindings/    ← napi-rs v2 (Node.js/Bun native addon; v3 migration Phase 4)
 ├── docs/
-│   ├── plans/                 ← implementation plans (8 files)
+│   ├── plans/                 ← implementation plans (10 files)
 │   └── specs/                 ← design specs (3 files)
 ├── Cargo.toml                 ← workspace root
 ├── rust-toolchain.toml
@@ -69,8 +69,8 @@ bind9-sdk/                     ← git repo root (this directory)
 
 | Crate | `no_std` | Feature gate | What it provides |
 | --- | --- | --- | --- |
-| `bind9-sdk-core` | Yes | — | `DomainName`, `ResourceRecord`, `RecordData` (20+ variants), `Rcode`, `RecordType`, zone file parser/emitter (`ZoneFile`, `Zone`), RFC 2136 `UpdateBuilder` (typestate `Unsigned`/`Signed`), TSIG (`TsigKey`, `TsigRecord`, HMAC-SHA256/SHA512), management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`) |
-| `bind9-sdk-net` | No | `net` (default) | `Bind9Client`, `ClientConfig`, `NetError`, `TlsConfig`; rndc TCP wire protocol client (skeleton), nsupdate sender, IXFR/AXFR client, statistics-channel HTTP client — trait impls added in Wave 2 |
+| `bind9-sdk-core` | Yes | — | `DomainName`, `ResourceRecord`, `RecordData` (20+ variants), `Rcode`, `RecordType`, zone file parser/emitter (`ZoneFile`, `Zone`), RFC 2136 `UpdateBuilder` (typestate `Unsigned`/`Signed`, `UpdateMessage` with `request_mac()`), TSIG (`TsigKey`, `TsigRecord` with wire parsing + response verification, HMAC-SHA256/SHA512/SHA1), management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`) |
+| `bind9-sdk-net` | No | `net` (default) | `Bind9Client`, `ClientConfig`, `NetError`, `TlsConfig`; rndc TCP wire protocol (`RndcConnection` typestate, ISC binary encoding, 25+ `RndcCommand` variants, `NamedControl` impl), `NsUpdateSender` (UDP+TCP, TSIG response verification), `StatsHttpClient` (JSON deserialization, `StatsClient` impl), IXFR/AXFR client (planned) |
 | `bind9-sdk-bindings` | — | `nodejs` | napi-rs v2 exports (v3 migration in Phase 4): native `.node` + WASM fallback |
 | `bind9-sdk` | — | — | Re-exports `core` and optionally `net`; the single crates.io entry point |
 
@@ -90,7 +90,7 @@ bind9-sdk/                     ← git repo root (this directory)
 
 2. **Trait-first** — Management operations are defined as traits (`ZoneManager`, `NamedControl`, `DynamicUpdater`, `StatsClient`) in `bind9-sdk-core`. The net layer provides concrete implementations. Tests use mock implementations against the traits.
 
-3. **TSIG in core, send in net** — TSIG key material, HMAC computation, and message authentication code construction live in `bind9-sdk-core` (no_std). The net layer consumes the signed bytes and handles the TCP/UDP transport. This separation makes TSIG testable without a network.
+3. **TSIG in core, send in net** — TSIG key material, HMAC computation, message authentication code construction, wire parsing (`TsigRecord::parse_from_wire`), and response verification (`TsigRecord::verify_response` per RFC 8945 §4.5) live in `bind9-sdk-core` (no_std). The net layer calls `verify_response` with the request MAC for TSIG chaining. This separation makes TSIG testable without a network.
 
 4. **rndc wire protocol is NOT DNS** — BIND9's rndc uses a custom TCP framing format: 4-byte big-endian length prefix + ISC internal message encoding. Do not confuse with DNS-over-TCP (2-byte prefix). The protocol is documented in the BIND source (`lib/isc/netmgr/`, ISC KB). It is stable across BIND9 minor versions.
 
@@ -142,6 +142,8 @@ Key patterns enforced across all implementation:
 | `wasm-check.sh` | PostToolUse (Edit/Write) | Runs `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` on core crate edits |
 | `clippy-gate.sh` | PostToolUse (Edit/Write) | Runs `cargo clippy -p <crate> -- -D warnings` on `.rs` edits |
 | `dep-freshness.sh` | PostToolUse (Edit) | Warns if `Cargo.toml` dep versions are below known minimums |
+| `cargo-test-gate.sh` | PostToolUse (Edit/Write) | Runs `cargo test -p <crate> --lib` on `.rs` edits (non-blocking) |
+| `no-std-import-guard.sh` | PreToolUse (Edit/Write) | Blocks bare `use std::` in `bind9-sdk-core` without `cfg` guard |
 
 ## Agents
 
@@ -152,6 +154,7 @@ Key patterns enforced across all implementation:
 | `api-compat-reviewer` | Verify pub API surface, `#[non_exhaustive]` enums, Send+Sync bounds, re-export coverage, semver compatibility |
 | `rfc-compliance-checker` | Verify implementation matches referenced RFC requirements, check edge cases, report deviations with section references |
 | `dnssec-security-auditor` | DNSSEC key management security: key material exposure, zeroization, per-zone isolation, KASP timing, CDS/CDNSKEY bootstrapping |
+| `wire-format-validator` | Validate DNS/rndc wire format output byte-by-byte against RFC specifications and test vectors |
 
 ## Compliance
 
