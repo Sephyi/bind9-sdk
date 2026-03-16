@@ -32,7 +32,7 @@ async fn stats_fetch_server_stats_has_version() {
         .expect("fetch_server_stats failed");
 
     assert!(
-        stats.version.as_deref().map_or(false, |v| !v.is_empty()),
+        stats.version.as_deref().is_some_and(|v| !v.is_empty()),
         "expected non-empty version in ServerStats, got {:?}",
         stats.version
     );
