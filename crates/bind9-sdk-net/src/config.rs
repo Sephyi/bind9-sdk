@@ -23,6 +23,7 @@ use crate::tls::TlsConfig;
 ///
 /// Combines rndc control channel, DNS update, and statistics-channel
 /// connection parameters into a single config struct.
+#[non_exhaustive]
 pub struct ClientConfig {
     /// rndc control channel address (default: 127.0.0.1:953).
     pub rndc_addr: SocketAddr,

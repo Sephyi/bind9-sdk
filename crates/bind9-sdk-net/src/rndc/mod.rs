@@ -149,11 +149,13 @@ impl RndcConnection<Unauthenticated> {
         // TODO: Verify the success indicator field name against BIND9 source.
         let result = response.get_string("_ctrl");
         if result != Some("null") {
-            let _err_text = response
+            let err_text = response
                 .get_string("_err")
                 .or(response.get_string("result"))
                 .unwrap_or("unknown auth error");
-            return Err(NetError::AuthFailed);
+            return Err(NetError::AuthFailed {
+                reason: err_text.to_string(),
+            });
         }
 
         tracing::debug!("rndc authentication successful");

@@ -26,8 +26,8 @@ pub struct ServerStatus {
     pub version: String,
     /// ISO 8601 timestamp of when the server started, if available.
     pub running_since: Option<String>,
-    /// Number of reloads since server start.
-    pub reload_count: u32,
+    /// Number of zones loaded by the server.
+    pub zone_count: u32,
     /// Whether the server reports itself as running.
     pub server_up: bool,
     /// Full raw text of the rndc status response for unparsed fields.
@@ -39,14 +39,14 @@ impl ServerStatus {
     pub fn new(
         version: String,
         running_since: Option<String>,
-        reload_count: u32,
+        zone_count: u32,
         server_up: bool,
         raw_text: String,
     ) -> Self {
         Self {
             version,
             running_since,
-            reload_count,
+            zone_count,
             server_up,
             raw_text,
         }
@@ -206,7 +206,7 @@ mod tests {
             Ok(ServerStatus {
                 version: String::from("BIND 9.20.4"),
                 running_since: Some(String::from("2026-01-15T08:30:00Z")),
-                reload_count: 0,
+                zone_count: 0,
                 server_up: true,
                 raw_text: String::from("server is up and running"),
             })

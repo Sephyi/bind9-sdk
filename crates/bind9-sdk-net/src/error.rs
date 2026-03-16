@@ -21,8 +21,11 @@ pub enum NetError {
     Timeout(Duration),
 
     /// rndc HMAC authentication was rejected by the server.
-    #[error("rndc authentication failed")]
-    AuthFailed,
+    #[error("rndc authentication failed: {reason}")]
+    AuthFailed {
+        /// Server-provided error text, or a default description.
+        reason: String,
+    },
 
     /// rndc wire protocol error (framing, encoding, unexpected response).
     #[error("rndc protocol error: {0}")]
@@ -67,8 +70,10 @@ mod tests {
 
     #[test]
     fn auth_failed_display() {
-        let err = NetError::AuthFailed;
-        assert_eq!(err.to_string(), "rndc authentication failed");
+        let err = NetError::AuthFailed {
+            reason: "bad key".into(),
+        };
+        assert_eq!(err.to_string(), "rndc authentication failed: bad key");
     }
 
     #[test]

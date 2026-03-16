@@ -152,6 +152,7 @@ impl fmt::Display for RndcCommand {
 
 /// Response from an rndc command.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RndcResponse {
     /// The text output from the server (may be multi-line).
     pub text: String,
@@ -161,6 +162,7 @@ pub struct RndcResponse {
 
 /// Result status of an rndc command.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RndcResult {
     /// Command succeeded.
     Success,
@@ -186,9 +188,11 @@ impl RndcResponse {
     ///
     /// TODO: Verify response format against BIND9 source / wire captures.
     pub(crate) fn from_text(text: &str) -> Self {
-        // TODO: Verify this parsing logic against actual BIND9 responses.
-        // The error detection heuristic below is approximate.
-        if text.starts_with("rndc: ") || text.contains("error") {
+        let is_error = text.starts_with("rndc: ")
+            || text.starts_with("unknown command")
+            || text.starts_with("not found");
+
+        if is_error {
             RndcResponse {
                 text: text.to_string(),
                 result: RndcResult::Error {
@@ -229,7 +233,7 @@ pub(crate) fn parse_server_status(text: &str) -> ServerStatus {
 
     let running_since = extract_field(text, "boot time:");
 
-    let reload_count = extract_field(text, "number of zones:")
+    let zone_count = extract_field(text, "number of zones:")
         .and_then(|s| {
             // "42 (0 automatic)" -> try to parse the first number
             s.split_whitespace()
@@ -243,7 +247,7 @@ pub(crate) fn parse_server_status(text: &str) -> ServerStatus {
     ServerStatus::new(
         version,
         running_since,
-        reload_count,
+        zone_count,
         server_up,
         text.to_string(),
     )
@@ -548,6 +552,28 @@ mod tests {
         assert!(!resp.is_success());
     }
 
+    #[test]
+    fn response_unknown_command() {
+        let resp = RndcResponse::from_text("unknown command");
+        assert!(!resp.is_success());
+    }
+
+    #[test]
+    fn response_not_found() {
+        let resp = RndcResponse::from_text("not found");
+        assert!(!resp.is_success());
+    }
+
+    #[test]
+    fn response_zone_name_with_error_is_not_false_positive() {
+        // Zone names containing "error" should NOT be treated as errors (F-015)
+        let resp = RndcResponse::from_text("zone error.example.com/IN: loaded serial 2024010101");
+        assert!(
+            resp.is_success(),
+            "zone name containing 'error' must not trigger false positive"
+        );
+    }
+
     // -- ServerStatus parsing tests --
 
     #[test]
@@ -571,7 +597,7 @@ server is up and running";
             status.running_since,
             Some("Mon, 01 Jan 2026 00:00:00 GMT".into())
         );
-        assert_eq!(status.reload_count, 42);
+        assert_eq!(status.zone_count, 42);
         assert!(status.server_up);
         assert_eq!(status.raw_text, text);
     }
