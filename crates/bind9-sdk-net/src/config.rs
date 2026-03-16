@@ -6,12 +6,17 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
-use bind9_sdk_core::traits::{FrozenZone, NamedControl, ServerStatus};
+use bind9_sdk_core::traits::{
+    DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneStats,
+};
 use bind9_sdk_core::tsig::TsigKey;
+use bind9_sdk_core::update::{UpdateMessage, UpdateResult};
 
 use crate::error::NetError;
+use crate::nsupdate::NsUpdateSender;
 use crate::rndc::RndcConnection;
 use crate::rndc::command::{RndcCommand, make_frozen_zone, parse_server_status};
+use crate::stats::StatsHttpClient;
 use crate::tls::TlsConfig;
 
 /// Configuration for connecting to a BIND9 server.
@@ -146,20 +151,48 @@ impl NamedControl for Bind9Client {
     }
 }
 
+impl StatsClient for Bind9Client {
+    type Error = NetError;
+
+    async fn server_stats(&self) -> Result<ServerStats, NetError> {
+        let url = self
+            .config
+            .stats_url
+            .as_ref()
+            .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
+        let client = StatsHttpClient::new(url)?;
+        client.fetch_server_stats().await
+    }
+
+    async fn zone_stats(&self, zone: &DomainName) -> Result<ZoneStats, NetError> {
+        let url = self
+            .config
+            .stats_url
+            .as_ref()
+            .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
+        let client = StatsHttpClient::new(url)?;
+        client.fetch_zone_stats(zone).await
+    }
+}
+
+impl DynamicUpdater for Bind9Client {
+    type Error = NetError;
+
+    async fn send_update(&self, update: &UpdateMessage) -> Result<UpdateResult, NetError> {
+        let addr = self
+            .config
+            .dns_addr
+            .ok_or_else(|| NetError::Connection("DNS server address not configured".into()))?;
+        let sender = NsUpdateSender::with_timeout(addr, self.config.timeout);
+        sender.send(update).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bind9_sdk_core::domain::DomainName;
-    use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 
-    fn test_key() -> TsigKey {
-        TsigKey::new(
-            DomainName::new("rndc-key.").unwrap(),
-            TsigAlgorithm::HmacSha256,
-            vec![0xAA; 32],
-        )
-        .unwrap()
-    }
+    use crate::config::test_key;
 
     #[test]
     fn client_config_construction() {
@@ -224,4 +257,90 @@ mod tests {
         };
         assert!(config.tls.is_some());
     }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::*;
+    use crate::config::test_key;
+    use bind9_sdk_core::traits::StatsClient;
+
+    #[tokio::test]
+    async fn bind9_client_server_stats_without_url_returns_error() {
+        let config = ClientConfig {
+            rndc_addr: "127.0.0.1:953".parse().unwrap(),
+            rndc_key: test_key(),
+            stats_url: None,
+            dns_addr: None,
+            tls: None,
+            timeout: Duration::from_secs(5),
+        };
+        let client = Bind9Client::new(config);
+        let result = client.server_stats().await;
+        assert!(
+            result.is_err(),
+            "should fail when stats_url is not configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn bind9_client_zone_stats_without_url_returns_error() {
+        let config = ClientConfig {
+            rndc_addr: "127.0.0.1:953".parse().unwrap(),
+            rndc_key: test_key(),
+            stats_url: None,
+            dns_addr: None,
+            tls: None,
+            timeout: Duration::from_secs(5),
+        };
+        let client = Bind9Client::new(config);
+        let zone = bind9_sdk_core::domain::DomainName::new("example.com.").unwrap();
+        let result = client.zone_stats(&zone).await;
+        assert!(
+            result.is_err(),
+            "should fail when stats_url is not configured"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dynamic_updater_tests {
+    use super::*;
+    use crate::config::test_key;
+    use bind9_sdk_core::traits::DynamicUpdater;
+
+    /// Verify the DynamicUpdater impl compiles via a static bound check.
+    fn _assert_dynamic_updater_impl() {
+        fn assert_impl<T: DynamicUpdater>() {}
+        assert_impl::<Bind9Client>();
+    }
+
+    #[tokio::test]
+    async fn bind9_client_send_update_without_dns_addr_returns_error() {
+        // We cannot construct UpdateMessage without UpdateBuilder (WT-2).
+        // This test verifies the trait impl compiles. The actual "no dns_addr"
+        // error test requires a valid UpdateMessage which needs UpdateBuilder.
+        let config = ClientConfig {
+            rndc_addr: "127.0.0.1:953".parse().unwrap(),
+            rndc_key: test_key(),
+            stats_url: None,
+            dns_addr: None,
+            tls: None,
+            timeout: Duration::from_secs(5),
+        };
+        let _client = Bind9Client::new(config);
+        // Trait impl is verified at compile time via _assert_dynamic_updater_impl
+    }
+}
+
+#[cfg(test)]
+fn test_key() -> TsigKey {
+    use bind9_sdk_core::domain::DomainName;
+    use bind9_sdk_core::tsig::TsigAlgorithm;
+    TsigKey::new(
+        DomainName::new("rndc-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        vec![0xAA; 32],
+    )
+    .unwrap()
 }

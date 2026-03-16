@@ -12,4 +12,6 @@ pub mod tls;
 // Curated re-exports for common access
 pub use config::{Bind9Client, ClientConfig};
 pub use error::NetError;
+pub use nsupdate::NsUpdateSender;
+pub use stats::StatsHttpClient;
 pub use tls::TlsConfig;
