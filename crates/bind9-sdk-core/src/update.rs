@@ -22,6 +22,25 @@ pub enum Prerequisite {
     NameExists { name: DomainName },
     /// No RRsets with this name must exist (name is not in use).
     NameNotExists { name: DomainName },
+    /// An RRset with this name, type, and specific data must exist (§2.4.2).
+    RrsetExistsWithData {
+        name: DomainName,
+        rtype: RecordType,
+        records: Vec<ResourceRecord>,
+    },
+}
+
+impl Prerequisite {
+    /// Number of wire-level RRs this prerequisite expands to.
+    ///
+    /// Most variants produce exactly one RR. `RrsetExistsWithData` produces
+    /// one RR per record in the set (RFC 2136 §2.4.2).
+    fn wire_rr_count(&self) -> usize {
+        match self {
+            Self::RrsetExistsWithData { records, .. } => records.len(),
+            _ => 1,
+        }
+    }
 }
 
 /// An update operation for an RFC 2136 dynamic update (§2.5).
@@ -123,6 +142,25 @@ impl UpdateBuilder<Unsigned> {
     pub fn require_name_not_exists(mut self, name: &DomainName) -> Self {
         self.prerequisites
             .push(Prerequisite::NameNotExists { name: name.clone() });
+        self
+    }
+
+    /// Require that an RRset with the given name, type, and specific data
+    /// exists (RFC 2136 §2.4.2).
+    ///
+    /// Each record in `records` becomes a separate prerequisite RR in the wire
+    /// format. The CLASS in each wire RR is set to the zone class (not ANY).
+    pub fn require_rrset_exists_with_data(
+        mut self,
+        name: &DomainName,
+        rtype: RecordType,
+        records: Vec<ResourceRecord>,
+    ) -> Self {
+        self.prerequisites.push(Prerequisite::RrsetExistsWithData {
+            name: name.clone(),
+            rtype,
+            records,
+        });
         self
     }
 
@@ -285,8 +323,9 @@ fn encode_update_message(
     // ZOCOUNT: 1 (always one zone entry)
     wire.extend_from_slice(&1u16.to_be_bytes());
 
-    // PRCOUNT: number of prerequisites
-    wire.extend_from_slice(&(prerequisites.len() as u16).to_be_bytes());
+    // PRCOUNT: number of prerequisite RRs (RrsetExistsWithData expands to N RRs)
+    let prcount: usize = prerequisites.iter().map(Prerequisite::wire_rr_count).sum();
+    wire.extend_from_slice(&(prcount as u16).to_be_bytes());
 
     // UPCOUNT: number of updates
     wire.extend_from_slice(&(updates.len() as u16).to_be_bytes());
@@ -302,7 +341,7 @@ fn encode_update_message(
 
     // --- Prerequisite Section ---
     for prereq in prerequisites {
-        encode_prerequisite(prereq, &mut wire);
+        encode_prerequisite(prereq, class, &mut wire);
     }
 
     // --- Update Section ---
@@ -317,7 +356,10 @@ fn encode_update_message(
 }
 
 /// Encode a prerequisite as a DNS RR in wire format (RFC 2136 §2.4).
-fn encode_prerequisite(prereq: &Prerequisite, wire: &mut Vec<u8>) {
+///
+/// `zone_class` is needed for `RrsetExistsWithData` (§2.4.2) which uses the
+/// zone's class rather than ANY or NONE.
+fn encode_prerequisite(prereq: &Prerequisite, zone_class: RecordClass, wire: &mut Vec<u8>) {
     match prereq {
         Prerequisite::RrsetExists { name, rtype } => {
             // NAME + TYPE + CLASS=ANY(255) + TTL=0 + RDLENGTH=0
@@ -350,6 +392,25 @@ fn encode_prerequisite(prereq: &Prerequisite, wire: &mut Vec<u8>) {
             wire.extend_from_slice(&254u16.to_be_bytes()); // CLASS NONE
             wire.extend_from_slice(&0u32.to_be_bytes()); // TTL 0
             wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH 0
+        }
+        Prerequisite::RrsetExistsWithData {
+            name,
+            rtype,
+            records,
+        } => {
+            // Each record is a separate prerequisite RR (§2.4.2):
+            // NAME + TYPE + CLASS=zone_class + TTL=0 + RDLENGTH + RDATA
+            for rr in records {
+                name.write_wire(wire);
+                wire.extend_from_slice(&rtype.value().to_be_bytes());
+                wire.extend_from_slice(&zone_class.value().to_be_bytes());
+                wire.extend_from_slice(&0u32.to_be_bytes()); // TTL 0
+                let rdata_start = wire.len();
+                wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH placeholder
+                encode_rdata(&rr.rdata, wire);
+                let rdata_len = (wire.len() - rdata_start - 2) as u16;
+                wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
+            }
         }
     }
 }
@@ -809,6 +870,109 @@ mod tests {
 
         // ADCOUNT (bytes 10-11): 0
         assert_eq!(u16::from_be_bytes([bytes[10], bytes[11]]), 0);
+    }
+
+    #[test]
+    fn wire_rrset_exists_with_data_prcount() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let name = DomainName::new("www.example.com.").unwrap();
+        let rr1 = ResourceRecord {
+            name: name.clone(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 1)),
+        };
+        let rr2 = ResourceRecord {
+            name: name.clone(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 2)),
+        };
+        let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // PRCOUNT should be 2 (one RR per record in the RRset)
+        assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 2);
+    }
+
+    #[test]
+    fn wire_rrset_exists_with_data_encoding() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let name = DomainName::new("www.example.com.").unwrap();
+        let rr = ResourceRecord {
+            name: name.clone(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 1)),
+        };
+        let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr])
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // After header (12) + zone section (13 name + 2 type + 2 class = 17), prerequisite starts at 29
+        let prereq_start = 29;
+
+        // Name: \x03www\x07example\x03com\x00 = 17 bytes
+        assert_eq!(bytes[prereq_start], 3); // "www" label
+        let after_name = prereq_start + 17;
+
+        // TYPE: A (1)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name], bytes[after_name + 1]]),
+            1
+        );
+        // CLASS: IN (1) — zone class, NOT ANY
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 2], bytes[after_name + 3]]),
+            1
+        );
+        // TTL: 0
+        assert_eq!(
+            u32::from_be_bytes([
+                bytes[after_name + 4],
+                bytes[after_name + 5],
+                bytes[after_name + 6],
+                bytes[after_name + 7]
+            ]),
+            0
+        );
+        // RDLENGTH: 4 (IPv4 address)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 8], bytes[after_name + 9]]),
+            4
+        );
+        // RDATA: 10.0.0.1
+        assert_eq!(&bytes[after_name + 10..after_name + 14], &[10, 0, 0, 1]);
+    }
+
+    #[test]
+    fn wire_rrset_exists_with_data_mixed_prerequisites() {
+        // Mix RrsetExistsWithData (2 records) + RrsetExists (1 RR) = PRCOUNT 3
+        let zone = DomainName::new("example.com.").unwrap();
+        let name = DomainName::new("www.example.com.").unwrap();
+        let rr1 = ResourceRecord {
+            name: name.clone(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(0).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 1)),
+        };
+        let rr2 = ResourceRecord {
+            name: name.clone(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(0).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 2)),
+        };
+        let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
+            .require_rrset_exists(&name, RecordType::Aaaa)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // PRCOUNT: 2 (from RrsetExistsWithData) + 1 (from RrsetExists) = 3
+        assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 3);
     }
 
     #[test]
