@@ -108,7 +108,13 @@ impl NsUpdateSender {
 
     /// Send update message bytes over UDP and return the raw response.
     async fn send_udp(&self, wire: &[u8]) -> Result<Vec<u8>, NetError> {
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
+        // Bind to the matching address family (IPv4 vs IPv6)
+        let bind_addr: SocketAddr = if self.server.is_ipv4() {
+            "0.0.0.0:0".parse().unwrap()
+        } else {
+            "[::]:0".parse().unwrap()
+        };
+        let socket = tokio::net::UdpSocket::bind(bind_addr)
             .await
             .map_err(|e| NetError::Connection(format!("failed to bind UDP socket: {e}")))?;
 
@@ -358,6 +364,14 @@ mod tests {
     #[test]
     fn is_truncated_empty_buffer() {
         assert!(!is_truncated(&[]));
+    }
+
+    #[test]
+    fn new_with_ipv6_server() {
+        let addr: SocketAddr = "[::1]:53".parse().unwrap();
+        let sender = NsUpdateSender::new(addr);
+        assert_eq!(sender.server, addr);
+        assert!(sender.server.is_ipv6());
     }
 
     // -- Integration test stubs --

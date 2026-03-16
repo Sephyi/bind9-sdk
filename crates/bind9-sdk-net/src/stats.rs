@@ -44,10 +44,10 @@ struct RawZoneEntry {
 impl From<RawServerStats> for ServerStats {
     fn from(raw: RawServerStats) -> Self {
         ServerStats::new(
-            raw.boot_time.unwrap_or_default(),
-            raw.config_time.unwrap_or_default(),
-            raw.current_time.unwrap_or_default(),
-            raw.version.unwrap_or_default(),
+            raw.boot_time,
+            raw.config_time,
+            raw.current_time,
+            raw.version,
         )
     }
 }
@@ -79,7 +79,7 @@ fn zone_stats_from_raw(raw: &RawZoneEntry) -> Result<ZoneStats, NetError> {
     let serial = Serial::new(raw.serial.unwrap_or(0));
     let zone_type = raw.zone_type.clone().unwrap_or_else(|| "unknown".into());
 
-    Ok(ZoneStats::new(name, class, serial, 0, zone_type))
+    Ok(ZoneStats::new(name, class, serial, None, zone_type))
 }
 
 /// HTTP client for the BIND9 statistics-channel JSON API.
@@ -282,12 +282,12 @@ mod tests {
             version: Some("BIND 9.20.4".into()),
         };
         let stats = ServerStats::from(raw);
-        assert_eq!(stats.boot_time, "2026-01-15T08:30:00Z");
-        assert_eq!(stats.version, "BIND 9.20.4");
+        assert_eq!(stats.boot_time.as_deref(), Some("2026-01-15T08:30:00Z"));
+        assert_eq!(stats.version.as_deref(), Some("BIND 9.20.4"));
     }
 
     #[test]
-    fn raw_server_stats_defaults_for_missing_fields() {
+    fn raw_server_stats_none_for_missing_fields() {
         let raw = RawServerStats {
             boot_time: None,
             config_time: None,
@@ -295,8 +295,8 @@ mod tests {
             version: None,
         };
         let stats = ServerStats::from(raw);
-        assert!(stats.boot_time.is_empty());
-        assert!(stats.version.is_empty());
+        assert!(stats.boot_time.is_none());
+        assert!(stats.version.is_none());
     }
 
     #[test]
@@ -397,10 +397,10 @@ mod tests {
         }"#;
         let raw: RawServerStats = serde_json::from_str(json).unwrap();
         let stats = ServerStats::from(raw);
-        assert_eq!(stats.boot_time, "2026-01-15T08:30:00Z");
-        assert_eq!(stats.config_time, "2026-01-15T08:30:05Z");
-        assert_eq!(stats.current_time, "2026-03-14T12:00:00Z");
-        assert_eq!(stats.version, "BIND 9.20.4 (Stable Release)");
+        assert_eq!(stats.boot_time.as_deref(), Some("2026-01-15T08:30:00Z"));
+        assert_eq!(stats.config_time.as_deref(), Some("2026-01-15T08:30:05Z"));
+        assert_eq!(stats.current_time.as_deref(), Some("2026-03-14T12:00:00Z"));
+        assert_eq!(stats.version.as_deref(), Some("BIND 9.20.4 (Stable Release)"));
     }
 
     #[test]
@@ -458,8 +458,8 @@ mod tests {
     async fn integration_fetch_server_stats_from_live_bind9() {
         let client = StatsHttpClient::new("http://127.0.0.1:8053/json/v1").unwrap();
         let stats = client.fetch_server_stats().await.unwrap();
-        assert!(!stats.version.is_empty(), "version should not be empty");
-        assert!(!stats.boot_time.is_empty(), "boot_time should not be empty");
+        assert!(stats.version.is_some(), "version should be present");
+        assert!(stats.boot_time.is_some(), "boot_time should be present");
     }
 
     #[tokio::test]

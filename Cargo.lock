@@ -85,6 +85,7 @@ dependencies = [
  "sha1",
  "sha2",
  "thiserror",
+ "tracing",
  "zeroize",
 ]
 

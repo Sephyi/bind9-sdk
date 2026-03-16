@@ -80,14 +80,14 @@ impl FrozenZone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ServerStats {
-    /// ISO 8601 timestamp of server boot.
-    pub boot_time: String,
-    /// ISO 8601 timestamp of last configuration load.
-    pub config_time: String,
-    /// ISO 8601 timestamp of the stats snapshot.
-    pub current_time: String,
-    /// BIND version string (e.g., `"BIND 9.20.4 (Stable Release)"`).
-    pub version: String,
+    /// ISO 8601 timestamp of server boot, if present in the JSON response.
+    pub boot_time: Option<String>,
+    /// ISO 8601 timestamp of last configuration load, if present.
+    pub config_time: Option<String>,
+    /// ISO 8601 timestamp of the stats snapshot, if present.
+    pub current_time: Option<String>,
+    /// BIND version string (e.g., `"BIND 9.20.4 (Stable Release)"`), if present.
+    pub version: Option<String>,
 }
 
 /// Zone-level statistics from the BIND9 statistics-channel JSON API.
@@ -102,8 +102,11 @@ pub struct ZoneStats {
     pub class: RecordClass,
     /// The current SOA serial number.
     pub serial: Serial,
-    /// Number of resource records in the zone.
-    pub record_count: u32,
+    /// Number of resource records in the zone, if available.
+    ///
+    /// BIND9's statistics-channel JSON API does not always expose this value;
+    /// when absent, this is `None`.
+    pub record_count: Option<u32>,
     /// Zone type (e.g., `"primary"`, `"secondary"`).
     pub zone_type: String,
 }
@@ -114,7 +117,7 @@ impl ZoneStats {
         name: DomainName,
         class: RecordClass,
         serial: Serial,
-        record_count: u32,
+        record_count: Option<u32>,
         zone_type: String,
     ) -> Self {
         Self {
@@ -130,10 +133,10 @@ impl ZoneStats {
 impl ServerStats {
     /// Create a new `ServerStats`.
     pub fn new(
-        boot_time: String,
-        config_time: String,
-        current_time: String,
-        version: String,
+        boot_time: Option<String>,
+        config_time: Option<String>,
+        current_time: Option<String>,
+        version: Option<String>,
     ) -> Self {
         Self {
             boot_time,
@@ -281,10 +284,10 @@ mod tests {
 
         async fn server_stats(&self) -> Result<ServerStats, CoreError> {
             Ok(ServerStats {
-                boot_time: String::from("2026-01-15T08:30:00Z"),
-                config_time: String::from("2026-01-15T08:30:05Z"),
-                current_time: String::from("2026-03-14T12:00:00Z"),
-                version: String::from("BIND 9.20.4"),
+                boot_time: Some(String::from("2026-01-15T08:30:00Z")),
+                config_time: Some(String::from("2026-01-15T08:30:05Z")),
+                current_time: Some(String::from("2026-03-14T12:00:00Z")),
+                version: Some(String::from("BIND 9.20.4")),
             })
         }
 
@@ -293,7 +296,7 @@ mod tests {
                 name: zone.clone(),
                 class: RecordClass::IN,
                 serial: Serial::new(2026031401),
-                record_count: 42,
+                record_count: Some(42),
                 zone_type: String::from("primary"),
             })
         }
