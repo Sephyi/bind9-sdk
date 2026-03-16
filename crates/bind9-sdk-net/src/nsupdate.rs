@@ -210,6 +210,15 @@ impl NsUpdateSender {
 
         let result = parse_dns_response(&response)?;
 
+        // Verify response ID matches request (RFC 1035 §4.1.1)
+        if result.id != update.id() {
+            return Err(NetError::Protocol(format!(
+                "response ID {} does not match request ID {}",
+                result.id,
+                update.id()
+            )));
+        }
+
         // Verify response TSIG if the request was signed
         if let (Some(key), Some(request_mac)) = (tsig_key, update.request_mac()) {
             if let Some(tsig_offset) = find_tsig_in_response(&response)? {
@@ -218,6 +227,14 @@ impl NsUpdateSender {
                     TsigRecord::parse_from_wire(&response[tsig_offset..]).map_err(|e| {
                         NetError::Protocol(format!("failed to parse response TSIG: {e}"))
                     })?;
+
+                // Per RFC 8945 §5.2: check TSIG error before using MAC for chaining
+                if response_tsig.error != 0 {
+                    return Err(NetError::Protocol(format!(
+                        "response TSIG error: {}",
+                        response_tsig.error
+                    )));
+                }
 
                 // The message bytes for verification = response without TSIG, ARCOUNT decremented
                 let mut msg_sans_tsig = response[..tsig_offset].to_vec();
@@ -686,13 +703,74 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live BIND9 accepting dynamic updates on localhost:53"]
     async fn integration_send_update_to_live_bind9() {
-        // Requires: running BIND9 + zone accepting dynamic updates + UpdateBuilder from WT-2
-        todo!("implement after WT-2 delivers UpdateBuilder")
+        use bind9_sdk_core::domain::DomainName;
+        use bind9_sdk_core::rdata::RecordData;
+        use bind9_sdk_core::record::{RecordClass, ResourceRecord, Ttl};
+        use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
+        use bind9_sdk_core::update::UpdateBuilder;
+
+        let zone = DomainName::new("example.com.").unwrap();
+        let host = DomainName::new("test-nsupdate.example.com.").unwrap();
+        let key = TsigKey::from_base64(
+            DomainName::new("update-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            "dGVzdGtleWZvcmJpbmQ5c2RrdGVzdGluZzEyMzQ1Ng==",
+        )
+        .expect("test key must be valid");
+
+        let record = ResourceRecord {
+            name: host,
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 99)),
+        };
+
+        let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .add_record(record)
+            .sign(&key, 1710000000)
+            .build();
+
+        let sender = NsUpdateSender::new("127.0.0.1:53".parse().unwrap());
+        let result = sender.send(&msg, Some(&key)).await;
+        assert!(result.is_ok(), "dynamic update should succeed: {result:?}");
     }
 
     #[tokio::test]
     #[ignore = "requires live BIND9 — tests TCP fallback with large update"]
     async fn integration_tcp_fallback_with_large_update() {
-        todo!("implement after WT-2 delivers UpdateBuilder")
+        use bind9_sdk_core::domain::DomainName;
+        use bind9_sdk_core::rdata::RecordData;
+        use bind9_sdk_core::record::{RecordClass, ResourceRecord, Ttl};
+        use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
+        use bind9_sdk_core::update::UpdateBuilder;
+
+        let zone = DomainName::new("example.com.").unwrap();
+        let key = TsigKey::from_base64(
+            DomainName::new("update-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            "dGVzdGtleWZvcmJpbmQ5c2RrdGVzdGluZzEyMzQ1Ng==",
+        )
+        .expect("test key must be valid");
+
+        // Add many records to force a large message that exceeds UDP 512-byte limit
+        let mut builder = UpdateBuilder::new(zone, RecordClass::IN);
+        for i in 0..50u8 {
+            let host = DomainName::new(&format!("bulk-{i}.example.com.")).unwrap();
+            let record = ResourceRecord {
+                name: host,
+                class: RecordClass::IN,
+                ttl: Ttl::new(300).unwrap(),
+                rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, i)),
+            };
+            builder = builder.add_record(record);
+        }
+
+        let msg = builder.sign(&key, 1710000000).build();
+        let sender = NsUpdateSender::new("127.0.0.1:53".parse().unwrap());
+        let result = sender.send(&msg, Some(&key)).await;
+        assert!(
+            result.is_ok(),
+            "large update (TCP fallback) should succeed: {result:?}"
+        );
     }
 }
