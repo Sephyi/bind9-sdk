@@ -9,7 +9,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 **Version**: v0.7
 **Date**: 2026-03-16
-**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 in progress (WT-5 complete and merged, WT-3 + WT-4 in progress)
+**Status**: In Progress — Phase 1a complete, Phase 1b Wave 2 complete (WT-3 + WT-4 + WT-5 merged), preparing Phase 2
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
