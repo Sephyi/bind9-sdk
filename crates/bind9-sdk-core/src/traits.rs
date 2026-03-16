@@ -34,6 +34,25 @@ pub struct ServerStatus {
     pub raw_text: String,
 }
 
+impl ServerStatus {
+    /// Create a new `ServerStatus`.
+    pub fn new(
+        version: String,
+        running_since: Option<String>,
+        reload_count: u32,
+        server_up: bool,
+        raw_text: String,
+    ) -> Self {
+        Self {
+            version,
+            running_since,
+            reload_count,
+            server_up,
+            raw_text,
+        }
+    }
+}
+
 /// A zone that has been frozen via `rndc freeze`.
 ///
 /// Returned by `NamedControl::freeze()`. Contains the zone identity
@@ -45,6 +64,13 @@ pub struct FrozenZone {
     pub name: DomainName,
     /// The DNS class of the frozen zone.
     pub class: RecordClass,
+}
+
+impl FrozenZone {
+    /// Create a new `FrozenZone`.
+    pub fn new(name: DomainName, class: RecordClass) -> Self {
+        Self { name, class }
+    }
 }
 
 /// Server-level statistics from the BIND9 statistics-channel JSON API.
@@ -80,6 +106,42 @@ pub struct ZoneStats {
     pub record_count: u32,
     /// Zone type (e.g., `"primary"`, `"secondary"`).
     pub zone_type: String,
+}
+
+impl ZoneStats {
+    /// Create a new `ZoneStats`.
+    pub fn new(
+        name: DomainName,
+        class: RecordClass,
+        serial: Serial,
+        record_count: u32,
+        zone_type: String,
+    ) -> Self {
+        Self {
+            name,
+            class,
+            serial,
+            record_count,
+            zone_type,
+        }
+    }
+}
+
+impl ServerStats {
+    /// Create a new `ServerStats`.
+    pub fn new(
+        boot_time: String,
+        config_time: String,
+        current_time: String,
+        version: String,
+    ) -> Self {
+        Self {
+            boot_time,
+            config_time,
+            current_time,
+            version,
+        }
+    }
 }
 
 /// rndc server management.

@@ -423,7 +423,9 @@ mod tests {
         // Expected: \x07example\x03com\x00
         assert_eq!(
             buf,
-            alloc::vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,]
+            alloc::vec![
+                7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+            ]
         );
     }
 
@@ -443,7 +445,9 @@ mod tests {
         // All ASCII lowered: \x07example\x03com\x00
         assert_eq!(
             buf,
-            alloc::vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,]
+            alloc::vec![
+                7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+            ]
         );
     }
 

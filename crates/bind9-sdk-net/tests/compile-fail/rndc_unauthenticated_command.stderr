@@ -1,0 +1,14 @@
+error[E0599]: no method named `command` found for struct `RndcConnection` in the current scope
+  --> tests/compile-fail/rndc_unauthenticated_command.rs:16:10
+   |
+16 |     conn.command(RndcCommand::Status).await.unwrap();
+   |          ^^^^^^^ method not found in `RndcConnection`
+   |
+   = note: the method was found for
+           - `RndcConnection<Authenticated>`
+
+error[E0282]: type annotations needed
+  --> tests/compile-fail/rndc_unauthenticated_command.rs:16:5
+   |
+16 |     conn.command(RndcCommand::Status).await.unwrap();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot infer type
