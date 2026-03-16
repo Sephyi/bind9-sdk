@@ -6,9 +6,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # bind9-sdk — Product Requirements Document
 
-**Version**: v0.4
+**Version**: v0.5
 **Date**: 2026-03-16
-**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 next
+**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete (post-merge hardening applied), Wave 2 next
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -20,7 +20,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 | --- | --- | --- |
 | 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
 | 0.2 | 2026-03-14 | RFC reference fixes (8499→9499, 8624→9904, status corrections), 18 new RFC entries, compliance requirements (33 REQs across 8 categories), security architecture, napi-rs v3 transition, parallelism architecture, Rust 1.94 update, DEC-004 Ed25519 note |
-| 0.4 | 2026-03-16 | Phase 1b Wave 1 completed — zone parser (165 tests), TSIG RFC 8945 (TsigKey with zeroization), UpdateBuilder RFC 2136 (typestate Unsigned→Signed), net foundation (NetError, TlsConfig, ClientConfig). 309 new tests, 242 total after merge. |
+| 0.5 | 2026-03-16 | Post-merge corrections: test count 242→245 (225 core + 19 net + 1 doc after post-merge fixes). Two CRITICAL review findings fixed (TSIG canonicalization via `write_wire_canonical`, explicit timestamp in `sign()`). Wave 2 plan updated with WT-5 (TSIG/update hardening). |
+| 0.4 | 2026-03-16 | Phase 1b Wave 1 completed — zone parser (165 tests), TSIG RFC 8945 (TsigKey with zeroization), UpdateBuilder RFC 2136 (typestate Unsigned→Signed), net foundation (NetError, TlsConfig, ClientConfig). 309 new tests, 245 total after merge + post-merge fixes. |
 | 0.3 | 2026-03-14 | Phase 1a (Core Foundation) completed — 9 tasks, 11 commits, 57 tests. Added implementation progress tracker (§12.1). Resolved OQ-001 (`no_std` confirmed). New decisions: DEC-005 through DEC-008 (async traits, core::error::Error, thiserror no_std, RRSIG original_ttl). |
 
 </details>
@@ -1031,13 +1032,16 @@ Modules delivered in `crates/bind9-sdk-net/src/`:
 | `tls.rs` | `TlsConfig` wrapping `rustls::ClientConfig` with explicit ring CryptoProvider |
 | `config.rs` | `ClientConfig` (host, port, TLS, TSIG) + `Bind9Client` skeleton implementing all 4 management traits |
 
-Testing: 222 core + 19 net + 1 doc = **242 tests passing** across workspace. Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip.
+Testing: 225 core + 19 net + 1 doc = **245 tests passing** across workspace. Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip.
 
-#### Phase 1b Wave 2: rndc Wire Protocol + Stats/nsupdate — NOT STARTED
+Post-merge fixes (commit `1dde207`): Two CRITICAL findings from dialectic verification (Codex gpt-5.4 + GLM5) fixed immediately — (1) TSIG canonicalization: added `DomainName::write_wire_canonical()` for case-insensitive wire encoding per RFC 8945, (2) explicit timestamp parameter in `TsigRecord::sign()` instead of implicit `SystemTime::now()` (enables deterministic testing and `no_std` compatibility).
 
-Planned worktrees:
-- **WT-3**: rndc wire protocol client (custom TCP framing, ISC message encoding)
-- **WT-4**: statistics-channel HTTP client + nsupdate sender
+#### Phase 1b Wave 2: rndc Wire Protocol + Stats/nsupdate + Hardening — NOT STARTED
+
+Planned worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for full breakdown):
+- **WT-3**: rndc wire protocol client (custom TCP framing, ISC message encoding) — no review items
+- **WT-4**: statistics-channel HTTP client + nsupdate sender — absorbs TSIG response verification (TSIG-002 HIGH), fudge window validation (TSIG-004), RFC 8945 known-answer vectors (TEST-001), TSIG wire parsing (TEST-002)
+- **WT-5**: TSIG/update hardening — new worktree from review findings: zeroize MAC/wire_bytes in TsigRecord (SEC-001), TsigRecord Debug redaction (SEC-002), key length validation warning (SEC-003), RRsetExistsWithData prerequisite (RFC2136-001), request_mac for multi-message TSIG (TSIG-005), exhaustive algorithm tests (TEST-003), update wire roundtrip tests (TEST-004)
 
 ## 13. Success Metrics
 
