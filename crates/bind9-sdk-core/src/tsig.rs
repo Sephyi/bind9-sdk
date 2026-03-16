@@ -240,15 +240,31 @@ pub struct TsigRecord {
     /// Clock skew tolerance in seconds (default: 300).
     pub fudge: u16,
     /// The computed HMAC (message authentication code).
-    pub mac: Vec<u8>,
+    /// Wrapped in `Zeroizing` to clear on drop.
+    pub mac: Zeroizing<Vec<u8>>,
     /// The original DNS message ID.
     pub original_id: u16,
     /// The complete TSIG record in wire format, ready to append to a DNS message.
-    pub wire_bytes: Vec<u8>,
+    /// Wrapped in `Zeroizing` to clear on drop.
+    pub wire_bytes: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for TsigRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TsigRecord")
+            .field("key_name", &self.key_name)
+            .field("algorithm", &self.algorithm)
+            .field("time_signed", &self.time_signed)
+            .field("fudge", &self.fudge)
+            .field("mac", &"[REDACTED]")
+            .field("original_id", &self.original_id)
+            .field("wire_bytes", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl TsigRecord {
-    /// Construct a TSIG pseudo-record for a DNS request message.
+    /// Construct a TSIG pseudo-record for a DNS message.
     ///
     /// Per RFC 8945 §4.3.3 (request MAC generation):
     /// MAC = HMAC(key, DNS message + TSIG Variables)
@@ -256,7 +272,11 @@ impl TsigRecord {
     /// The `message` parameter is the complete DNS message (header + sections)
     /// WITHOUT the TSIG record. The original message ID is extracted from
     /// bytes 0..2 of the message.
-    pub fn new(key: &TsigKey, message: &[u8], timestamp: u64) -> Self {
+    ///
+    /// For response or multi-message TSIG (RFC 8945 §4.5.3), pass the prior
+    /// message's MAC as `request_mac`. This prepends the prior MAC
+    /// (length-prefixed) to the MAC input for chaining.
+    pub fn new(key: &TsigKey, message: &[u8], timestamp: u64, request_mac: Option<&[u8]>) -> Self {
         let fudge: u16 = 300;
         let error: u16 = 0;
         let other_len: u16 = 0;
@@ -297,8 +317,13 @@ impl TsigRecord {
         // Other length: 16-bit (0)
         tsig_vars.extend_from_slice(&other_len.to_be_bytes());
 
-        // MAC input = DNS message (sans TSIG) + TSIG variables
+        // MAC input = [prior MAC (length-prefixed)] + DNS message + TSIG variables
+        // Prior MAC is included for response or multi-message TSIG (RFC 8945 §4.5.3)
         let mut mac_input = Vec::with_capacity(message.len() + tsig_vars.len());
+        if let Some(prior) = request_mac {
+            mac_input.extend_from_slice(&(prior.len() as u16).to_be_bytes());
+            mac_input.extend_from_slice(prior);
+        }
         mac_input.extend_from_slice(message);
         mac_input.extend_from_slice(&tsig_vars);
 
@@ -358,9 +383,9 @@ impl TsigRecord {
             algorithm: key.algorithm,
             time_signed: timestamp,
             fudge,
-            mac,
+            mac: Zeroizing::new(mac),
             original_id,
-            wire_bytes: wire,
+            wire_bytes: Zeroizing::new(wire),
         }
     }
 }
@@ -736,7 +761,7 @@ mod tests {
         let message = alloc::vec![0x00; 12];
         let timestamp = 1710000000u64;
 
-        let record = TsigRecord::new(&key, &message, timestamp);
+        let record = TsigRecord::new(&key, &message, timestamp, None);
 
         assert!(!record.wire_bytes.is_empty());
         assert!(record.key_name == DomainName::new("test-key.").unwrap());
@@ -756,8 +781,8 @@ mod tests {
         .unwrap();
         let message = alloc::vec![0x00; 12];
 
-        let r1 = TsigRecord::new(&key, &message, 1000);
-        let r2 = TsigRecord::new(&key, &message, 2000);
+        let r1 = TsigRecord::new(&key, &message, 1000, None);
+        let r2 = TsigRecord::new(&key, &message, 2000, None);
 
         assert_ne!(
             r1.mac, r2.mac,
@@ -773,11 +798,10 @@ mod tests {
             alloc::vec![0xCC; 32],
         )
         .unwrap();
-        let message = alloc::vec![
-            0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-        ];
+        let message =
+            alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-        let record = TsigRecord::new(&key, &message, 1710000000);
+        let record = TsigRecord::new(&key, &message, 1710000000, None);
 
         let wire = &record.wire_bytes;
         assert!(
@@ -808,12 +832,53 @@ mod tests {
         let message = alloc::vec![0x00; 12];
         let ts = 1710000000u64;
 
-        let r1 = TsigRecord::new(&key_upper, &message, ts);
-        let r2 = TsigRecord::new(&key_lower, &message, ts);
+        let r1 = TsigRecord::new(&key_upper, &message, ts, None);
+        let r2 = TsigRecord::new(&key_lower, &message, ts, None);
 
         assert_eq!(
             r1.mac, r2.mac,
             "Canonical (lowercase) key names must produce identical MACs"
+        );
+    }
+
+    #[test]
+    fn tsig_record_debug_redacts_mac() {
+        let key = TsigKey::new(
+            DomainName::new("dbg-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xEE; 32],
+        )
+        .unwrap();
+        let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+        let debug = format!("{:?}", record);
+        assert!(
+            debug.contains("[REDACTED]"),
+            "Debug must redact mac: {debug}"
+        );
+        assert!(
+            !debug.contains("238"),
+            "Debug must not leak mac bytes: {debug}"
+        );
+    }
+
+    #[test]
+    fn tsig_record_with_request_mac_differs() {
+        let key = TsigKey::new(
+            DomainName::new("chain-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            alloc::vec![0xBB; 32],
+        )
+        .unwrap();
+        let msg = alloc::vec![0u8; 12];
+        let ts = 1710000000u64;
+
+        let r1 = TsigRecord::new(&key, &msg, ts, None);
+        let prior_mac = alloc::vec![0xCC; 32];
+        let r2 = TsigRecord::new(&key, &msg, ts, Some(&prior_mac));
+
+        assert_ne!(
+            &*r1.mac, &*r2.mac,
+            "Including request_mac must change the output MAC"
         );
     }
 

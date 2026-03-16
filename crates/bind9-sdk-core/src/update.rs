@@ -201,7 +201,7 @@ impl UpdateBuilder<Unsigned> {
             &self.updates,
         );
 
-        let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp);
+        let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp, None);
 
         let mut wire = unsigned.wire_bytes;
 
