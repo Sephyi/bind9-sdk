@@ -1070,6 +1070,203 @@ mod tests {
     }
 
     #[test]
+    fn wire_multiple_prerequisites_counted() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let name = DomainName::new("www.example.com.").unwrap();
+        let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .require_rrset_exists(&name, RecordType::A)
+            .require_rrset_not_exists(&name, RecordType::Aaaa)
+            .require_name_exists(&name)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+        assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 3);
+        assert_eq!(u16::from_be_bytes([bytes[8], bytes[9]]), 0);
+    }
+
+    #[test]
+    fn wire_multiple_updates_counted() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let rr1 = ResourceRecord {
+            name: DomainName::new("a.example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 1)),
+        };
+        let rr2 = ResourceRecord {
+            name: DomainName::new("b.example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 2)),
+        };
+        let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+            .add_record(rr1)
+            .add_record(rr2)
+            .delete_name(&DomainName::new("c.example.com.").unwrap())
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+        assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 0); // no prereqs
+        assert_eq!(u16::from_be_bytes([bytes[8], bytes[9]]), 3); // 3 updates
+    }
+
+    #[test]
+    fn wire_delete_record_has_rdata() {
+        let zone = DomainName::new("t.").unwrap();
+        let rr = ResourceRecord {
+            name: DomainName::new("t.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(0).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(1, 2, 3, 4)),
+        };
+        let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
+            .delete_record(rr)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // After header (12) + zone (t. = 3 bytes name + 2 type + 2 class = 7), update starts at 19
+        let upd_start = 19;
+        // Name: \x01t\x00 = 3 bytes
+        let after_name = upd_start + 3;
+
+        // TYPE: A (1)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name], bytes[after_name + 1]]),
+            1
+        );
+        // CLASS: NONE (254)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 2], bytes[after_name + 3]]),
+            254
+        );
+        // TTL: 0
+        assert_eq!(
+            u32::from_be_bytes([
+                bytes[after_name + 4],
+                bytes[after_name + 5],
+                bytes[after_name + 6],
+                bytes[after_name + 7]
+            ]),
+            0
+        );
+        // RDLENGTH: 4
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 8], bytes[after_name + 9]]),
+            4
+        );
+        // RDATA: 1.2.3.4
+        assert_eq!(&bytes[after_name + 10..after_name + 14], &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn wire_delete_rrset_has_no_rdata() {
+        let zone = DomainName::new("t.").unwrap();
+        let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
+            .delete_rrset(&DomainName::new("t.").unwrap(), RecordType::Aaaa)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // After header (12) + zone (7), update at 19
+        let upd_start = 19;
+        let after_name = upd_start + 3; // \x01t\x00
+
+        // TYPE: AAAA (28)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name], bytes[after_name + 1]]),
+            28
+        );
+        // CLASS: ANY (255)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 2], bytes[after_name + 3]]),
+            255
+        );
+        // TTL: 0
+        assert_eq!(
+            u32::from_be_bytes([
+                bytes[after_name + 4],
+                bytes[after_name + 5],
+                bytes[after_name + 6],
+                bytes[after_name + 7]
+            ]),
+            0
+        );
+        // RDLENGTH: 0
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 8], bytes[after_name + 9]]),
+            0
+        );
+        // Nothing after RDLENGTH
+        assert_eq!(bytes.len(), after_name + 10);
+    }
+
+    #[test]
+    fn wire_add_record_has_class_and_ttl() {
+        let zone = DomainName::new("t.").unwrap();
+        let rr = ResourceRecord {
+            name: DomainName::new("t.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(3600).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 168, 1, 1)),
+        };
+        let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
+            .add_record(rr)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        let upd_start = 19;
+        let after_name = upd_start + 3;
+
+        // TYPE: A (1)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name], bytes[after_name + 1]]),
+            1
+        );
+        // CLASS: IN (1) — actual class, not ANY
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 2], bytes[after_name + 3]]),
+            1
+        );
+        // TTL: 3600
+        assert_eq!(
+            u32::from_be_bytes([
+                bytes[after_name + 4],
+                bytes[after_name + 5],
+                bytes[after_name + 6],
+                bytes[after_name + 7]
+            ]),
+            3600
+        );
+        // RDLENGTH: 4
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 8], bytes[after_name + 9]]),
+            4
+        );
+        // RDATA: 192.168.1.1
+        assert_eq!(&bytes[after_name + 10..after_name + 14], &[192, 168, 1, 1]);
+    }
+
+    #[test]
+    fn wire_prerequisite_rrset_not_exists_class_none() {
+        let zone = DomainName::new("t.").unwrap();
+        let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
+            .require_rrset_not_exists(&DomainName::new("t.").unwrap(), RecordType::Mx)
+            .build_unsigned();
+        let bytes = msg.as_bytes();
+
+        // After header (12) + zone (7), prereq at 19
+        let after_name = 19 + 3; // \x01t\x00
+
+        // TYPE: MX (15)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name], bytes[after_name + 1]]),
+            15
+        );
+        // CLASS: NONE (254)
+        assert_eq!(
+            u16::from_be_bytes([bytes[after_name + 2], bytes[after_name + 3]]),
+            254
+        );
+    }
+
+    #[test]
     fn unsigned_and_signed_produce_different_bytes() {
         let zone = DomainName::new("example.com.").unwrap();
         let key = crate::tsig::TsigKey::new(
