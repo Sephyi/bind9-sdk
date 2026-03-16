@@ -6,7 +6,7 @@
 **Date**: 2026-03-16
 **Mode**: code
 **Target**: Post-merge development branch (commit `9cd904d`)
-**Reviewers**: GLM5 (20 findings), Codex gpt-5.4 (9 findings), Gemini 3 Pro (failed: 429 rate limit)
+**Reviewers**: GLM5 (20 findings), Codex gpt-5.4 (9 findings), Gemini 2.5 Pro (8 findings, added post-initial synthesis)
 
 ## Scope Lock
 
@@ -65,11 +65,22 @@ Out of scope: performance optimizations, napi-rs bindings, zone parser, TSIG int
 
 ## Gemini Findings
 
-Skipped: `MODEL_CAPACITY_EXHAUSTED` (429 rate limit) on both attempts for `gemini-3-pro-preview`.
+Gemini 3 Pro failed (429 rate limit). Retried with Gemini 2.5 Pro reading actual project files (CLAUDE.md, PRD, plans, source).
+
+| ID | Severity | Description | Location | Confidence |
+| --- | --- | --- | --- | --- |
+| G-001 | WARN | `RndcCommand` missing `#[non_exhaustive]` | `command.rs:21` | high |
+| G-002 | INFO | rndc response extraction only handles strings, not nested maps | `rndc/mod.rs:188` | med |
+| G-003 | WARN | `RndcResponse` and `RndcResult` missing `#[non_exhaustive]` | `command.rs:211` | high |
+| G-004 | WARN | `from_text()` heuristic `contains("error")` causes false positives | `command.rs:232` | high |
+| G-005 | CRITICAL | Auth handshake has no nonce/timestamp — replay attack (cites PRD SR-002) | `rndc/mod.rs:118` | high |
+| G-006 | WARN | Auth failure discards server error message, returns generic `NetError::AuthFailed` | `rndc/mod.rs:151` | high |
+| G-007 | WARN | `ServerStats` uses empty `String` defaults instead of `Option<String>` for missing JSON fields | `stats.rs:43` | high |
+| G-008 | HIGH | TSIG response verification (TSIG-002) was scheduled for WT-4 in remediation plan but not implemented in `NsUpdateSender` | `nsupdate.rs:113` | high |
 
 ## Unified Findings (Deduplicated)
 
-28 findings merged from GLM5 (20) + Codex (9), with overlaps on response parsing heuristic (S-009/C-009).
+28 findings merged from GLM5 (20) + Codex (9), plus 8 from Gemini (added post-initial synthesis). Overlaps on response parsing heuristic (S-009/C-009/G-004), `#[non_exhaustive]` (C-008/G-001/G-003), replay attack (S-002/G-005).
 
 ## Decision Record
 
@@ -103,22 +114,34 @@ Skipped: `MODEL_CAPACITY_EXHAUSTED` (429 rate limit) on both attempts for `gemin
 | F-026 (S-019) | **ACCEPT INFO** | Acceptable for v0.1.0. |
 | F-027 (S-020) | **REJECT** | By design. Doc suggests `RndcConnection` directly for reuse. |
 | F-028 (S-014) | **REJECT** | **Factually wrong.** `ISC_MSG_VERSION` IS used in encode() and decode(). |
+| F-029 (G-001) | **REJECT** | **Factually wrong.** `RndcCommand` at command.rs:32 DOES have `#[non_exhaustive]`. Gemini cited wrong line. |
+| F-030 (G-002) | **ACCEPT INFO** | Valid. Response extraction only handles string fields. Nested map responses would be lost. |
+| F-031 (G-003) | **ACCEPT** | Same as F-014. `RndcResponse`/`RndcResult` missing `#[non_exhaustive]`. Third model confirms. |
+| F-032 (G-004) | **ACCEPT** | Same as F-015. `contains("error")` heuristic. All three models flagged — highest confidence. |
+| F-033 (G-005) | **ACCEPT WARN** | Same as F-002. Replay attack via missing nonce. Gemini cites PRD SR-002 requirement. |
+| F-034 (G-006) | **ACCEPT WARN** | **New.** Auth failure at mod.rs:156 returns `NetError::AuthFailed` discarding server error text. Reduces debuggability. |
+| F-035 (G-007) | **ACCEPT WARN** | **New angle on F-009.** `ServerStats` uses `String` defaults for missing JSON fields instead of `Option<String>`. Conflates absent data with empty string. |
+| F-036 (G-008) | **ACCEPT WARN** | **New, significant.** TSIG-002 (response verification) was explicitly scheduled for WT-4 in remediation plan but not implemented. PRD changelog incorrectly claims delivery. Must be addressed in WT-5 or PRD corrected. |
 
 ## Final Verdict
 
 **PASS** — No accepted CRITICAL blockers.
 
-- 12 accepted WARNs (none blocking merge)
-- 7 accepted INFOs
-- 9 findings rejected (4 factually wrong, 5 by design)
+- 15 accepted WARNs (none blocking merge individually; F-036 TSIG-002 gap is highest priority)
+- 8 accepted INFOs
+- 10 findings rejected (5 factually wrong, 5 by design)
+- 3 models confirmed `contains("error")` heuristic (F-015/F-032) and `#[non_exhaustive]` gaps (F-014/F-031)
 
 ## Priority Items for WT-5 / Pre-Release
 
-1. **F-003**: Add depth limit to `decode_map()` recursion (`const MAX_DEPTH: usize = 32`)
-2. **F-006**: Return `Result` from `encode_map()` instead of panicking on key >255 bytes
-3. **F-008**: Fix `reload_count` — either rename field or parse correct line
-4. **F-013**: Detect IPv4/IPv6 for UDP bind address in nsupdate
-5. **F-014**: Add `#[non_exhaustive]` to `ClientConfig`, `RndcResponse`, `RndcResult`
-6. **F-015**: Replace `contains("error")` heuristic with structured response parsing
-7. **F-010/F-011/F-012**: Align timeout/TLS/URL contracts between `ClientConfig` and implementations
-8. **F-009**: Document `record_count` as always 0 or change to `Option<u32>`
+1. **F-036**: TSIG response verification (TSIG-002) — scheduled for WT-4 but not implemented. Must deliver in WT-5 and correct PRD changelog.
+2. **F-003**: Add depth limit to `decode_map()` recursion (`const MAX_DEPTH: usize = 32`)
+3. **F-006**: Return `Result` from `encode_map()` instead of panicking on key >255 bytes
+4. **F-008**: Fix `reload_count` — either rename field or parse correct line
+5. **F-013**: Detect IPv4/IPv6 for UDP bind address in nsupdate
+6. **F-014**: Add `#[non_exhaustive]` to `ClientConfig`, `RndcResponse`, `RndcResult`
+7. **F-015**: Replace `contains("error")` heuristic with structured response parsing (all 3 models flagged)
+8. **F-034**: Include server error text in `NetError::AuthFailed` for debuggability
+9. **F-035**: Consider `Option<String>` for `ServerStats` fields to distinguish absent from empty
+10. **F-010/F-011/F-012**: Align timeout/TLS/URL contracts between `ClientConfig` and implementations
+11. **F-009**: Document `record_count` as always 0 or change to `Option<u32>`
