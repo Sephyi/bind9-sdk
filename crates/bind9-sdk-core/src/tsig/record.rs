@@ -10,9 +10,9 @@ use zeroize::Zeroizing;
 use crate::domain::DomainName;
 use crate::error::CoreError;
 
+use super::TsigAlgorithm;
 use super::key::TsigKey;
 use super::wire::read_wire_name;
-use super::TsigAlgorithm;
 
 /// A constructed TSIG pseudo-record for DNS message authentication (RFC 8945 §4.3).
 ///

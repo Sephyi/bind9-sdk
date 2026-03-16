@@ -90,7 +90,9 @@ async fn add_a_record_noerror() {
         .sign_now(&key)
         .build();
 
-    let result = send_update(&msg, Some(&key)).await.expect("update send failed");
+    let result = send_update(&msg, Some(&key))
+        .await
+        .expect("update send failed");
 
     assert_eq!(
         result.rcode,
@@ -128,7 +130,9 @@ async fn delete_a_record_noerror() {
         .add_record(record)
         .sign_now(&key)
         .build();
-    send_update(&setup, Some(&key)).await.expect("setup add failed");
+    send_update(&setup, Some(&key))
+        .await
+        .expect("setup add failed");
     update_settle().await;
 
     // Now delete it.
@@ -137,7 +141,9 @@ async fn delete_a_record_noerror() {
         .sign_now(&key)
         .build();
 
-    let result = send_update(&msg, Some(&key)).await.expect("update send failed");
+    let result = send_update(&msg, Some(&key))
+        .await
+        .expect("update send failed");
 
     assert_eq!(
         result.rcode,

@@ -509,8 +509,9 @@ fn tsig_record_wire_bytes_contains_all_fields() {
         alloc::vec![0xCC; 32],
     )
     .unwrap();
-    let message =
-        alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let message = alloc::vec![
+        0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
 
     let record = TsigRecord::new(&key, &message, 1710000000, None);
 
@@ -603,8 +604,9 @@ fn tsig_record_wire_roundtrip() {
         alloc::vec![0xDD; 32],
     )
     .unwrap();
-    let message =
-        alloc::vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let message = alloc::vec![
+        0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
     let ts = 1710000000u64;
     let original = TsigRecord::new(&key, &message, ts, None);
 
@@ -695,14 +697,16 @@ fn tsig_verify_response_valid() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let request_msg =
-        alloc::vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let request_msg = alloc::vec![
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
     let ts = 1710000000u64;
     let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
 
     // Simulate a response signed with request_mac chaining
-    let response_msg =
-        alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let response_msg = alloc::vec![
+        0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
     let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
 
     let result = TsigRecord::verify_response(
@@ -727,8 +731,9 @@ fn tsig_verify_response_wrong_mac_rejected() {
     let ts = 1710000000u64;
     let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
 
-    let response_msg =
-        alloc::vec![0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let response_msg = alloc::vec![
+        0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
     // Sign with wrong request_mac
     let wrong_mac = alloc::vec![0xFF; 32];
     let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&wrong_mac));
@@ -808,7 +813,7 @@ fn parse_from_wire_rejects_nonzero_ttl() {
         pos += 1 + len;
     }
     pos += 4; // TYPE + CLASS
-              // Set TTL to 1 (non-zero)
+    // Set TTL to 1 (non-zero)
     bad_wire[pos..pos + 4].copy_from_slice(&1u32.to_be_bytes());
     assert!(TsigRecord::parse_from_wire(&bad_wire).is_err());
 }

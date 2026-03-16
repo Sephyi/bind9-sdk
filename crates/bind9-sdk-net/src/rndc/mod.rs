@@ -184,7 +184,15 @@ impl RndcConnection<Unauthenticated> {
 
         // Read the server's response (returns message + raw HMAC input bytes)
         let (response, hmac_raw_input) = read_isc_message(&mut self.stream).await?;
-        verify_authenticated_response(key, &response, &hmac_raw_input, serial, now, None, Some("null"))?;
+        verify_authenticated_response(
+            key,
+            &response,
+            &hmac_raw_input,
+            serial,
+            now,
+            None,
+            Some("null"),
+        )?;
 
         // Extract nonce from server's _ctrl table
         let nonce = response
