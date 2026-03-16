@@ -988,6 +988,106 @@ mod tests {
         );
     }
 
+    #[test]
+    fn verify_roundtrip_sha512() {
+        let key = TsigKey::new(
+            DomainName::new("sha512-key.").unwrap(),
+            TsigAlgorithm::HmacSha512,
+            alloc::vec![0xDD; 64],
+        )
+        .unwrap();
+        let message = b"sha512 roundtrip test";
+        let mac = key.sign(message);
+        assert_eq!(mac.len(), 64);
+        assert!(key.verify(message, &mac).is_ok());
+    }
+
+    #[test]
+    fn verify_wrong_mac_sha512() {
+        let key = TsigKey::new(
+            DomainName::new("sha512-key.").unwrap(),
+            TsigAlgorithm::HmacSha512,
+            alloc::vec![0xDD; 64],
+        )
+        .unwrap();
+        let bad_mac = alloc::vec![0x00; 64];
+        assert!(key.verify(b"some message", &bad_mac).is_err());
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn verify_roundtrip_sha1() {
+        let key = TsigKey::new(
+            DomainName::new("sha1-key.").unwrap(),
+            TsigAlgorithm::HmacSha1,
+            alloc::vec![0xEE; 20],
+        )
+        .unwrap();
+        let message = b"sha1 roundtrip test";
+        let mac = key.sign(message);
+        assert_eq!(mac.len(), 20);
+        assert!(key.verify(message, &mac).is_ok());
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn verify_wrong_mac_sha1() {
+        let key = TsigKey::new(
+            DomainName::new("sha1-key.").unwrap(),
+            TsigAlgorithm::HmacSha1,
+            alloc::vec![0xEE; 20],
+        )
+        .unwrap();
+        let bad_mac = alloc::vec![0x00; 20];
+        assert!(key.verify(b"some message", &bad_mac).is_err());
+    }
+
+    /// RFC 4231 Test Case 1 for HMAC-SHA512
+    #[test]
+    fn sign_rfc_test_vector_sha512() {
+        let key = TsigKey::new(
+            DomainName::new("test.").unwrap(),
+            TsigAlgorithm::HmacSha512,
+            alloc::vec![0x0b; 20],
+        )
+        .unwrap();
+        let mac = key.sign(b"Hi There");
+        let expected = [
+            0x87, 0xaa, 0x7c, 0xde, 0xa5, 0xef, 0x61, 0x9d, 0x4f, 0xf0, 0xb4, 0x24, 0x1a, 0x1d,
+            0x6c, 0xb0, 0x23, 0x79, 0xf4, 0xe2, 0xce, 0x4e, 0xc2, 0x78, 0x7a, 0xd0, 0xb3, 0x05,
+            0x45, 0xe1, 0x7c, 0xde, 0xda, 0xa8, 0x33, 0xb7, 0xd6, 0xb8, 0xa7, 0x02, 0x03, 0x8b,
+            0x27, 0x4e, 0xae, 0xa3, 0xf4, 0xe4, 0xbe, 0x9d, 0x91, 0x4e, 0xeb, 0x61, 0xf1, 0x70,
+            0x2e, 0x69, 0x6c, 0x20, 0x3a, 0x12, 0x68, 0x54,
+        ];
+        assert_eq!(
+            mac.as_slice(),
+            &expected,
+            "HMAC-SHA512 must match RFC 4231 test vector 1"
+        );
+    }
+
+    /// RFC 2202 Test Case 1 for HMAC-SHA1
+    #[allow(deprecated)]
+    #[test]
+    fn sign_rfc_test_vector_sha1() {
+        let key = TsigKey::new(
+            DomainName::new("test.").unwrap(),
+            TsigAlgorithm::HmacSha1,
+            alloc::vec![0x0b; 20],
+        )
+        .unwrap();
+        let mac = key.sign(b"Hi There");
+        let expected = [
+            0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37,
+            0x8c, 0x8e, 0xf1, 0x46, 0xbe, 0x00,
+        ];
+        assert_eq!(
+            mac.as_slice(),
+            &expected,
+            "HMAC-SHA1 must match RFC 2202 test vector 1"
+        );
+    }
+
     // --- TsigRecord tests ---
 
     #[test]
