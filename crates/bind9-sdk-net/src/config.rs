@@ -91,11 +91,17 @@ impl Bind9Client {
         &self,
         cmd: RndcCommand,
     ) -> Result<crate::rndc::command::RndcResponse, NetError> {
-        let conn = RndcConnection::connect(self.config.rndc_addr).await?;
-        let mut conn = conn.authenticate(&self.config.rndc_key).await?;
-        let resp = conn.command(cmd).await?;
-        conn.close().await?;
-        Ok(resp)
+        let timeout = self.config.timeout;
+        let fut = async {
+            let conn = RndcConnection::connect(self.config.rndc_addr).await?;
+            let mut conn = conn.authenticate(&self.config.rndc_key).await?;
+            let resp = conn.command(cmd).await?;
+            conn.close().await?;
+            Ok(resp)
+        };
+        tokio::time::timeout(timeout, fut)
+            .await
+            .map_err(|_| NetError::Timeout(timeout))?
     }
 }
 
