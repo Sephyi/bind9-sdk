@@ -188,7 +188,13 @@ impl DynamicUpdater for Bind9Client {
             .dns_addr
             .ok_or_else(|| NetError::Connection("DNS server address not configured".into()))?;
         let sender = NsUpdateSender::with_timeout(addr, self.config.timeout);
-        sender.send(update).await
+        // Pass the TSIG key for response verification if the update was signed
+        let key = if update.is_signed() {
+            Some(&self.config.rndc_key)
+        } else {
+            None
+        };
+        sender.send(update, key).await
     }
 }
 

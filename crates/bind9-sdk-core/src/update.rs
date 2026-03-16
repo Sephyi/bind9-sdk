@@ -241,6 +241,9 @@ impl UpdateBuilder<Unsigned> {
 
         let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp, None);
 
+        let pre_tsig_len = unsigned.wire_bytes.len();
+        let request_mac = tsig.mac.to_vec();
+
         let mut wire = unsigned.wire_bytes;
 
         // Increment ARCOUNT in DNS header (bytes 10..12)
@@ -260,6 +263,8 @@ impl UpdateBuilder<Unsigned> {
                 message: UpdateMessage {
                     wire_bytes: wire,
                     id: self.id,
+                    request_mac: Some(request_mac),
+                    pre_tsig_len: Some(pre_tsig_len),
                 },
             },
         }
@@ -278,6 +283,12 @@ impl UpdateBuilder<Signed> {
 pub struct UpdateMessage {
     pub(crate) wire_bytes: Vec<u8>,
     pub(crate) id: u16,
+    /// The request TSIG MAC, if the message was signed.
+    /// Used by the net crate for response TSIG verification (RFC 8945 §4.5).
+    pub(crate) request_mac: Option<Vec<u8>>,
+    /// Length of the message before the TSIG record was appended.
+    /// The response verifier needs the pre-TSIG bytes to reconstruct the MAC input.
+    pub(crate) pre_tsig_len: Option<usize>,
 }
 
 impl UpdateMessage {
@@ -289,6 +300,19 @@ impl UpdateMessage {
     /// The DNS message ID.
     pub fn id(&self) -> u16 {
         self.id
+    }
+
+    /// The request TSIG MAC, if this message was signed.
+    ///
+    /// Returns `None` for unsigned messages. Used by the transport layer
+    /// to verify response TSIG per RFC 8945 §4.5.
+    pub fn request_mac(&self) -> Option<&[u8]> {
+        self.request_mac.as_deref()
+    }
+
+    /// Whether this message was signed with TSIG.
+    pub fn is_signed(&self) -> bool {
+        self.request_mac.is_some()
     }
 }
 
@@ -352,6 +376,8 @@ fn encode_update_message(
     UpdateMessage {
         wire_bytes: wire,
         id,
+        request_mac: None,
+        pre_tsig_len: None,
     }
 }
 
@@ -684,9 +710,13 @@ mod tests {
         let msg = UpdateMessage {
             wire_bytes: alloc::vec![0x00, 0x01, 0x28, 0x00],
             id: 0x0001,
+            request_mac: None,
+            pre_tsig_len: None,
         };
         assert_eq!(msg.as_bytes(), &[0x00, 0x01, 0x28, 0x00]);
         assert_eq!(msg.id(), 0x0001);
+        assert!(!msg.is_signed());
+        assert!(msg.request_mac().is_none());
     }
 
     #[test]

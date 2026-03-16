@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bind9_sdk_core::protocol::Rcode;
+use bind9_sdk_core::tsig::{TsigKey, TsigRecord};
 use bind9_sdk_core::update::{UpdateMessage, UpdateResult};
 
 use crate::error::NetError;
@@ -55,6 +56,104 @@ fn is_truncated(response: &[u8]) -> bool {
     response[2] & TC_FLAG_MASK != 0
 }
 
+/// TSIG record type value (RFC 8945).
+const TSIG_TYPE: u16 = 250;
+
+/// Skip an uncompressed or compressed DNS name in wire format.
+///
+/// Advances `pos` past the name. Returns `Err` if the wire is truncated.
+fn skip_wire_name(wire: &[u8], pos: &mut usize) -> Result<(), NetError> {
+    loop {
+        if *pos >= wire.len() {
+            return Err(NetError::Protocol("truncated DNS name in response".into()));
+        }
+        let len = wire[*pos] as usize;
+        if len == 0 {
+            *pos += 1;
+            return Ok(());
+        }
+        // Compression pointer: top 2 bits set
+        if len & 0xC0 == 0xC0 {
+            *pos += 2;
+            return Ok(());
+        }
+        *pos += 1 + len;
+    }
+}
+
+/// Find the start offset of a TSIG record in a DNS response.
+///
+/// Scans through the question, answer, authority, and additional sections
+/// to find the last additional record. If it has TYPE=250 (TSIG), returns
+/// the offset where the TSIG record starts and the message bytes before it.
+///
+/// Returns `None` if no TSIG is found.
+fn find_tsig_in_response(wire: &[u8]) -> Result<Option<usize>, NetError> {
+    if wire.len() < DNS_HEADER_SIZE {
+        return Ok(None);
+    }
+
+    let qdcount = u16::from_be_bytes([wire[4], wire[5]]) as usize;
+    let ancount = u16::from_be_bytes([wire[6], wire[7]]) as usize;
+    let nscount = u16::from_be_bytes([wire[8], wire[9]]) as usize;
+
+
+    let arcount = u16::from_be_bytes([wire[10], wire[11]]) as usize;
+
+    if arcount == 0 {
+        return Ok(None);
+    }
+
+    let mut pos = DNS_HEADER_SIZE;
+
+    // Skip question section
+    for _ in 0..qdcount {
+        skip_wire_name(wire, &mut pos)?;
+        pos += 4; // QTYPE + QCLASS
+        if pos > wire.len() {
+            return Err(NetError::Protocol("truncated question section".into()));
+        }
+    }
+
+    // Skip answer + authority sections (RRs)
+    for _ in 0..(ancount + nscount) {
+        skip_wire_name(wire, &mut pos)?;
+        if pos + 10 > wire.len() {
+            return Err(NetError::Protocol("truncated RR in response".into()));
+        }
+        let rdlength = u16::from_be_bytes([wire[pos + 8], wire[pos + 9]]) as usize;
+        pos += 10 + rdlength;
+        if pos > wire.len() {
+            return Err(NetError::Protocol("truncated RDATA in response".into()));
+        }
+    }
+
+    // Scan additional section — look for TSIG in the last record
+    let mut last_rr_start = None;
+    let mut last_rr_type = 0u16;
+    for _ in 0..arcount {
+        let rr_start = pos;
+        skip_wire_name(wire, &mut pos)?;
+        if pos + 10 > wire.len() {
+            return Err(NetError::Protocol("truncated additional RR".into()));
+        }
+        let rtype = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
+        let rdlength = u16::from_be_bytes([wire[pos + 8], wire[pos + 9]]) as usize;
+        pos += 10 + rdlength;
+        if pos > wire.len() {
+            return Err(NetError::Protocol("truncated additional RDATA".into()));
+        }
+        last_rr_start = Some(rr_start);
+        last_rr_type = rtype;
+    }
+
+    if last_rr_type == TSIG_TYPE {
+        Ok(last_rr_start)
+    } else {
+        Ok(None)
+    }
+}
+
 /// Sends RFC 2136 dynamic update messages over UDP with TCP fallback.
 ///
 /// The sender transmits `UpdateMessage` bytes to a DNS server. If the
@@ -87,23 +186,71 @@ impl NsUpdateSender {
     /// 2. Waits for a response (with timeout).
     /// 3. If the response has the TC (truncated) bit, retries over TCP.
     /// 4. Parses the response header and returns `UpdateResult`.
-    pub async fn send(&self, update: &UpdateMessage) -> Result<UpdateResult, NetError> {
+    /// 5. If a TSIG key is provided and the request was signed, verifies the
+    ///    response TSIG per RFC 8945 §4.5.
+    pub async fn send(
+        &self,
+        update: &UpdateMessage,
+        tsig_key: Option<&TsigKey>,
+    ) -> Result<UpdateResult, NetError> {
         let wire = update.as_bytes();
 
         // Attempt UDP first
         let udp_response = self.send_udp(wire).await?;
 
         // Check for truncation — retry over TCP if TC bit is set
-        if is_truncated(&udp_response) {
+        let response = if is_truncated(&udp_response) {
             tracing::debug!(
                 server = %self.server,
                 "UDP response truncated, retrying over TCP"
             );
-            let tcp_response = self.send_tcp(wire).await?;
-            return parse_dns_response(&tcp_response);
+            self.send_tcp(wire).await?
+        } else {
+            udp_response
+        };
+
+        let result = parse_dns_response(&response)?;
+
+        // Verify response TSIG if the request was signed
+        if let (Some(key), Some(request_mac)) = (tsig_key, update.request_mac()) {
+            if let Some(tsig_offset) = find_tsig_in_response(&response)? {
+                // Parse the TSIG record from the response
+                let response_tsig = TsigRecord::parse_from_wire(&response[tsig_offset..])
+                    .map_err(|e| NetError::Protocol(format!("failed to parse response TSIG: {e}")))?;
+
+                // The message bytes for verification = response without TSIG, ARCOUNT decremented
+                let mut msg_sans_tsig = response[..tsig_offset].to_vec();
+                if msg_sans_tsig.len() >= DNS_HEADER_SIZE {
+                    let arcount = u16::from_be_bytes([msg_sans_tsig[10], msg_sans_tsig[11]]);
+                    if arcount > 0 {
+                        msg_sans_tsig[10..12]
+                            .copy_from_slice(&(arcount - 1).to_be_bytes());
+                    }
+                }
+
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                TsigRecord::verify_response(key, &msg_sans_tsig, &response_tsig, request_mac, now)
+                    .map_err(|e| {
+                        NetError::Protocol(format!("response TSIG verification failed: {e}"))
+                    })?;
+
+                tracing::debug!(
+                    server = %self.server,
+                    "response TSIG verified successfully"
+                );
+            } else {
+                tracing::warn!(
+                    server = %self.server,
+                    "signed request but response contains no TSIG record"
+                );
+            }
         }
 
-        parse_dns_response(&udp_response)
+        Ok(result)
     }
 
     /// Send update message bytes over UDP and return the raw response.
@@ -372,6 +519,165 @@ mod tests {
         let sender = NsUpdateSender::new(addr);
         assert_eq!(sender.server, addr);
         assert!(sender.server.is_ipv6());
+    }
+
+    // -- TSIG response extraction tests --
+
+    /// Build a minimal DNS response with the given section counts and an optional
+    /// TSIG record in additional section.
+    fn build_test_response(qdcount: u16, arcount: u16, include_tsig: bool) -> Vec<u8> {
+        let mut wire = vec![
+            0x00, 0x01, // ID
+            0x85, 0x00, // Flags: QR=1, AA=1, RCODE=0
+            0x00, 0x00, // QDCOUNT (placeholder)
+            0x00, 0x00, // ANCOUNT
+            0x00, 0x00, // NSCOUNT
+            0x00, 0x00, // ARCOUNT (placeholder)
+        ];
+        wire[4..6].copy_from_slice(&qdcount.to_be_bytes());
+        wire[10..12].copy_from_slice(&arcount.to_be_bytes());
+
+        // Add question section entries (zone section for UPDATE)
+        for _ in 0..qdcount {
+            // Zone name: example.com. in wire format
+            wire.extend_from_slice(&[7]); // label length
+            wire.extend_from_slice(b"example");
+            wire.extend_from_slice(&[3]); // label length
+            wire.extend_from_slice(b"com");
+            wire.push(0); // root label
+            wire.extend_from_slice(&6u16.to_be_bytes()); // QTYPE = SOA
+            wire.extend_from_slice(&1u16.to_be_bytes()); // QCLASS = IN
+        }
+
+        if include_tsig {
+            // Minimal TSIG record: key name + TYPE=250 + CLASS=255 + TTL=0 + RDATA
+            // Key name: "test-key." in wire format
+            wire.extend_from_slice(&[8]); // label length
+            wire.extend_from_slice(b"test-key");
+            wire.push(0); // root label
+            wire.extend_from_slice(&250u16.to_be_bytes()); // TYPE = TSIG
+            wire.extend_from_slice(&255u16.to_be_bytes()); // CLASS = ANY
+            wire.extend_from_slice(&0u32.to_be_bytes()); // TTL = 0
+            // RDATA: algorithm name + time + fudge + mac_size + mac + orig_id + error + other_len
+            let mut rdata = Vec::new();
+            // Algorithm: hmac-sha256. in wire format
+            rdata.extend_from_slice(&[11]); // label length
+            rdata.extend_from_slice(b"hmac-sha256");
+            rdata.push(0); // root label
+            // Time signed: 48-bit (6 bytes)
+            rdata.extend_from_slice(&[0x00, 0x00, 0x65, 0xD0, 0xA0, 0x00]);
+            // Fudge: 300
+            rdata.extend_from_slice(&300u16.to_be_bytes());
+            // MAC size: 32
+            rdata.extend_from_slice(&32u16.to_be_bytes());
+            // MAC: 32 bytes of 0xAA
+            rdata.extend_from_slice(&[0xAA; 32]);
+            // Original ID
+            rdata.extend_from_slice(&0x0001u16.to_be_bytes());
+            // Error: 0
+            rdata.extend_from_slice(&0u16.to_be_bytes());
+            // Other length: 0
+            rdata.extend_from_slice(&0u16.to_be_bytes());
+
+            wire.extend_from_slice(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
+            wire.extend_from_slice(&rdata);
+        }
+
+        wire
+    }
+
+    #[test]
+    fn find_tsig_no_additional_section() {
+        let response = build_test_response(1, 0, false);
+        assert!(find_tsig_in_response(&response).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_tsig_with_tsig_record() {
+        let response = build_test_response(1, 1, true);
+        let offset = find_tsig_in_response(&response).unwrap();
+        assert!(offset.is_some(), "should find TSIG in additional section");
+        // Verify the offset points to the TSIG owner name
+        let off = offset.unwrap();
+        // First byte at offset should be the key name label length (8 for "test-key")
+        assert_eq!(response[off], 8);
+    }
+
+    #[test]
+    fn find_tsig_header_only() {
+        // Minimal 12-byte header with ARCOUNT=0
+        let response = [
+            0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(find_tsig_in_response(&response).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_tsig_too_short() {
+        assert!(find_tsig_in_response(&[0x00, 0x01]).unwrap().is_none());
+    }
+
+    #[test]
+    fn skip_wire_name_uncompressed() {
+        // "example.com." = \x07example\x03com\x00
+        let wire = [7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0];
+        let mut pos = 0;
+        skip_wire_name(&wire, &mut pos).unwrap();
+        assert_eq!(pos, 13);
+    }
+
+    #[test]
+    fn skip_wire_name_compressed() {
+        // Compression pointer: 0xC0 0x00
+        let wire = [0xC0, 0x00];
+        let mut pos = 0;
+        skip_wire_name(&wire, &mut pos).unwrap();
+        assert_eq!(pos, 2);
+    }
+
+    #[test]
+    fn skip_wire_name_root() {
+        let wire = [0]; // root label
+        let mut pos = 0;
+        skip_wire_name(&wire, &mut pos).unwrap();
+        assert_eq!(pos, 1);
+    }
+
+    #[test]
+    fn signed_update_message_has_request_mac() {
+        use bind9_sdk_core::domain::DomainName;
+        use bind9_sdk_core::record::RecordClass;
+        use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
+        use bind9_sdk_core::update::UpdateBuilder;
+
+        let zone = DomainName::new("example.com.").unwrap();
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xBB; 32],
+        )
+        .unwrap();
+
+        let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .sign(&key, 1710000000)
+            .build();
+
+        assert!(msg.is_signed());
+        assert!(msg.request_mac().is_some());
+        assert_eq!(msg.request_mac().unwrap().len(), 32); // SHA256 MAC
+    }
+
+    #[test]
+    fn unsigned_update_message_has_no_request_mac() {
+        use bind9_sdk_core::domain::DomainName;
+        use bind9_sdk_core::record::RecordClass;
+        use bind9_sdk_core::update::UpdateBuilder;
+
+        let zone = DomainName::new("example.com.").unwrap();
+        let msg = UpdateBuilder::new(zone, RecordClass::IN).build_unsigned();
+
+        assert!(!msg.is_signed());
+        assert!(msg.request_mac().is_none());
     }
 
     // -- Integration test stubs --
