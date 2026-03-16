@@ -8,7 +8,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 **Version**: v0.6
 **Date**: 2026-03-16
-**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 in progress (WT-3 complete, WT-4 in progress)
+**Status**: In Progress — Phase 1a complete, Phase 1b Wave 1 complete, Wave 2 in progress (WT-3 + WT-4 complete and merged, WT-5 pending)
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -18,7 +18,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 | Version | Date | Summary |
 | --- | --- | --- |
-| 0.6 | 2026-03-16 | Wave 2 in progress: WT-3 (rndc protocol) COMPLETE (commit `3d5024a`) — ISC binary encoding, RndcCommand enum 25+ variants, RndcConnection typestate, NamedControl impl, 80 new net tests (324 total). WT-4 (stats/nsupdate) IN PROGRESS. Pre-fix populated 4 placeholder structs with real fields. |
+| 0.6 | 2026-03-16 | Wave 2 in progress: WT-3 (rndc protocol) COMPLETE (commit `3d5024a`) — ISC binary encoding, RndcCommand enum 25+ variants, RndcConnection typestate, NamedControl impl, 80 new net tests. WT-4 (stats/nsupdate) COMPLETE (commit `b464a37`) — StatsHttpClient with JSON deserialization and fetch methods, StatsClient trait impl, NsUpdateSender UDP+TCP with DynamicUpdater trait impl, TSIG response verification, 37 new net tests (356 total). Pre-fix populated 4 placeholder structs with real fields. |
 | 0.5 | 2026-03-16 | Post-merge corrections: test count 242→245 (225 core + 19 net + 1 doc after post-merge fixes). Two CRITICAL review findings fixed (TSIG canonicalization via `write_wire_canonical`, explicit timestamp in `sign()`). Wave 2 plan updated with WT-5 (TSIG/update hardening). |
 | 0.4 | 2026-03-16 | Phase 1b Wave 1 completed — zone parser (165 tests), TSIG RFC 8945 (TsigKey with zeroization), UpdateBuilder RFC 2136 (typestate Unsigned→Signed), net foundation (NetError, TlsConfig, ClientConfig). 309 new tests, 245 total after merge + post-merge fixes. |
 | 0.3 | 2026-03-14 | Phase 1a (Core Foundation) completed — 9 tasks, 11 commits, 57 tests. Added implementation progress tracker (§12.1). Resolved OQ-001 (`no_std` confirmed). New decisions: DEC-005 through DEC-008 (async traits, core::error::Error, thiserror no_std, RRSIG original_ttl). |
@@ -1035,7 +1035,7 @@ Modules delivered in `crates/bind9-sdk-net/src/`:
 | `tls.rs` | `TlsConfig` wrapping `rustls::ClientConfig` with explicit ring CryptoProvider |
 | `config.rs` | `ClientConfig` (host, port, TLS, TSIG) + `Bind9Client` skeleton implementing all 4 management traits |
 
-Testing: 225 core + 99 net = **324 tests passing** across workspace. Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip.
+Testing: 225 core + 129 net lib + 1 trybuild + 1 doc = **356 tests passing** across workspace (10 ignored integration stubs). Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip.
 
 Post-merge fixes (commit `1dde207`): Two CRITICAL findings from dialectic verification (Codex gpt-5.4 + GLM5) fixed immediately — (1) TSIG canonicalization: added `DomainName::write_wire_canonical()` for case-insensitive wire encoding per RFC 8945, (2) explicit timestamp parameter in `TsigRecord::sign()` instead of implicit `SystemTime::now()` (enables deterministic testing and `no_std` compatibility).
 
@@ -1045,7 +1045,7 @@ Pre-fix (commit `fb83f0f`): Populated 4 placeholder structs with real fields on 
 
 Active worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for full breakdown):
 - **WT-3** (`feat/rndc-protocol`): rndc wire protocol client — COMPLETE (commit `3d5024a`). Delivered: ISC binary message encoding/decoding (`protocol.rs`), `RndcCommand` enum with 25+ variants and serialization (`command.rs`), `RndcConnection` typestate Unauthenticated→Authenticated (`mod.rs`), `NamedControl` trait implementation for `Bind9Client` (`config.rs`), `ServerStatus` parser, `FrozenZone` constructor, compile-fail typestate test, integration test skeleton. 80 new net tests (99 total in net crate, 324 total workspace)
-- **WT-4** (`feat/stats-nsupdate`): statistics-channel HTTP client + nsupdate sender — IN PROGRESS, 4 chunks / 15 tasks. Absorbs TSIG response verification (TSIG-002 HIGH), fudge window validation (TSIG-004), RFC 8945 known-answer vectors (TEST-001), TSIG wire parsing (TEST-002)
+- **WT-4** (`feat/stats-nsupdate`): statistics-channel HTTP client + nsupdate sender — COMPLETE (commit `b464a37`). Delivered: `StatsHttpClient` with JSON deserialization (`stats.rs`), `NamedStats`/`ServerStats`/`ZoneStats` fetch methods, `StatsClient` trait implementation for `Bind9Client`, `NsUpdateSender` with UDP+TCP transport and automatic TCP fallback (`nsupdate.rs`), `DynamicUpdater` trait implementation for `Bind9Client`, TSIG response verification (TSIG-002), fudge window validation (TSIG-004), RFC 8945 known-answer vectors (TEST-001), TSIG wire parsing (TEST-002). 37 new net tests (129 net lib total, 356 total workspace)
 - **WT-5**: TSIG/update hardening — PLANNED (after WT-3 + WT-4 merge). Review findings: zeroize MAC/wire_bytes in TsigRecord (SEC-001), TsigRecord Debug redaction (SEC-002), key length validation warning (SEC-003), RRsetExistsWithData prerequisite (RFC2136-001), request_mac for multi-message TSIG (TSIG-005), exhaustive algorithm tests (TEST-003), update wire roundtrip tests (TEST-004)
 
 ## 13. Success Metrics
