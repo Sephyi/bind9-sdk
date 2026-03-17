@@ -58,9 +58,38 @@ impl TlsConfig {
     }
 }
 
+/// Check if a socket address is localhost (127.0.0.0/8 or ::1).
+///
+/// Used by transport layers to determine whether TLS is required.
+/// Localhost connections are exempt from mandatory TLS (XoT).
+pub fn is_localhost(addr: &std::net::SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V4(v4) => v4.is_loopback(),
+        std::net::IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn localhost_ipv4_is_local() {
+        let addr: std::net::SocketAddr = "127.0.0.1:53".parse().unwrap();
+        assert!(is_localhost(&addr));
+    }
+
+    #[test]
+    fn localhost_ipv6_is_local() {
+        let addr: std::net::SocketAddr = "[::1]:53".parse().unwrap();
+        assert!(is_localhost(&addr));
+    }
+
+    #[test]
+    fn remote_is_not_local() {
+        let addr: std::net::SocketAddr = "10.0.0.1:53".parse().unwrap();
+        assert!(!is_localhost(&addr));
+    }
 
     #[test]
     fn tls_config_new_succeeds() {

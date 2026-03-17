@@ -84,6 +84,13 @@ pub enum NetError {
     #[error("XFR protocol error: {0}")]
     XfrProtocolError(String),
 
+    /// TLS is required for non-localhost connections.
+    #[error("TLS required for non-localhost connection to {remote}")]
+    TlsRequired {
+        /// The remote address that requires TLS.
+        remote: String,
+    },
+
     /// An I/O error from the operating system.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -205,6 +212,17 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "incomplete zone transfer: missing closing SOA"
+        );
+    }
+
+    #[test]
+    fn tls_required_display() {
+        let err = NetError::TlsRequired {
+            remote: "10.0.0.1:853".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "TLS required for non-localhost connection to 10.0.0.1:853"
         );
     }
 

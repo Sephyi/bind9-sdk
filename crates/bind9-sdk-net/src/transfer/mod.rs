@@ -24,6 +24,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::Stream;
 
 use crate::error::NetError;
+use crate::tls::{TlsConfig, is_localhost};
 
 use self::wire::{
     DnsHeader, encode_axfr_query, encode_ixfr_query, parse_resource_record, read_tcp_dns_message,
@@ -36,6 +37,36 @@ use self::wire::{
 /// In production, `S` is typically `tokio::net::TcpStream`.
 pub struct TransferClient<S> {
     stream: S,
+}
+
+impl TransferClient<tokio::net::TcpStream> {
+    /// Connect to a DNS server for zone transfer over plain TCP.
+    ///
+    /// For non-localhost addresses, TLS is required (XoT per REQ-TLS-1).
+    /// Localhost connections are exempt from the TLS requirement.
+    ///
+    /// When `tls` is `Some`, the connection should use
+    /// [`TransferClient::connect_tls`] (not yet implemented). Passing
+    /// `Some` currently returns a [`NetError::Tls`] error.
+    pub async fn connect(
+        addr: std::net::SocketAddr,
+        tls: Option<&TlsConfig>,
+    ) -> Result<Self, NetError> {
+        if !is_localhost(&addr) && tls.is_none() {
+            return Err(NetError::TlsRequired {
+                remote: addr.to_string(),
+            });
+        }
+        if tls.is_some() {
+            return Err(NetError::Tls(
+                "use connect_tls() for TLS connections".into(),
+            ));
+        }
+        let stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .map_err(|e| NetError::Connection(format!("failed to connect to {addr}: {e}")))?;
+        Ok(TransferClient::new(stream))
+    }
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
