@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # bind9-sdk — Product Requirements Document
 
 
-**Version**: v1.0
-**Date**: 2026-03-16
-**Status**: In Progress — Phase 1b fully complete (audit/remediation merged to development), preparing Phase 2
+**Version**: v1.1
+**Date**: 2026-03-17
+**Status**: In Progress — Phase 1 completion plan merged (file splits, proptest, snapshots, doc coverage); preparing Phase 2
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -19,6 +19,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| 1.1 | 2026-03-17 | Phase 1 completion plan merged (`feat/phase1-completion` → `development`, commit `0d419b9`): `tsig.rs`/`update.rs`/`zone/parser.rs` split into submodules, 8 proptest invariants, 3 insta snapshot tests for zone serializer, 0 `missing_docs` errors on `bind9-sdk-core`, `keywords`/`categories` in Cargo.toml. 441 tests passing (265 core + 174 net lib + 1 trybuild + 1 doc). |
 | 1.0 | 2026-03-16 | Audit/remediation branch merged (`audit/remediation` → `development`): rndc response HMAC verification (`verify_authenticated_response`), replay-relevant `_ctrl` field validation (`_ser`, `_tim`, `_exp`, `_rpl`, `_nonce`), nested `_data` map rendering, typed `NetError::PrerequisiteFailed` and `NetError::TsigRejected`, `classify_update_result()` at `Bind9Client` boundary, TLS dead-config warning in `Bind9Client::new()`, dead nonce guard removal. 9 new net tests. 426 tests passing (254 core + 170 net lib + 1 trybuild + 1 doc). Findings closed: F-001/GPT-RNDC-AUTH, F-030, F-002 (partial), GPT-ERR-TYPED, F-012 (partial mitigated), EXT-001, EXT-002, EXT-003, EXT-004. |
 | 0.9 | 2026-03-16 | rndc wire protocol rewrite (`dc36ded`): correct isccc binary encoding and HMAC-SHA256 auth, 16 new net tests. 417 tests passing (254 core + 161 net lib + 1 trybuild + 1 doc). Two external audit rounds completed: dialectic verification (GLM5 + Codex gpt-5.4 + Gemini 2.5 Pro, 37 findings across 3 reviewers) and Gemini 3 Flash review (6 findings, 2 false positives). |
 | 0.8 | 2026-03-16 | Post-WT-5 hardening COMPLETE (8 commits on `feat/post-wt5-hardening`, fast-forward merge): TSIG error/other_data parsing + TTL=0 validation (F-007/F-008/F-019), Zeroizing request_mac (F-006), empty RrsetExistsWithData rejection (F-009), rndc timeout wrapper (F-010), TSIG error RCODE check + response ID matching (F-012/F-020), stale todo!() cleanup (3 removed), BIND9 9.20 Podman e2e test infrastructure (debian:trixie-slim, ports 15353/9953/8053). 401 tests passing (254 core + 145 net + 1 trybuild + 1 doc). Gemini 3 Flash review adjudicated: 2 false positives (fabricated IXFR claim, wrong phase for napi-rs), 4 accurate findings. |
@@ -987,7 +988,7 @@ opt-level = "z"
 
 | Phase | Version | Focus | Status |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction | **COMPLETE** — 426 tests. Blockers before crates.io publish: license (OQ-005), e2e integration tests green in CI |
+| 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction | **COMPLETE** — 441 tests. 0 `missing_docs` errors. Blockers before crates.io publish: license (OQ-005, deferred), e2e integration tests green in CI (OQ-007) |
 | 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY. Also: nsupdate sender (delivered in Phase 1), Phase 2 audit items (F-002, F-005, F-012, GPT-*) | **NEXT** |
 | 3 | v0.3.0 | JavaScript bindings: napi-rs v3 (native + WASM from single layer), TypeScript types, Bun support | NOT STARTED — bindings crate is a placeholder |
 | 4 | v0.4.0 | npm publish: full SDK surface in JS ecosystem, pre-built native binaries, WASM fallback | NOT STARTED |
@@ -1063,6 +1064,24 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 - **WT-4** (`feat/stats-nsupdate`): statistics-channel HTTP client + nsupdate sender — COMPLETE (commit `b464a37`). Delivered: `StatsHttpClient` with JSON deserialization (`stats.rs`), `ServerStats`/`ZoneStats` fetch methods, `StatsClient` trait implementation for `Bind9Client`, `NsUpdateSender` with UDP+TCP transport and automatic TCP fallback (`nsupdate.rs`), `DynamicUpdater` trait implementation for `Bind9Client`. 37 new net tests (129 net lib total, 356 total workspace). **Note**: TSIG-002/TSIG-004/TEST-001/TEST-002 were scheduled for WT-4 but deferred to WT-5 (identified by dialectic verify).
 - **WT-5** (`feat/wt5-hardening`): TSIG/update hardening + dialectic verify remediation — COMPLETE (commit `637913f`, fast-forward merge to `development`, 13 files changed, +2989/-134 lines). Delivered: TSIG wire parsing + response verification (RFC 8945 §4.5), TsigRecord hardening (zeroize MAC/wire_bytes via `Zeroizing<Vec<u8>>`, Debug redaction for all secret fields), short key warnings with `tracing::warn!` (SEC-003), `RrsetExistsWithData` prerequisite support (RFC 2136 §2.4.2), update wire roundtrip tests, exhaustive TSIG algorithm tests (all 3 algorithms x sign/verify/roundtrip), stats timeout passthrough, nsupdate TSIG response verification. Dialectic verify remediation fixes: F-003, F-006, F-008, F-010, F-011, F-012, F-014, F-015, F-034, F-036 (see `docs/plans/2026-03-16-wave2-dialectic-verify.md`). 42 new tests (+26 core, +16 net); 398 total workspace (251 core + 145 net lib + 1 trybuild + 1 doc). **Post-WT-5 hardening** (`feat/post-wt5-hardening`, 8 commits, fast-forward merge): TSIG error/other_data parsing, TTL=0 validation, Zeroizing request_mac, empty RrsetExistsWithData rejection, rndc timeout wrapper, TSIG error RCODE check, response ID matching, stale todo!() cleanup, BIND9 9.20 Podman e2e infrastructure. **rndc wire protocol rewrite** (`dc36ded`): correct isccc binary encoding and HMAC-SHA256 authentication, 16 new net tests. 417 tests passing (254 core + 161 net lib + 1 trybuild + 1 doc). **Audit/remediation** (`audit/remediation`, merged to `development`): rndc response HMAC verification and replay validation (`verify_authenticated_response`, validates `_ser`/`_tim`/`_exp`/`_rpl`/`_nonce`), nested `_data` map rendering (`render_isc_value`, `extract_response_text`, `render_unstructured_fields`), typed `NetError::PrerequisiteFailed` and `NetError::TsigRejected`, `Bind9Client::classify_update_result()` mapping RFC 2136 rcodes to error taxonomy, dead TLS config warning in `Bind9Client::new()`, `#![forbid(unsafe_code)]` in `bind9-sdk-net/src/lib.rs`, RFC 3597 `TYPE{n}` zone serialization for unknown RR types, `require_rrset_exists_with_data()` returning `Result` instead of panicking (`assert!` removed), `#[non_exhaustive]` on `RecordClass`/`Prerequisite`/`UpdateEntry`. 9 new net tests (4 rndc auth unit tests + 5 error/config tests). **426 tests passing (254 core + 170 net lib + 1 trybuild + 1 doc)**. Findings closed: F-001/GPT-RNDC-AUTH, F-030, F-002 (partial), GPT-ERR-TYPED, EXT-001 through EXT-004.
 
+#### Phase 1 Completion Plan — COMPLETE (2026-03-17)
+
+**Branch**: `feat/phase1-completion` → `development` | **Commit**: `0d419b9` | **Tests**: 441 passing | **Status**: clippy clean, WASM clean, fmt clean
+
+| Task | What was delivered |
+| --- | --- |
+| File split: `tsig.rs` | Split 1518-line file into `tsig/` submodule: `key.rs`, `record.rs`, `wire.rs`, `tests.rs`, `mod.rs` |
+| File split: `update.rs` | Split 1342-line file into `update/` submodule: `mod.rs`, `builder.rs`, `message.rs`, `tests.rs` |
+| File split: `zone/parser.rs` | Split 1189-line file into `zone/parser/` submodule: `tokenizer.rs`, `record.rs`, `tests.rs`, `mod.rs` |
+| proptest invariants | 8 new property tests: zone parser never-panic, `DomainName::new` never-panic, simple FQDN always OK, TSIG cross-key failure, MAC length matches algorithm, wire length ≥ 12, ZOCOUNT always 1, opcode always 5 |
+| insta snapshot tests | 3 snapshot tests for zone serializer (minimal zone, multi-rtype zone, roundtrip idempotency); blessed snapshots committed |
+| Doc coverage | 0 `missing_docs` errors on `bind9-sdk-core`: crate/module docs, all public struct fields in `rdata.rs`, `protocol.rs`, `error.rs`, `traits.rs`, `update/`, `zone/`; fixed broken intra-doc link (`sign_now` behind `#[cfg(feature = "std")]`) |
+| Cargo.toml | `keywords` + `categories` added to `[workspace.package]`; propagated to all member crates via `keywords.workspace = true` |
+| Integration test stubs | `nsupdate_integration.rs` + `stats_integration.rs` added to `bind9-sdk-net/tests/`; all `#[ignore]`, require live BIND9 9.20 |
+| Security audit | `cargo audit`: 0 vulnerabilities in 227 dependencies |
+
+**Remaining from Phase 1 plan**: BIND9 Podman container + E2E CI pipeline (requires infrastructure; tracked as separate work item). OQ-005 (license) and OQ-007 (rndc `_tim`/`_exp` tolerance) are blockers before crates.io publish.
+
 ## 13. Success Metrics
 
 | Metric | Target | Measurement |
@@ -1071,7 +1090,7 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 | Zone parser roundtrip | 100% lossless | Property test `parse(serialize(zone)) == zone` |
 | rndc RFC compliance | 100% commands verified | Integration tests against real BIND9 9.20 |
 | WASM bundle size | < 500KB gzipped | CI artifact size check |
-| docs.rs coverage | 100% public API | `cargo doc --no-deps -D missing_docs` |
+| docs.rs coverage | 100% public API | `cargo doc --no-deps -D missing_docs` — ✓ 0 errors on `bind9-sdk-core` (2026-03-17) |
 | crates.io downloads | > 1K/month at v1.0.0 | crates.io stats |
 | npm weekly downloads | > 500 at v1.0.0 | npm stats |
 | MSRV | Rust 1.94 (edition 2024) | CI matrix |
