@@ -9,7 +9,10 @@
 //! ## Quick start
 //!
 //! ```rust
-//! use bind9_sdk::{DomainName, RecordData, ResourceRecord, RecordClass, Ttl};
+//! use bind9_sdk::{
+//!     DomainName, RecordData, RecordType, ResourceRecord, RecordClass, Ttl,
+//!     ZoneFile, TsigAlgorithm, UpdateBuilder,
+//! };
 //! use core::net::Ipv4Addr;
 //!
 //! let name = DomainName::new("example.com.").unwrap();
@@ -34,6 +37,14 @@ pub use bind9_sdk_net as net;
 
 // Curated top-level re-exports (covered by semver)
 pub use bind9_sdk_core::{
-    CoreError, DomainName, DynamicUpdater, Label, NamedControl, RecordClass, RecordData,
-    ResourceRecord, Serial, SerialStrategy, StatsClient, Ttl, ZoneManager,
+    CoreError, DiffEntry, DomainName, DynamicUpdater, Label, NamedControl, Rcode, RecordClass,
+    RecordData, RecordType, ResourceRecord, Serial, SerialStrategy, StatsClient, TransferRecord,
+    TsigAlgorithm, TsigKey, Ttl, UpdateBuilder, UpdateMessage, Zone, ZoneDiff, ZoneFile,
+    ZoneManager,
+};
+
+#[cfg(feature = "net")]
+pub use bind9_sdk_net::{
+    Bind9Client, ClientConfig, NetError, NsUpdateSender, RndcPool, StatsHttpClient, TlsConfig,
+    TransferClient,
 };

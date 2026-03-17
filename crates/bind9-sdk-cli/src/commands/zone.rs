@@ -9,8 +9,10 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use serde::Serialize;
 
-use bind9_sdk::core::{DiffEntry, ZoneFile};
-use bind9_sdk::net::{Bind9Client, ClientConfig};
+use tokio_stream::StreamExt;
+
+use bind9_sdk::core::{DiffEntry, TransferRecord, ZoneFile};
+use bind9_sdk::net::{Bind9Client, ClientConfig, TransferClient};
 use bind9_sdk::{DomainName, NamedControl};
 
 use crate::commands::OutputFormat;
@@ -151,21 +153,74 @@ async fn execute_export(
     format: OutputFormat,
     config: Option<ClientConfig>,
 ) -> Result<(), CliError> {
-    let _config = config.ok_or_else(|| {
+    let config = config.ok_or_else(|| {
         CliError::Config(
             "server connection required — provide --server and --key-* flags or a config file"
                 .into(),
         )
     })?;
+    let dns_addr = config.dns_addr.ok_or_else(|| {
+        CliError::Config(
+            "dns_port must be configured for zone export (AXFR uses TCP port 53)".into(),
+        )
+    })?;
     let name =
         DomainName::new(zone).map_err(|e| CliError::Config(format!("invalid zone name: {e}")))?;
-    // AXFR zone export requires TransferClient (TCP stream to port 53).
-    // This is a stub — full implementation needs dns_addr and TSIG key.
+
+    // Connect to the DNS server for AXFR transfer over TCP.
+    let client = TransferClient::connect(dns_addr, None)
+        .await
+        .map_err(CliError::Net)?;
+
+    // Start the AXFR transfer, optionally signed with TSIG.
+    let stream = client
+        .axfr(name.clone(), Some(&config.rndc_key))
+        .await
+        .map_err(CliError::Net)?;
+
+    // The stream returned by axfr is not Unpin, so we must pin it.
+    tokio::pin!(stream);
+
+    // Collect and print each record from the transfer stream.
+    let mut count = 0usize;
+    while let Some(result) = stream.next().await {
+        let transfer_record = result.map_err(CliError::Net)?;
+        let rr = match &transfer_record {
+            TransferRecord::BeginSoa(rr)
+            | TransferRecord::Record(rr)
+            | TransferRecord::EndSoa(rr) => rr,
+            _ => continue,
+        };
+        // Format as a zone file line: name ttl class type rdata
+        print_message(format, &format_record(rr));
+        count += 1;
+    }
+
     print_message(
         format,
-        &format!("zone export for {name} requires AXFR transfer (not yet wired to CLI)"),
+        &format!("; Transfer complete: {count} records for {name}"),
     );
     Ok(())
+}
+
+/// Format a `ResourceRecord` as a zone file line.
+fn format_record(rr: &bind9_sdk::ResourceRecord) -> String {
+    use bind9_sdk::core::zone::ZoneFile;
+
+    // Build a minimal zone file containing just this record to leverage
+    // the existing serializer for rdata formatting.
+    let zone_str = format!("$ORIGIN .\n$TTL {}\n", rr.ttl.value());
+    let mut zf = ZoneFile::parse(&zone_str).unwrap_or_else(|_| {
+        ZoneFile::parse("$ORIGIN .\n$TTL 0\n").expect("fallback zone parse should succeed")
+    });
+    zf.zone.records.push(rr.clone());
+    let serialized = zf.serialize();
+    // The serialized output includes $ORIGIN and $TTL lines; extract just the record line.
+    serialized
+        .lines()
+        .skip_while(|line| line.starts_with('$'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn execute_diff(file_a: &PathBuf, file_b: &PathBuf, format: OutputFormat) -> Result<(), CliError> {
