@@ -9,7 +9,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 **Version**: v1.1
 **Date**: 2026-03-17
-**Status**: In Progress — Phase 1 completion plan merged (file splits, proptest, snapshots, doc coverage); preparing Phase 2
+**Status**: In Progress — Phase 2 complete (IXFR/AXFR client, SOA serial strategies, DNSSEC types, CDS/CDNSKEY, KASP, XoT enforcement); preparing Phase 3
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -393,9 +393,9 @@ RFC 2136 dynamic update message construction. Pure construction — no I/O in `b
 
 ### 4.2 Phase 2 — v0.2.0: Zone Transfers + DNSSEC Utilities
 
-> **Phase 2 readiness (2026-03-16)**: e2e integration test infrastructure is fully built (Podman container in `tests/bind9/`, `named.conf`, `rndc.conf`, test zones, `tests/README.md`). 4 rndc integration tests exist in `crates/bind9-sdk-net/tests/rndc_integration.rs` (all `#[ignore]`). Missing before v0.1.0 publish: nsupdate integration tests, stats-channel integration tests, and validation of `_tim`/`_exp` strict-equality semantics against a live BIND9 9.20 (see OQ-007). The IXFR/AXFR client remains planned and is the main Phase 2 implementation deliverable.
+> **Phase 2 complete (2026-03-17)**: IXFR/AXFR zone transfer client with streaming API, SOA serial strategies (DateCounter/UnixTimestamp/Monotonic/Custom), DNSSEC record types (DNSKEY/RRSIG/DS/NSEC/NSEC3/NSEC3PARAM/CDS/CDNSKEY/DLV), KASP response parsing, CDS generation from DNSKEY (SHA-256/SHA-384 + DELETE sentinel), XoT enforcement for non-localhost transfers. 535 tests passing, 21 integration tests against live BIND9 9.20 (Podman). Stats-channel kebab-case deserialization fixed.
 >
-> **Phase 2 open items from audit**: F-002 full nonce/replay (nonce validated on responses, but no server-generated nonce counter), F-005 doc alignment (`_data.type` naming), F-012 full TLS/XoT transport, GPT-ZONE-COL column in `ZoneParse` errors, GPT-DNSSEC type-specific DNSSEC serialization, GPT-SPLIT/GPT-SNAP/GPT-PROP file splitting/snapshot tests/proptest.
+> **Remaining audit items deferred to later phases**: F-002 full nonce/replay auth (server-generated nonce counter), F-005 doc alignment (`_data.type` naming).
 
 #### FR-010: nsupdate Sender
 
@@ -989,8 +989,8 @@ opt-level = "z"
 | Phase | Version | Focus | Status |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction | **COMPLETE** — 441 tests. 0 `missing_docs` errors. Blockers before crates.io publish: license (OQ-005, deferred), e2e integration tests green in CI (OQ-007) |
-| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY. Also: nsupdate sender (delivered in Phase 1), Phase 2 audit items (F-002, F-005, F-012, GPT-*) | **NEXT** |
-| 3 | v0.3.0 | JavaScript bindings: napi-rs v3 (native + WASM from single layer), TypeScript types, Bun support | NOT STARTED — bindings crate is a placeholder |
+| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY, XoT enforcement. Also: nsupdate sender (delivered in Phase 1), stats kebab-case fix | **COMPLETE** — 535 tests (319 core + 214 net + 1 trybuild + 1 doc). 21 integration tests passing against live BIND9 9.20 (Podman) |
+| 3 | v0.3.0 | JavaScript bindings: napi-rs v3 (native + WASM from single layer), TypeScript types, Bun support | **NEXT** — bindings crate is a placeholder |
 | 4 | v0.4.0 | npm publish: full SDK surface in JS ecosystem, pre-built native binaries, WASM fallback | NOT STARTED |
 | 5 | v0.5.0 | CLI tool, zone diff, connection pooling | NOT STARTED |
 | 6 | v0.6.0 | named.conf parser (FR-060), fuzzing (FR-061), RFC compliance integration suite (FR-062) | NOT STARTED |
