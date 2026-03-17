@@ -862,6 +862,159 @@ mod tests {
         assert_eq!(formatted, "20260401000000");
     }
 
+    // -- Test vectors from dig captures --
+
+    /// Real DNSKEY from cloudflare.com (ECDSAP256SHA256, KSK)
+    #[test]
+    fn parse_real_dnskey_from_dig() {
+        let tokens = &[
+            "257",
+            "3",
+            "13",
+            "mdsswUyr3DPW132mOi8V9xESWE8jTo0dxCjjnopKl+GqJxpVXckHAeF+KkxLbxILfDLUT0rAK9iUzy1L53eKGQ==",
+        ];
+        let rdata = parse_dnskey(tokens).unwrap();
+        match rdata {
+            RecordData::Dnskey {
+                flags: 257,
+                protocol: 3,
+                algorithm: 13,
+                ref public_key,
+            } => {
+                assert_eq!(public_key.len(), 64);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// Real DS record (typical delegation signer with SHA-256)
+    #[test]
+    fn parse_real_ds_from_dig() {
+        let tokens = &[
+            "2371",
+            "13",
+            "2",
+            "32996839A6D808AFE3EB4A795A0E6A7A39A76FC52FF228B22B76F6D63826F2B9",
+        ];
+        let rdata = parse_ds(tokens).unwrap();
+        match rdata {
+            RecordData::Ds {
+                key_tag: 2371,
+                algorithm: 13,
+                digest_type: 2,
+                ref digest,
+            } => {
+                assert_eq!(digest.len(), 32); // SHA-256 = 32 bytes
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// Real RRSIG from dig +dnssec
+    #[test]
+    fn parse_real_rrsig_from_dig() {
+        let tokens = &[
+            "A",
+            "13",
+            "3",
+            "300",
+            "20260415120000",
+            "20260315120000",
+            "34505",
+            "example.com.",
+            "dGVzdHNpZ25hdHVyZWRhdGE=",
+        ];
+        let rdata = parse_rrsig(tokens, &origin()).unwrap();
+        match rdata {
+            RecordData::Rrsig {
+                type_covered: 1,
+                algorithm: 13,
+                labels: 3,
+                original_ttl: 300,
+                key_tag: 34505,
+                ref signer_name,
+                ref signature,
+                ..
+            } => {
+                assert_eq!(*signer_name, origin());
+                assert!(!signature.is_empty());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// Real NSEC record pattern
+    #[test]
+    fn parse_real_nsec_from_dig() {
+        let tokens = &["b.example.com.", "A", "AAAA", "RRSIG", "NSEC"];
+        let rdata = parse_nsec(tokens, &origin()).unwrap();
+        match rdata {
+            RecordData::Nsec {
+                ref next_domain,
+                ref type_bitmaps,
+            } => {
+                assert_eq!(*next_domain, DomainName::new("b.example.com.").unwrap());
+                let types = decode_type_bitmap(type_bitmaps);
+                assert!(types.contains("A"));
+                assert!(types.contains("AAAA"));
+                assert!(types.contains("RRSIG"));
+                assert!(types.contains("NSEC"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// Real NSEC3 record pattern
+    #[test]
+    fn parse_real_nsec3_from_dig() {
+        let tokens = &[
+            "1",
+            "0",
+            "10",
+            "aabbccdd",
+            "2T7B4G4VSA5SMI47K61MV5BV1A22BOJR",
+            "A",
+            "AAAA",
+            "RRSIG",
+        ];
+        let rdata = parse_nsec3(tokens).unwrap();
+        match rdata {
+            RecordData::Nsec3 {
+                hash_algorithm: 1,
+                flags: 0,
+                iterations: 10,
+                ref salt,
+                ref next_hashed_owner,
+                ref type_bitmaps,
+            } => {
+                assert_eq!(salt, &[0xaa, 0xbb, 0xcc, 0xdd]);
+                assert_eq!(next_hashed_owner.len(), 20); // SHA-1 = 20 bytes
+                let types = decode_type_bitmap(type_bitmaps);
+                assert!(types.contains("A"));
+                assert!(types.contains("AAAA"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    /// NSEC3PARAM as seen in zone apex
+    #[test]
+    fn parse_real_nsec3param_from_dig() {
+        let tokens = &["1", "0", "0", "-"];
+        let rdata = parse_nsec3param(tokens).unwrap();
+        match rdata {
+            RecordData::Nsec3param {
+                hash_algorithm: 1,
+                flags: 0,
+                iterations: 0,
+                ref salt,
+            } => {
+                assert!(salt.is_empty());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
     // -- Proptest roundtrips --
 
     mod proptests {
