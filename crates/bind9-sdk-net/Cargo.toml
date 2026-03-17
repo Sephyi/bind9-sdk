@@ -26,6 +26,7 @@ rustls = { workspace = true }
 webpki-roots = { workspace = true }
 tokio-rustls = { workspace = true }
 base64 = { workspace = true }
+getrandom = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 trybuild = "1"

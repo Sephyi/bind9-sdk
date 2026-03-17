@@ -118,7 +118,7 @@ impl RndcConnection<Unauthenticated> {
     /// Connect to a BIND9 rndc control channel.
     ///
     /// Establishes a TCP connection to the given address (typically port 953).
-    /// The connection is unauthenticated until [`authenticate()`] is called.
+    /// The connection is unauthenticated until [`authenticate()`](RndcConnection::authenticate) is called.
     pub async fn connect(addr: SocketAddr) -> Result<Self, NetError> {
         tracing::debug!("connecting to rndc at {addr}");
         let stream = TcpStream::connect(addr).await.map_err(|e| {
@@ -150,9 +150,16 @@ impl RndcConnection<Unauthenticated> {
     ) -> Result<RndcConnection<Authenticated<'_>>, NetError> {
         tracing::debug!("authenticating rndc connection");
 
-        // Starting serial derived from current time for uniqueness across connections
+        // Starting serial randomized for unpredictability (F-002 hardening).
+        // Previously derived from system time, which was predictable.
         let now = current_unix_time()?;
-        let serial = (now & 0xFFFF_FFFF) as u32;
+        let nonce_bytes = generate_nonce();
+        let serial = u32::from_be_bytes([
+            nonce_bytes[0],
+            nonce_bytes[1],
+            nonce_bytes[2],
+            nonce_bytes[3],
+        ]);
 
         // Build _ctrl table: serial, timestamp, expiry
         let ctrl = build_ctrl_table(serial, now, None);
@@ -413,6 +420,16 @@ fn isccc_algorithm_byte(algo: TsigAlgorithm) -> u8 {
         TsigAlgorithm::HmacSha512 => 0xA5,
         _ => unreachable!("unsupported TSIG algorithm for rndc"),
     }
+}
+
+/// Generate a cryptographically random nonce of the specified length.
+///
+/// Used to randomize the initial rndc serial number, preventing
+/// predictability based on the system clock (F-002 hardening).
+fn generate_nonce() -> Vec<u8> {
+    let mut buf = vec![0u8; 16];
+    getrandom::fill(&mut buf).expect("getrandom should not fail on supported platforms");
+    buf
 }
 
 /// Get the current Unix timestamp in seconds.
@@ -863,6 +880,14 @@ mod tests {
                 byte
             );
         }
+    }
+
+    #[test]
+    fn rndc_nonce_is_random() {
+        let nonce1 = generate_nonce();
+        let nonce2 = generate_nonce();
+        assert_ne!(nonce1, nonce2, "nonces should not be identical");
+        assert_eq!(nonce1.len(), 16, "nonce should be 16 bytes");
     }
 
     #[test]
