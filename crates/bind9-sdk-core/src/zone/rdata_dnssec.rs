@@ -210,6 +210,7 @@ pub(crate) fn parse_rrsig(tokens: &[&str], origin: &DomainName) -> Result<Record
 }
 
 /// Serialize RRSIG rdata to text.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn serialize_rrsig(
     type_covered: u16,
     algorithm: u8,
