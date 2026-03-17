@@ -24,3 +24,16 @@ mod tsig;
 mod update;
 #[cfg(feature = "nodejs")]
 mod zone;
+
+// Net-dependent modules: require `nodejs` feature (which pulls in bind9-sdk-net)
+// and are excluded from WASM builds.
+#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]
+mod nsupdate;
+#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]
+mod pool;
+#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]
+mod rndc;
+#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]
+mod stats;
+#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]
+mod transfer;

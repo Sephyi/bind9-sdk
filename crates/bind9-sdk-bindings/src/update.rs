@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+use std::sync::Arc;
+
 use bind9_sdk_core::record::{RecordClass, ResourceRecord, Ttl};
-use bind9_sdk_core::update::{Unsigned, UpdateBuilder};
+use bind9_sdk_core::update::{Unsigned, UpdateBuilder, UpdateMessage};
 use bind9_sdk_core::zone::ZoneFile;
 use bind9_sdk_core::DomainName;
 use napi::bindgen_prelude::Buffer;
@@ -92,6 +94,55 @@ impl JsUpdateBuilder {
         let signed = builder.sign_now(key.inner_ref());
         let message = signed.build();
         Ok(Buffer::from(message.as_bytes().to_vec()))
+    }
+
+    /// Build an unsigned update and return an opaque message object.
+    ///
+    /// Use with `JsNsUpdateSender.sendMessage()` for proper response verification.
+    #[napi]
+    pub fn build_message_unsigned(&mut self) -> napi::Result<JsUpdateMessage> {
+        let builder = self.take_builder()?;
+        let message = builder.build_unsigned();
+        Ok(JsUpdateMessage {
+            inner: Arc::new(message),
+        })
+    }
+
+    /// Sign the update and return an opaque message object.
+    ///
+    /// Use with `JsNsUpdateSender.sendMessage()` for proper TSIG response verification.
+    #[napi]
+    pub fn sign_message(&mut self, key: &JsTsigKey) -> napi::Result<JsUpdateMessage> {
+        let builder = self.take_builder()?;
+        let signed = builder.sign_now(key.inner_ref());
+        let message = signed.build();
+        Ok(JsUpdateMessage {
+            inner: Arc::new(message),
+        })
+    }
+}
+
+/// An opaque RFC 2136 update message, ready to be sent.
+///
+/// Created via `JsUpdateBuilder.buildMessageUnsigned()` or
+/// `JsUpdateBuilder.signMessage()`. Pass to `JsNsUpdateSender.sendMessage()`.
+#[napi]
+pub struct JsUpdateMessage {
+    pub(crate) inner: Arc<UpdateMessage>,
+}
+
+#[napi]
+impl JsUpdateMessage {
+    /// The raw DNS wire-format bytes.
+    #[napi]
+    pub fn as_bytes(&self) -> Buffer {
+        Buffer::from(self.inner.as_bytes().to_vec())
+    }
+
+    /// Whether this message is TSIG-signed.
+    #[napi]
+    pub fn is_signed(&self) -> bool {
+        self.inner.is_signed()
     }
 }
 
