@@ -29,11 +29,13 @@ pub enum CoreError {
     #[error("invalid record data: {0}")]
     InvalidRecord(String),
 
-    /// Zone file parsing failed at a specific line.
-    #[error("zone parse error at line {line}: {reason}")]
+    /// Zone file parsing failed at a specific line (and optionally column).
+    #[error("zone parse error at line {line}{}: {reason}", column.map(|c| alloc::format!(", column {c}")).unwrap_or_default())]
     ZoneParse {
         /// 1-based line number where the parse error occurred.
         line: u32,
+        /// 1-based column number where the parse error occurred (if available).
+        column: Option<u32>,
         /// Human-readable description of the parse failure.
         reason: String,
     },
@@ -69,11 +71,25 @@ mod tests {
     fn zone_parse_error_includes_line_number() {
         let err = CoreError::ZoneParse {
             line: 42,
+            column: None,
             reason: "unexpected token".into(),
         };
         assert_eq!(
             err.to_string(),
             "zone parse error at line 42: unexpected token"
+        );
+    }
+
+    #[test]
+    fn zone_parse_error_includes_column_when_present() {
+        let err = CoreError::ZoneParse {
+            line: 7,
+            column: Some(15),
+            reason: "invalid rdata".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "zone parse error at line 7, column 15: invalid rdata"
         );
     }
 

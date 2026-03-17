@@ -123,6 +123,7 @@ pub(crate) fn parse_zone(
             .map(|rr| rr.name.clone())
             .ok_or_else(|| CoreError::ZoneParse {
                 line: 1,
+                column: None,
                 reason: "no $ORIGIN directive and no SOA record found".into(),
             })?
     };
@@ -168,12 +169,14 @@ fn process_line(
                 if tokens.len() < 2 {
                     return Err(CoreError::ZoneParse {
                         line,
+                        column: None,
                         reason: "$ORIGIN requires a domain name argument".into(),
                     });
                 }
                 let name_str = token_as_str(&tokens[1]);
                 let o = DomainName::new(&name_str).map_err(|e| CoreError::ZoneParse {
                     line,
+                    column: None,
                     reason: alloc::format!("invalid $ORIGIN `{name_str}`: {e}"),
                 })?;
                 state.origin = Some(o);
@@ -183,16 +186,19 @@ fn process_line(
                 if tokens.len() < 2 {
                     return Err(CoreError::ZoneParse {
                         line,
+                        column: None,
                         reason: "$TTL requires a value".into(),
                     });
                 }
                 let ttl_str = token_as_str(&tokens[1]);
                 let val: u32 = ttl_str.parse().map_err(|e| CoreError::ZoneParse {
                     line,
+                    column: None,
                     reason: alloc::format!("invalid $TTL `{ttl_str}`: {e}"),
                 })?;
                 state.default_ttl = Some(Ttl::new(val).map_err(|e| CoreError::ZoneParse {
                     line,
+                    column: None,
                     reason: alloc::format!("invalid $TTL value: {e}"),
                 })?);
                 return Ok(());
@@ -202,6 +208,7 @@ fn process_line(
                     if tokens.len() < 2 {
                         return Err(CoreError::ZoneParse {
                             line,
+                            column: None,
                             reason: "$INCLUDE requires a file path".into(),
                         });
                     }
@@ -213,12 +220,14 @@ fn process_line(
                 }
                 return Err(CoreError::ZoneParse {
                     line,
+                    column: None,
                     reason: "$INCLUDE directive not supported without a resolver".into(),
                 });
             }
             other => {
                 return Err(CoreError::ZoneParse {
                     line,
+                    column: None,
                     reason: alloc::format!("unknown directive `{other}`"),
                 });
             }
@@ -248,6 +257,7 @@ fn process_line(
             .clone()
             .ok_or_else(|| CoreError::ZoneParse {
                 line,
+                column: None,
                 reason: "inherited owner name but no previous owner".into(),
             })?
     } else if is_class(word_refs[0]).is_some()
@@ -259,11 +269,13 @@ fn process_line(
             .clone()
             .ok_or_else(|| CoreError::ZoneParse {
                 line,
+                column: None,
                 reason: "inherited owner name but no previous owner".into(),
             })?
     } else if word_refs[0].ends_with('.') {
         let o = DomainName::new(word_refs[0]).map_err(|e| CoreError::ZoneParse {
             line,
+            column: None,
             reason: alloc::format!("invalid owner name `{}`: {e}", word_refs[0]),
         })?;
         pos += 1;
@@ -271,6 +283,7 @@ fn process_line(
     } else if word_refs[0] == "@" {
         let cur_origin = state.origin.as_ref().ok_or_else(|| CoreError::ZoneParse {
             line,
+            column: None,
             reason: "@ used but no $ORIGIN set".into(),
         })?;
         pos += 1;
@@ -278,6 +291,7 @@ fn process_line(
     } else {
         let cur_origin = state.origin.as_ref().ok_or_else(|| CoreError::ZoneParse {
             line,
+            column: None,
             reason: "relative name used before $ORIGIN; set $ORIGIN or use absolute owner names"
                 .into(),
         })?;
@@ -306,10 +320,12 @@ fn process_line(
         if record_ttl.is_none() && is_ttl(word_refs[pos]) {
             let val: u32 = word_refs[pos].parse().map_err(|e| CoreError::ZoneParse {
                 line,
+                column: None,
                 reason: alloc::format!("invalid TTL `{}`: {e}", word_refs[pos]),
             })?;
             record_ttl = Some(Ttl::new(val).map_err(|e| CoreError::ZoneParse {
                 line,
+                column: None,
                 reason: alloc::format!("invalid TTL value: {e}"),
             })?);
             pos += 1;
@@ -322,6 +338,7 @@ fn process_line(
     if pos >= word_refs.len() {
         return Err(CoreError::ZoneParse {
             line,
+            column: None,
             reason: "expected record type".into(),
         });
     }
@@ -344,7 +361,11 @@ fn process_line(
     let rdata_strs: Vec<&str> = word_refs[pos..].to_vec();
     let rdata =
         rdata_text::parse_rdata(&rtype, &rdata_strs, &rdata_origin).map_err(|e| match e {
-            CoreError::ZoneParse { reason, .. } => CoreError::ZoneParse { line, reason },
+            CoreError::ZoneParse { reason, .. } => CoreError::ZoneParse {
+                line,
+                column: None,
+                reason,
+            },
             other => other,
         })?;
 
@@ -352,6 +373,7 @@ fn process_line(
         .or(state.default_ttl)
         .ok_or_else(|| CoreError::ZoneParse {
             line,
+            column: None,
             reason: "no TTL specified and no $TTL default set".into(),
         })?;
 
