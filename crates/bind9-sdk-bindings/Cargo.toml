@@ -21,7 +21,7 @@ default = []
 nodejs = ["dep:napi", "dep:napi-derive", "dep:bind9-sdk-net"]
 
 [dependencies]
-bind9-sdk-core = { workspace = true }
+bind9-sdk-core = { workspace = true, features = ["std"] }
 bind9-sdk-net = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

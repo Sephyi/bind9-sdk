@@ -16,3 +16,11 @@
 mod domain;
 #[cfg(feature = "nodejs")]
 mod error;
+#[cfg(feature = "nodejs")]
+mod record;
+#[cfg(feature = "nodejs")]
+mod tsig;
+#[cfg(feature = "nodejs")]
+mod update;
+#[cfg(feature = "nodejs")]
+mod zone;
