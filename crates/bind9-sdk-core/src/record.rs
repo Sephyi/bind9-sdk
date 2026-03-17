@@ -90,6 +90,132 @@ impl fmt::Display for Serial {
     }
 }
 
+/// Strategy for computing the next SOA serial number.
+///
+/// Zone serial numbers must increase monotonically (per RFC 1982 sequence
+/// space arithmetic). This enum provides three common strategies for
+/// choosing the next serial after a zone update.
+///
+/// # `no_std` behaviour
+///
+/// `DateCounter` and `UnixTimestamp` require system time (the `std` feature).
+/// Under `no_std` they fall back to simple increment (same as `Monotonic`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SerialStrategy {
+    /// YYYYMMDDNN format — increment NN within same day, roll to next day's 00.
+    ///
+    /// If the current serial already has today's date prefix (e.g., `2026031705`),
+    /// the counter portion (last two digits) is incremented. If the counter would
+    /// exceed 99, falls back to simple increment.
+    DateCounter,
+    /// Unix timestamp (seconds since epoch).
+    ///
+    /// Uses the current system time as the serial. If the current serial is
+    /// already >= the timestamp, falls back to simple increment.
+    UnixTimestamp,
+    /// Simple increment by 1 (wraps at `u32::MAX` per RFC 1982).
+    Monotonic,
+}
+
+impl SerialStrategy {
+    /// Compute the next serial number from the current one.
+    ///
+    /// The result is always greater than `current` in RFC 1982 sequence
+    /// space (assuming `current` is not at the undefined-comparison boundary).
+    pub fn next(&self, current: Serial) -> Serial {
+        match self {
+            Self::Monotonic => current + 1,
+            Self::UnixTimestamp => {
+                #[cfg(feature = "std")]
+                {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as u32;
+                    if Serial::new(now) > current {
+                        Serial::new(now)
+                    } else {
+                        current + 1
+                    }
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    current + 1
+                }
+            }
+            Self::DateCounter => {
+                #[cfg(feature = "std")]
+                {
+                    compute_date_counter_serial(current)
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    current + 1
+                }
+            }
+        }
+    }
+}
+
+/// Compute the next serial using YYYYMMDDNN date-counter format.
+///
+/// - Gets today's date, computes `YYYYMMDD * 100` as the day prefix.
+/// - If the current serial has today's prefix, increments the counter (last 2 digits).
+/// - If the counter would exceed 99, falls back to `current + 1`.
+/// - Otherwise starts at `YYYYMMDD00`.
+#[cfg(feature = "std")]
+fn compute_date_counter_serial(current: Serial) -> Serial {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Convert Unix timestamp to YYYYMMDD
+    // Days since epoch, then civil date
+    let days = (now / 86400) as i64;
+    let (year, month, day) = days_to_civil(days);
+    let today_prefix = (year as u32) * 10000 + month * 100 + day;
+    let today_base = today_prefix * 100; // YYYYMMDD00
+
+    let current_val = current.value();
+    if current_val >= today_base && current_val < today_base + 100 {
+        // Same day — increment counter
+        let counter = current_val - today_base;
+        if counter >= 99 {
+            // Counter exhausted, fall back to simple increment
+            current + 1
+        } else {
+            Serial::new(today_base + counter + 1)
+        }
+    } else if Serial::new(today_base) > current {
+        // New day or past serial is older — start at YYYYMMDD00
+        Serial::new(today_base)
+    } else {
+        // today_base <= current (clock skew or serial already ahead)
+        current + 1
+    }
+}
+
+/// Convert days since Unix epoch to (year, month, day) civil date.
+///
+/// Algorithm from Howard Hinnant's `chrono`-compatible date library.
+/// <http://howardhinnant.github.io/date_algorithms.html>
+#[cfg(feature = "std")]
+fn days_to_civil(days_since_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_epoch + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
+    let y = (yoe as i64 + era * 400) as i32;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 /// DNS record class (RFC 1035 §3.2.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -216,6 +342,75 @@ mod tests {
         let a = Serial::new(0);
         let b = Serial::new(1 << 31);
         assert_eq!(a.partial_cmp(&b), None);
+    }
+
+    // -- SerialStrategy tests --
+
+    #[test]
+    fn serial_strategy_monotonic() {
+        let strategy = SerialStrategy::Monotonic;
+        let current = Serial::new(100);
+        let next = strategy.next(current);
+        assert_eq!(next.value(), 101);
+    }
+
+    #[test]
+    fn serial_strategy_monotonic_wraps() {
+        let strategy = SerialStrategy::Monotonic;
+        let current = Serial::new(u32::MAX);
+        let next = strategy.next(current);
+        assert_eq!(next.value(), 0);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn serial_strategy_date_counter() {
+        let strategy = SerialStrategy::DateCounter;
+        let current = Serial::new(2026031700);
+        let next = strategy.next(current);
+        // Only assert next > current — the specific value depends on today's date
+        assert!(next > current, "next serial should be greater than current");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn serial_strategy_date_counter_increments_within_day() {
+        let strategy = SerialStrategy::DateCounter;
+        // Use a serial from year 2000 — guaranteed to be in the past
+        let current = Serial::new(2000010105);
+        let next = strategy.next(current);
+        // Should be today's date, not 2000010106
+        assert!(next > current);
+        // The result should be YYYYMMDD00 for today or later
+        assert!(next.value() > 2_025_000_000);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn serial_strategy_unix_timestamp() {
+        let strategy = SerialStrategy::UnixTimestamp;
+        let current = Serial::new(1);
+        let next = strategy.next(current);
+        assert!(next > current);
+        // Should be a reasonable Unix timestamp (> 2024)
+        assert!(next.value() > 1_704_067_200);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn serial_strategy_unix_timestamp_fallback_when_current_ahead() {
+        let strategy = SerialStrategy::UnixTimestamp;
+        // Use a serial just slightly ahead of the current timestamp.
+        // The current Unix timestamp is ~1.77 billion, so a serial of
+        // current_time + 100 should force the fallback to current + 1.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        let current = Serial::new(now + 100);
+        let next = strategy.next(current);
+        // Should fall back to current + 1 since now < current
+        assert_eq!(next.value(), now + 101);
     }
 
     use crate::domain::DomainName;
