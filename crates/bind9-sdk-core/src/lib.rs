@@ -58,4 +58,4 @@ pub use tsig::{TsigAlgorithm, TsigKey, TsigRecord};
 pub use update::{
     Prerequisite, Signed, Unsigned, UpdateBuilder, UpdateEntry, UpdateMessage, UpdateResult,
 };
-pub use zone::{IncludeResolver, Zone, ZoneFile, ZoneSummary};
+pub use zone::{DiffEntry, IncludeResolver, Zone, ZoneDiff, ZoneFile, ZoneSummary};
