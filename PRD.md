@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # bind9-sdk — Product Requirements Document
 
 
-**Version**: v1.1
+**Version**: v1.2
 **Date**: 2026-03-17
-**Status**: In Progress — Phase 2 complete (IXFR/AXFR client, SOA serial strategies, DNSSEC types, CDS/CDNSKEY, KASP, XoT enforcement); preparing Phase 3
+**Status**: In Progress — Phases 1–5 complete; preparing Phase 6 (hardening)
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -19,6 +19,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| 1.2 | 2026-03-17 | Phases 2–5 all COMPLETE. Phase 3: napi-rs v2→v3 migration, core surface bindings (JsDomainName, JsZoneFile, JsResourceRecord, JsTsigKey, JsUpdateBuilder). Phase 4: full SDK surface bindings (JsRndcClient 18 async commands, JsNsUpdateSender, JsStatsClient, JsTransferClient, JsRndcPool), Node.js smoke test. Phase 5: zone diff engine (DiffEntry/ZoneDiff/Zone::diff/apply_diff/to_updates), RndcPool semaphore concurrency, CLI tool (`bind9-sdk-cli` crate, binary `bind9`, clap subcommands, TOML config, JSON output, shell completions), release binary 7.2MB. 574 tests passing (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc). |
 | 1.1 | 2026-03-17 | Phase 1 completion plan merged (`feat/phase1-completion` → `development`, commit `0d419b9`): `tsig.rs`/`update.rs`/`zone/parser.rs` split into submodules, 8 proptest invariants, 3 insta snapshot tests for zone serializer, 0 `missing_docs` errors on `bind9-sdk-core`, `keywords`/`categories` in Cargo.toml. 441 tests passing (265 core + 174 net lib + 1 trybuild + 1 doc). |
 | 1.0 | 2026-03-16 | Audit/remediation branch merged (`audit/remediation` → `development`): rndc response HMAC verification (`verify_authenticated_response`), replay-relevant `_ctrl` field validation (`_ser`, `_tim`, `_exp`, `_rpl`, `_nonce`), nested `_data` map rendering, typed `NetError::PrerequisiteFailed` and `NetError::TsigRejected`, `classify_update_result()` at `Bind9Client` boundary, TLS dead-config warning in `Bind9Client::new()`, dead nonce guard removal. 9 new net tests. 426 tests passing (254 core + 170 net lib + 1 trybuild + 1 doc). Findings closed: F-001/GPT-RNDC-AUTH, F-030, F-002 (partial), GPT-ERR-TYPED, F-012 (partial mitigated), EXT-001, EXT-002, EXT-003, EXT-004. |
 | 0.9 | 2026-03-16 | rndc wire protocol rewrite (`dc36ded`): correct isccc binary encoding and HMAC-SHA256 auth, 16 new net tests. 417 tests passing (254 core + 161 net lib + 1 trybuild + 1 doc). Two external audit rounds completed: dialectic verification (GLM5 + Codex gpt-5.4 + Gemini 2.5 Pro, 37 findings across 3 reviewers) and Gemini 3 Flash review (6 findings, 2 false positives). |
@@ -117,17 +118,27 @@ bind9-sdk/
 │   │       ├── transfer/       # IXFR + AXFR zone transfer client
 │   │       ├── update.rs       # nsupdate sender (UDP + TCP fallback)
 │   │       └── stats.rs        # HTTP stats-channel client (reqwest)
-│   └── bind9-sdk-bindings/      # napi-rs v3 (native + WASM from single layer)
+│   ├── bind9-sdk-bindings/      # napi-rs v3 (native + WASM from single layer)
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── domain.rs       # JsDomainName
+│   │       ├── zone.rs         # JsZoneFile
+│   │       ├── record.rs       # JsResourceRecord (24 RecordData variants as JSON)
+│   │       ├── tsig.rs         # JsTsigKey (Arc-wrapped, no secret exposure)
+│   │       ├── update.rs       # JsUpdateBuilder (Option take-and-replace for typestate)
+│   │       ├── rndc.rs         # JsRndcClient (18 async commands)
+│   │       ├── nsupdate.rs     # JsNsUpdateSender + JsUpdateMessage (TSIG MAC)
+│   │       ├── stats.rs        # JsStatsClient (serverStats/zoneStats)
+│   │       ├── transfer.rs     # JsTransferClient (AXFR)
+│   │       └── pool.rs         # JsRndcPool (semaphore pool)
+│   └── bind9-sdk-cli/          # CLI tool (Phase 5) — binary name "bind9"
 │       ├── Cargo.toml
 │       └── src/
-│           ├── lib.rs
-│           └── node.rs         # #[napi] exports — core + net (WASM via napi-rs v3 fallback)
+│           └── main.rs         # clap: zone/record/dnssec/stats/completions subcommands
 ├── bind9-sdk/                   # re-export crate (the public API on crates.io)
 │   ├── Cargo.toml
 │   └── src/lib.rs              # re-exports from core + net behind feature flags
-├── bind9-sdk-cli/               # optional binary crate (Phase 5)
-│   ├── Cargo.toml
-│   └── src/main.rs
 ├── tests/
 │   ├── integration/            # tests against real BIND9 9.20 (testcontainers)
 │   ├── fixtures/               # zone files, rndc captures, stats-channel samples
@@ -482,7 +493,7 @@ Generate CDS and CDNSKEY records from an existing DNSKEY record, for automated D
 
 ### 4.3 Phase 3 — v0.3.0: JavaScript Bindings (napi-rs v3)
 
-> **Current state (2026-03-16)**: `crates/bind9-sdk-bindings/src/lib.rs` is a placeholder file with zero `#[napi]` exports. The crate is pinned at napi-rs v2 (not v3). There is no `package.json`, no TypeScript type definition generation, and no pre-built binary distribution pipeline. All Phase 3 work remains ahead. See OQ-008.
+> **Phase 3 complete (2026-03-17)**: napi-rs v2→v3 migration complete (napi 3, napi-derive 3, napi-build 2). Core surface bindings delivered: `JsDomainName`, `JsZoneFile`, `JsResourceRecord` (24 `RecordData` variants as JSON), `JsTsigKey` (Arc-wrapped, no secret exposure), `JsUpdateBuilder` (Option take-and-replace pattern for typestate). `build.rs` with `napi_build::setup()`. `package.json` with `private:true`, `aarch64-apple-darwin` target.
 
 #### FR-030: WASM Build (napi-rs v3)
 
@@ -515,7 +526,7 @@ napi-rs v3 generates `.d.ts` for all exported functions and types (both native a
 
 ### 4.4 Phase 4 — v0.4.0: npm Publish + Full SDK Surface
 
-> **Current state (2026-03-16)**: Phase 4 is fully unstarted. The bindings crate is a placeholder. napi-rs v3 migration (required for WASM fallback) has not begun. No npm package, no TypeScript types, no binary distribution pipeline. Phase 4 depends on Phase 3 completion.
+> **Phase 4 complete (2026-03-17)**: Full SDK surface bindings delivered: `JsRndcClient` (18 async commands), `JsNsUpdateSender` (with `JsUpdateMessage` for TSIG MAC preservation), `JsStatsClient` (`serverStats`/`zoneStats`), `JsTransferClient` (AXFR), `JsRndcPool` (semaphore pool). All net modules gated: `#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]`. Node.js smoke test (`tests/smoke.mjs`).
 
 #### FR-040: napi-rs v3 Node.js + Bun Native Addon
 
@@ -952,7 +963,8 @@ Three `cargo-fuzz` targets:
 `cargo add bind9-sdk` — published on crates.io. Feature flags:
 - `net` (default) — enables `bind9-sdk-net` (tokio, rndc, IXFR, nsupdate sender, stats HTTP)
 - `core-only` — `no_std` + `alloc` only; for embedding in WASM or constrained environments
-- `cli` — enables `bind9-sdk-cli` binary
+
+CLI binary: `cargo install bind9-sdk-cli` — standalone binary crate, binary name `bind9`. Uses `clap` with subcommands, TOML config, JSON output, shell completions (bash/zsh/fish via `clap_complete`).
 
 ### DR-002: npm (P1 — Node.js + Bun via napi-rs v3 Native)
 
@@ -989,11 +1001,11 @@ opt-level = "z"
 | Phase | Version | Focus | Status |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction | **COMPLETE** — 441 tests. 0 `missing_docs` errors. Blockers before crates.io publish: license (OQ-005, deferred), e2e integration tests green in CI (OQ-007) |
-| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY, XoT enforcement. Also: nsupdate sender (delivered in Phase 1), stats kebab-case fix | **COMPLETE** — 535 tests (319 core + 214 net + 1 trybuild + 1 doc). 21 integration tests passing against live BIND9 9.20 (Podman) |
-| 3 | v0.3.0 | JavaScript bindings: napi-rs v3 (native + WASM from single layer), TypeScript types, Bun support | **NEXT** — bindings crate is a placeholder |
-| 4 | v0.4.0 | npm publish: full SDK surface in JS ecosystem, pre-built native binaries, WASM fallback | NOT STARTED |
-| 5 | v0.5.0 | CLI tool, zone diff, connection pooling | NOT STARTED |
-| 6 | v0.6.0 | named.conf parser (FR-060), fuzzing (FR-061), RFC compliance integration suite (FR-062) | NOT STARTED |
+| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY, XoT enforcement. Also: nsupdate sender (delivered in Phase 1), stats kebab-case fix | **COMPLETE** — 538 tests. 21 integration tests passing against live BIND9 9.20 (Podman). Security hardening: random query IDs (RFC 5452), forward compression pointer rejection, transfer timeouts (60s/msg), record count limits (10M max), `#[non_exhaustive]` on DnsHeader/DnssecStatus/DnssecKeyInfo/DsCheckResult |
+| 3 | v0.3.0 | JavaScript bindings: napi-rs v3 migration, core surface bindings (JsDomainName, JsZoneFile, JsResourceRecord, JsTsigKey, JsUpdateBuilder) | **COMPLETE** — napi-rs v2→v3 (napi 3, napi-derive 3, napi-build 2), `build.rs` with `napi_build::setup()`, `package.json` with `aarch64-apple-darwin` target |
+| 4 | v0.4.0 | Full SDK surface bindings: JsRndcClient (18 async commands), JsNsUpdateSender, JsStatsClient, JsTransferClient, JsRndcPool. Node.js smoke test | **COMPLETE** — all net modules `#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]` gated, `tests/smoke.mjs` |
+| 5 | v0.5.0 | CLI tool (`bind9-sdk-cli`, binary `bind9`), zone diff engine, RndcPool connection pooling | **COMPLETE** — 574 tests (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc). Zone diff: `DiffEntry`/`ZoneDiff`/`Zone::diff()`/`apply_diff()`/`to_updates()`. CLI: clap subcommands (zone/record/dnssec/stats/completions), TOML config (XDG/macOS), JSON output, shell completions. Release binary 7.2MB (under PR-006 10MB target) |
+| 6 | v0.6.0 | named.conf parser (FR-060), fuzzing (FR-061), RFC compliance integration suite (FR-062) | **NEXT** |
 | 7 | v1.0.0 | Multi-view support, DNSSEC rollover helpers, Prometheus integration, SemVer stability | NOT STARTED |
 
 ### 12.1 Implementation Progress
@@ -1051,7 +1063,7 @@ Modules delivered in `crates/bind9-sdk-net/src/`:
 | `tls.rs` | `TlsConfig` wrapping `rustls::ClientConfig` with explicit ring CryptoProvider |
 | `config.rs` | `ClientConfig` (host, port, TLS, TSIG) + `Bind9Client` skeleton implementing all 4 management traits |
 
-Testing: 254 core + 170 net lib + 1 trybuild + 1 doc = **426 tests passing** across workspace (10 ignored integration stubs). Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip, exhaustive TSIG algorithm coverage, update wire roundtrip.
+Testing (at Wave 1 completion): 254 core + 170 net lib + 1 trybuild + 1 doc = **426 tests passing** across workspace (10 ignored integration stubs). Property tests include proptest fuzz for zone parser, TSIG sign/verify roundtrip, exhaustive TSIG algorithm coverage, update wire roundtrip. **Current workspace total (Phase 5 completion): 574 tests** (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc).
 
 Post-merge fixes (commit `1dde207`): Two CRITICAL findings from dialectic verification (Codex gpt-5.4 + GLM5) fixed immediately — (1) TSIG canonicalization: added `DomainName::write_wire_canonical()` for case-insensitive wire encoding per RFC 8945, (2) explicit timestamp parameter in `TsigRecord::sign()` instead of implicit `SystemTime::now()` (enables deterministic testing and `no_std` compatibility).
 
@@ -1082,6 +1094,58 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 
 **Remaining from Phase 1 plan**: BIND9 Podman container + E2E CI pipeline (requires infrastructure; tracked as separate work item). OQ-005 (license) and OQ-007 (rndc `_tim`/`_exp` tolerance) are blockers before crates.io publish.
 
+#### Phase 2: Zone Transfers + DNSSEC — COMPLETE (2026-03-17)
+
+**Tests**: 538 passing | **Status**: clippy clean, WASM clean
+
+| Deliverable | What was delivered |
+| --- | --- |
+| DNSSEC types | `DnssecStatus`, `DnssecKeyInfo`, `KeyRole`, `DsCheckResult` with parsing |
+| IXFR/AXFR client | `TransferClient` (generic over stream), `transfer_record_stream` with `async_stream` |
+| Security hardening | Random query IDs (RFC 5452), forward compression pointer rejection, transfer timeouts (60s/msg), record count limits (10M max) |
+| Non-exhaustive | `#[non_exhaustive]` on `DnsHeader`, `DnssecStatus`, `DnssecKeyInfo`, `DsCheckResult` |
+
+#### Phase 3: napi-rs v3 Migration + Core Bindings — COMPLETE (2026-03-17)
+
+**Tests**: 538 passing (bindings are compile-checked, not unit-tested separately) | **Status**: clippy clean
+
+| Deliverable | What was delivered |
+| --- | --- |
+| napi-rs v3 migration | napi 3, napi-derive 3, napi-build 2; `build.rs` with `napi_build::setup()` |
+| `JsDomainName` | Domain name binding with string conversion |
+| `JsZoneFile` | Zone file parse/serialize binding |
+| `JsResourceRecord` | 24 `RecordData` variants exposed as JSON |
+| `JsTsigKey` | Arc-wrapped, no secret exposure to JS |
+| `JsUpdateBuilder` | Option take-and-replace pattern for typestate emulation in JS |
+| `package.json` | `private:true`, `aarch64-apple-darwin` target |
+
+#### Phase 4: Full SDK Surface Bindings — COMPLETE (2026-03-17)
+
+**Tests**: 538 passing + Node.js smoke test (`tests/smoke.mjs`) | **Status**: clippy clean
+
+| Deliverable | What was delivered |
+| --- | --- |
+| `JsRndcClient` | 18 async rndc commands exposed to JS |
+| `JsNsUpdateSender` | With `JsUpdateMessage` for TSIG MAC preservation |
+| `JsStatsClient` | `serverStats()` and `zoneStats()` async methods |
+| `JsTransferClient` | AXFR zone transfer |
+| `JsRndcPool` | Semaphore-based connection pool |
+| Net module gating | All net modules: `#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]` |
+
+#### Phase 5: CLI + Zone Diff + Connection Pooling — COMPLETE (2026-03-17)
+
+**Tests**: 574 passing (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc) | **Status**: clippy clean, WASM clean
+
+| Deliverable | What was delivered |
+| --- | --- |
+| Zone diff engine | `DiffEntry` (Added/Removed/TtlChanged), `ZoneDiff`, `Zone::diff()`, `Zone::apply_diff()`, `ZoneDiff::to_updates()`, `Display` impl |
+| `RndcPool` | Semaphore-based concurrency limiter with `PoolGuard` RAII |
+| CLI tool | `bind9-sdk-cli` crate, binary name `bind9`, clap with `zone`/`record`/`dnssec`/`stats`/`completions` subcommands |
+| Config | TOML config loading from XDG (Linux) / macOS Application Support paths |
+| Output | JSON output support (`--output json`) for scripting |
+| Shell completions | bash, zsh, fish via `clap_complete` |
+| Binary size | 7.2MB release binary (under PR-006 10MB target) |
+
 ## 13. Success Metrics
 
 | Metric | Target | Measurement |
@@ -1090,6 +1154,7 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 | Zone parser roundtrip | 100% lossless | Property test `parse(serialize(zone)) == zone` |
 | rndc RFC compliance | 100% commands verified | Integration tests against real BIND9 9.20 |
 | WASM bundle size | < 500KB gzipped | CI artifact size check |
+| Test count | 574 | 337 core + 222 net + 13 CLI + 1 trybuild + 1 doc |
 | docs.rs coverage | 100% public API | `cargo doc --no-deps -D missing_docs` — ✓ 0 errors on `bind9-sdk-core` (2026-03-17) |
 | crates.io downloads | > 1K/month at v1.0.0 | crates.io stats |
 | npm weekly downloads | > 500 at v1.0.0 | npm stats |
@@ -1117,7 +1182,7 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 | OQ-005 | License: PolyForm-Noncommercial-1.0.0 is a placeholder. Open-source SDK (MIT/Apache 2.0) likely better for ecosystem adoption. Decide before first crates.io publish. This is a hard blocker for crates.io publish — `cargo publish` will succeed but license non-disclosure may deter adoption. | Sephyi | Before v0.1.0 publish | DEFERRED — no release planned; resolve before any crates.io publish |
 | OQ-006 | `bind9-sdk` npm package name: is `bind9-sdk` available on npm? Alternative: `@bind9-sdk/core`? | Sephyi | 2026-04-01 | PENDING |
 | OQ-007 | rndc `_tim`/`_exp` validation: `verify_authenticated_response` currently uses strict equality comparison for the echoed timestamp and expiry fields. Real BIND9 may introduce clock skew between client send time and server echo. A fudge-window tolerance (matching RFC 8945 §5.2.3 TSIG fudge semantics) may be needed. Must be validated against a live BIND9 9.20 instance in e2e integration tests before v0.1.0. | Sephyi | Before v0.1.0 publish | PENDING — verify in e2e integration tests |
-| OQ-008 | `bind9-sdk-bindings` napi-rs v3 migration: the bindings crate (`crates/bind9-sdk-bindings/src/lib.rs`) is currently a placeholder with zero `#[napi]` exports. napi-rs v3 migration has not started (pinned at v2). No `package.json`, no TypeScript type definitions, no pre-built binary pipeline. Phase 3 (v0.3.0) cannot begin until this is addressed. | Sephyi | Before Phase 3 start | PENDING |
+| OQ-008 | `bind9-sdk-bindings` napi-rs v3 migration: the bindings crate (`crates/bind9-sdk-bindings/src/lib.rs`) is currently a placeholder with zero `#[napi]` exports. napi-rs v3 migration has not started (pinned at v2). No `package.json`, no TypeScript type definitions, no pre-built binary pipeline. Phase 3 (v0.3.0) cannot begin until this is addressed. | Sephyi | Before Phase 3 start | RESOLVED — napi-rs v3 migration complete (Phase 3). 11 binding modules, `package.json` with `aarch64-apple-darwin` target. Full SDK surface exposed (Phase 4). Pre-built binary pipeline and npm publish remain for future work. |
 
 ## 16. Decisions Log
 
