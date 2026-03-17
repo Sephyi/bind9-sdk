@@ -79,10 +79,10 @@ impl DnssecStatus {
 
             if let Some(rest) = trimmed.strip_prefix("dnssec-policy:") {
                 policy = rest.trim().to_string();
-            } else if let Some(rest) = trimmed.strip_prefix("key:") {
-                if let Some(key_info) = parse_key_line(rest.trim()) {
-                    keys.push(key_info);
-                }
+            } else if let Some(rest) = trimmed.strip_prefix("key:")
+                && let Some(key_info) = parse_key_line(rest.trim())
+            {
+                keys.push(key_info);
             }
         }
 

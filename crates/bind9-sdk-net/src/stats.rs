@@ -20,6 +20,7 @@ use crate::error::NetError;
 /// Only the fields we need for v0.1.0 are included. Unknown fields
 /// are silently ignored via `#[serde(deny_unknown_fields)]` NOT being set.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct RawServerStats {
     boot_time: Option<String>,
     config_time: Option<String>,
@@ -226,9 +227,9 @@ mod tests {
     use super::*;
 
     const SERVER_STATS_JSON: &str = r#"{
-        "boot_time": "2026-01-15T08:30:00Z",
-        "config_time": "2026-01-15T08:30:05Z",
-        "current_time": "2026-03-14T12:00:00Z",
+        "boot-time": "2026-01-15T08:30:00Z",
+        "config-time": "2026-01-15T08:30:05Z",
+        "current-time": "2026-03-14T12:00:00Z",
         "version": "BIND 9.20.4 (Stable Release)",
         "opcodes": {},
         "rcodes": {},
@@ -392,9 +393,9 @@ mod tests {
     #[test]
     fn full_server_stats_json_roundtrip() {
         let json = r#"{
-            "boot_time": "2026-01-15T08:30:00Z",
-            "config_time": "2026-01-15T08:30:05Z",
-            "current_time": "2026-03-14T12:00:00Z",
+            "boot-time": "2026-01-15T08:30:00Z",
+            "config-time": "2026-01-15T08:30:05Z",
+            "current-time": "2026-03-14T12:00:00Z",
             "version": "BIND 9.20.4 (Stable Release)",
             "opcodes": {
                 "QUERY": 150432,
