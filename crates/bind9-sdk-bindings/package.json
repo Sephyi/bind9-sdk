@@ -1,0 +1,21 @@
+{
+  "name": "bind9-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BIND9 DNS server management SDK — native + WASM",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "bind9-sdk",
+    "targets": [
+      "aarch64-apple-darwin"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --release",
+    "build:wasm": "napi build --release --target wasm32-wasip1-threads"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  }
+}

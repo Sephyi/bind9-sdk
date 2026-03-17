@@ -17,18 +17,15 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-# Node.js/Bun native addon via napi-rs (full surface including rndc/IXFR/nsupdate)
-# NOTE: napi v2 -> v3 migration happens in Phase 4. Pinned at v2 until then.
+# Node.js/Bun native addon via napi-rs v3 (full surface including rndc/IXFR/nsupdate)
 nodejs = ["dep:napi", "dep:napi-derive", "dep:bind9-sdk-net"]
 
 [dependencies]
 bind9-sdk-core = { workspace = true }
 bind9-sdk-net = { workspace = true, optional = true }
+napi = { workspace = true, optional = true }
+napi-derive = { workspace = true, optional = true }
+serde_json = { workspace = true }
 
-[dependencies.napi]
-version = "2"
-optional = true
-
-[dependencies.napi-derive]
-version = "2"
-optional = true
+[build-dependencies]
+napi-build = "2"
