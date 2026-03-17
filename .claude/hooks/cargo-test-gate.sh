@@ -10,14 +10,20 @@
 
 [ "${CLAUDE_SKIP_TEST_GATE:-}" = "1" ] && exit 0
 
-FILE_PATH="${TOOL_INPUT_FILE_PATH:-}"
+# Read file path from stdin JSON (same as other hooks — TOOL_INPUT_FILE_PATH is not set by Claude Code)
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
-# Only trigger on Rust source files inside crates/
+if [ -z "$FILE_PATH" ] || [[ "$FILE_PATH" != *.rs ]]; then
+  exit 0
+fi
+
+# Map file path to crate — use prefix matching so tsig/, update/, zone/parser/ etc. all match
 case "$FILE_PATH" in
-  */crates/bind9-sdk-core/src/*.rs)  CRATE="bind9-sdk-core" ;;
-  */crates/bind9-sdk-net/src/*.rs)   CRATE="bind9-sdk-net" ;;
-  */crates/bind9-sdk-bindings/src/*.rs) CRATE="bind9-sdk-bindings" ;;
-  */bind9-sdk/src/*.rs)              CRATE="bind9-sdk" ;;
+  */crates/bind9-sdk-core/src*)      CRATE="bind9-sdk-core" ;;
+  */crates/bind9-sdk-net/src*)       CRATE="bind9-sdk-net" ;;
+  */crates/bind9-sdk-bindings/src*)  CRATE="bind9-sdk-bindings" ;;
+  */bind9-sdk/src*)                  CRATE="bind9-sdk" ;;
   *) exit 0 ;;
 esac
 

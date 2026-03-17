@@ -145,7 +145,8 @@ Key patterns enforced across all implementation:
 | `wasm-check.sh` | PostToolUse (Edit/Write) | Runs `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` on core crate edits |
 | `clippy-gate.sh` | PostToolUse (Edit/Write) | Runs `cargo clippy -p <crate> -- -D warnings` on `.rs` edits |
 | `dep-freshness.sh` | PostToolUse (Edit) | Warns if `Cargo.toml` dep versions are below known minimums |
-| `cargo-test-gate.sh` | PostToolUse (Edit/Write) | Runs `cargo test -p <crate> --lib` on `.rs` edits (non-blocking) |
+| `cargo-test-gate.sh` | PostToolUse (Edit/Write) | Runs `cargo test -p <crate> --lib` on `.rs` edits (non-blocking); covers all submodule paths |
+| `fmt-drift-guard.sh` | Stop | Runs `cargo fmt --all --check` at end of session; warns on cross-file drift (non-blocking) |
 | `no-std-import-guard.sh` | PreToolUse (Edit/Write) | Blocks bare `use std::` in `bind9-sdk-core` without `cfg` guard |
 
 ## Agents
@@ -158,6 +159,21 @@ Key patterns enforced across all implementation:
 | `rfc-compliance-checker` | Verify implementation matches referenced RFC requirements, check edge cases, report deviations with section references |
 | `dnssec-security-auditor` | DNSSEC key management security: key material exposure, zeroization, per-zone isolation, KASP timing, CDS/CDNSKEY bootstrapping |
 | `wire-format-validator` | Validate DNS/rndc wire format output byte-by-byte against RFC specifications and test vectors |
+| `rndc-packet-tracer` | Annotate rndc wire packets byte-by-byte, decode ISC binary association lists, verify HMAC-SHA256, generate test vectors |
+
+## Skills
+
+Invoke with `/skill-name` or via the Skill tool.
+
+| Skill | Invocation | Purpose |
+| --- | --- | --- |
+| `ci-check [fast\|full\|test <name>]` | User | Run full CI gate: fmt, clippy, WASM, tests, audit, REUSE |
+| `reuse-annotate <file(s)>` | User | Add SPDX/REUSE headers to new files |
+| `wave-setup <wt-id>` | User | Create a single git worktree for a named wave plan |
+| `parallel-wave-setup <wt-ids...>` | User | Create multiple worktrees at once, resolve dependencies, output launch table |
+| `wave-status [merge <branch>]` | User | Show status of all active worktrees; merge + cleanup a completed branch |
+| `release-prep` | User | Full pre-publish readiness gate: audit agents + cargo checks + PRD blockers → go/no-go |
+| `new-crate <name> [--no-std] [--net]` | User | Scaffold a new workspace crate with correct boilerplate |
 
 ## Compliance
 
