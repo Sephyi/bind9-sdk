@@ -35,5 +35,5 @@ pub use bind9_sdk_net as net;
 // Curated top-level re-exports (covered by semver)
 pub use bind9_sdk_core::{
     CoreError, DomainName, DynamicUpdater, Label, NamedControl, RecordClass, RecordData,
-    ResourceRecord, Serial, StatsClient, Ttl, ZoneManager,
+    ResourceRecord, Serial, SerialStrategy, StatsClient, Ttl, ZoneManager,
 };

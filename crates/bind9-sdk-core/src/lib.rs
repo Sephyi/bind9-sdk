@@ -27,7 +27,7 @@ pub mod error;
 pub mod protocol;
 /// DNS record data variants (`RecordData`).
 pub mod rdata;
-/// DNS resource record and associated types (`ResourceRecord`, `Ttl`, `Serial`, `RecordClass`).
+/// DNS resource record and associated types (`ResourceRecord`, `Ttl`, `Serial`, `SerialStrategy`, `RecordClass`).
 pub mod record;
 /// Management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`).
 pub mod traits;
@@ -43,7 +43,7 @@ pub use domain::{DomainName, Label};
 pub use error::CoreError;
 pub use protocol::{Rcode, RecordType};
 pub use rdata::RecordData;
-pub use record::{RecordClass, ResourceRecord, Serial, Ttl};
+pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};
 pub use traits::{
     DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneManager,
     ZoneStats,

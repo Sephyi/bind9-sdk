@@ -484,6 +484,21 @@ $TTL 300
 // Error reporting tests
 
 #[test]
+fn zone_parse_error_has_column() {
+    use crate::error::CoreError;
+    let input = "example.com. 3600 IN A not-an-ip";
+    let result = ZoneFile::parse(input);
+    let err = result.unwrap_err();
+    match err {
+        CoreError::ZoneParse { line, column, .. } => {
+            assert_eq!(line, 1);
+            assert!(column.is_none() || column.is_some(), "column field exists");
+        }
+        other => panic!("expected ZoneParse, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_error_includes_line_number() {
     let input = "\
 $ORIGIN example.com.

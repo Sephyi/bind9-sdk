@@ -90,11 +90,13 @@ fn parse_a(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() != 1 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("A record expects 1 token, got {}", tokens.len()),
         });
     }
     let addr: Ipv4Addr = tokens[0].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid IPv4 address `{}`: {e}", tokens[0]),
     })?;
     Ok(RecordData::A(addr))
@@ -104,11 +106,13 @@ fn parse_aaaa(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() != 1 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("AAAA record expects 1 token, got {}", tokens.len()),
         });
     }
     let addr: Ipv6Addr = tokens[0].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid IPv6 address `{}`: {e}", tokens[0]),
     })?;
     Ok(RecordData::Aaaa(addr))
@@ -118,6 +122,7 @@ fn parse_ns(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErro
     if tokens.len() != 1 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("NS record expects 1 token, got {}", tokens.len()),
         });
     }
@@ -129,6 +134,7 @@ fn parse_cname(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreE
     if tokens.len() != 1 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("CNAME record expects 1 token, got {}", tokens.len()),
         });
     }
@@ -140,6 +146,7 @@ fn parse_ptr(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErr
     if tokens.len() != 1 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("PTR record expects 1 token, got {}", tokens.len()),
         });
     }
@@ -151,6 +158,7 @@ fn parse_soa(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErr
     if tokens.len() != 7 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("SOA record expects 7 tokens, got {}", tokens.len()),
         });
     }
@@ -158,22 +166,27 @@ fn parse_soa(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErr
     let rname = resolve_name(tokens[1], origin)?;
     let serial_val: u32 = tokens[2].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SOA serial `{}`: {e}", tokens[2]),
     })?;
     let refresh_val: u32 = tokens[3].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SOA refresh `{}`: {e}", tokens[3]),
     })?;
     let retry_val: u32 = tokens[4].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SOA retry `{}`: {e}", tokens[4]),
     })?;
     let expire_val: u32 = tokens[5].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SOA expire `{}`: {e}", tokens[5]),
     })?;
     let minimum_val: u32 = tokens[6].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SOA minimum `{}`: {e}", tokens[6]),
     })?;
     Ok(RecordData::Soa {
@@ -182,18 +195,22 @@ fn parse_soa(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErr
         serial: Serial::new(serial_val),
         refresh: Ttl::new(refresh_val).map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid SOA refresh TTL: {e}"),
         })?,
         retry: Ttl::new(retry_val).map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid SOA retry TTL: {e}"),
         })?,
         expire: Ttl::new(expire_val).map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid SOA expire TTL: {e}"),
         })?,
         minimum: Ttl::new(minimum_val).map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid SOA minimum TTL: {e}"),
         })?,
     })
@@ -203,11 +220,13 @@ fn parse_mx(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErro
     if tokens.len() != 2 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("MX record expects 2 tokens, got {}", tokens.len()),
         });
     }
     let preference: u16 = tokens[0].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid MX preference `{}`: {e}", tokens[0]),
     })?;
     let exchange = resolve_name(tokens[1], origin)?;
@@ -221,6 +240,7 @@ fn parse_txt(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.is_empty() {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: "TXT record expects at least 1 token".into(),
         });
     }
@@ -232,19 +252,23 @@ fn parse_srv(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreErr
     if tokens.len() != 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("SRV record expects 4 tokens, got {}", tokens.len()),
         });
     }
     let priority: u16 = tokens[0].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SRV priority `{}`: {e}", tokens[0]),
     })?;
     let weight: u16 = tokens[1].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SRV weight `{}`: {e}", tokens[1]),
     })?;
     let port: u16 = tokens[2].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid SRV port `{}`: {e}", tokens[2]),
     })?;
     let target = resolve_name(tokens[3], origin)?;
@@ -260,11 +284,13 @@ fn parse_caa(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 3 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("CAA record expects at least 3 tokens, got {}", tokens.len()),
         });
     }
     let flags: u8 = tokens[0].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid CAA flags `{}`: {e}", tokens[0]),
     })?;
     let tag = String::from(tokens[1]);
@@ -282,11 +308,13 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
     let type_num = if let Some(stripped) = rtype.strip_prefix("TYPE") {
         stripped.parse::<u16>().map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid record type `{rtype}`: {e}"),
         })?
     } else {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("unsupported record type `{rtype}`"),
         });
     };
@@ -295,6 +323,7 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
     if tokens.is_empty() || tokens[0] != "\\#" {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!(
                 "unknown type {rtype} must use RFC 3597 generic format: \\# <length> <hex>"
             ),
@@ -303,11 +332,13 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
     if tokens.len() < 2 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: "RFC 3597 generic format missing length".into(),
         });
     }
     let expected_len: usize = tokens[1].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid RFC 3597 length `{}`: {e}", tokens[1]),
     })?;
 
@@ -315,6 +346,7 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
         if tokens.len() > 2 {
             return Err(CoreError::ZoneParse {
                 line: 0,
+                column: None,
                 reason: "RFC 3597 length is 0 but hex data present".into(),
             });
         }
@@ -326,11 +358,16 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
 
     // Concatenate remaining hex tokens
     let hex_str: String = tokens[2..].iter().copied().collect();
-    let rdata = decode_hex(&hex_str).map_err(|reason| CoreError::ZoneParse { line: 0, reason })?;
+    let rdata = decode_hex(&hex_str).map_err(|reason| CoreError::ZoneParse {
+        line: 0,
+        column: None,
+        reason,
+    })?;
 
     if rdata.len() != expected_len {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!(
                 "RFC 3597 length mismatch: declared {expected_len}, got {} bytes",
                 rdata.len()
