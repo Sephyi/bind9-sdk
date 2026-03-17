@@ -341,8 +341,9 @@
           rndc_addr: "127.0.0.1:9953".parse().unwrap(),
           rndc_key: test_key(),
           stats_url: None,
-          nsupdate_addr: None,
+          dns_addr: None,
           tls: None,
+          timeout: Duration::from_secs(10),
           pool_size: None,
       }
   }
