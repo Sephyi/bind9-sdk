@@ -723,7 +723,7 @@ mod tests {
         let zone = DomainName::new("example.com.").unwrap();
         let host = DomainName::new("test-nsupdate.example.com.").unwrap();
         let key = TsigKey::from_base64(
-            DomainName::new("update-key.").unwrap(),
+            DomainName::new("rndc-test-key.").unwrap(),
             TsigAlgorithm::HmacSha256,
             "dGVzdGtleWZvcmJpbmQ5c2RrdGVzdGluZzEyMzQ1Ng==",
         )
@@ -738,7 +738,7 @@ mod tests {
 
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
             .add_record(record)
-            .sign(&key, 1710000000)
+            .sign_now(&key)
             .build();
 
         let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
@@ -757,7 +757,7 @@ mod tests {
 
         let zone = DomainName::new("example.com.").unwrap();
         let key = TsigKey::from_base64(
-            DomainName::new("update-key.").unwrap(),
+            DomainName::new("rndc-test-key.").unwrap(),
             TsigAlgorithm::HmacSha256,
             "dGVzdGtleWZvcmJpbmQ5c2RrdGVzdGluZzEyMzQ1Ng==",
         )
@@ -776,7 +776,7 @@ mod tests {
             builder = builder.add_record(record);
         }
 
-        let msg = builder.sign(&key, 1710000000).build();
+        let msg = builder.sign_now(&key).build();
         let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
         let result = sender.send(&msg, Some(&key)).await;
         assert!(

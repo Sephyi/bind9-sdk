@@ -1,0 +1,17 @@
+; SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+; SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+$ORIGIN transfer.example.com.
+$TTL 3600
+@   IN  SOA  ns1.transfer.example.com. admin.transfer.example.com. (
+            2026031701 ; serial
+            3600       ; refresh
+            900        ; retry
+            604800     ; expire
+            86400      ; minimum
+        )
+@       IN  NS   ns1.transfer.example.com.
+ns1     IN  A    127.0.0.1
+www     IN  A    192.0.2.30
+sub     IN  A    192.0.2.31
+txt     IN  TXT  "transfer-test-record"

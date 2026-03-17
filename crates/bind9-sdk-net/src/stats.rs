@@ -496,7 +496,7 @@ mod tests {
             std::time::Duration::from_secs(10),
         )
         .unwrap();
-        let zone = DomainName::new("localhost.").unwrap();
+        let zone = DomainName::new("example.com.").unwrap();
         let stats = client.fetch_zone_stats(&zone).await.unwrap();
         assert_eq!(stats.name, zone);
     }
