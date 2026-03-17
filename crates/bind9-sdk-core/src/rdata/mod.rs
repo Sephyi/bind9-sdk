@@ -212,6 +212,30 @@ pub enum RecordData {
         type_bitmaps: Vec<u8>,
     },
 
+    /// NSEC3PARAM record — NSEC3 parameters (RFC 5155)
+    Nsec3param {
+        /// Hash algorithm identifier (1 = SHA-1).
+        hash_algorithm: u8,
+        /// Flags byte.
+        flags: u8,
+        /// Number of additional hash iterations.
+        iterations: u16,
+        /// Random salt appended before hashing.
+        salt: Vec<u8>,
+    },
+
+    /// DLV record — DNSSEC lookaside validation (historic, RFC 4431)
+    Dlv {
+        /// Key tag of the referenced DNSKEY.
+        key_tag: u16,
+        /// Algorithm of the referenced DNSKEY.
+        algorithm: u8,
+        /// Digest algorithm used.
+        digest_type: u8,
+        /// Cryptographic digest of the DNSKEY record.
+        digest: Vec<u8>,
+    },
+
     /// RP record — responsible person (RFC 1183)
     ///
     /// GDPR note: `mbox` contains a mailbox URI (personal data per GDPR Art. 4(1)).

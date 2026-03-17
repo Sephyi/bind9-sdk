@@ -5,8 +5,8 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::zone::ZoneFile;
 use crate::zone::rdata_text;
+use crate::zone::ZoneFile;
 
 /// Serialize a ZoneFile to canonical zone file text format.
 pub(crate) fn serialize(zone_file: &ZoneFile) -> String {
@@ -78,6 +78,8 @@ fn rdata_type_string(rdata: &crate::rdata::RecordData) -> String {
         RecordData::Sshfp { .. } => String::from("SSHFP"),
         RecordData::Csync { .. } => String::from("CSYNC"),
         RecordData::Rp { .. } => String::from("RP"),
+        RecordData::Nsec3param { .. } => String::from("NSEC3PARAM"),
+        RecordData::Dlv { .. } => String::from("DLV"),
         RecordData::Unknown { rtype, .. } => format!("TYPE{rtype}"),
     }
 }

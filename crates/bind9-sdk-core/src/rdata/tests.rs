@@ -74,5 +74,27 @@ fn record_data_unknown_preserves_bytes() {
     assert!(matches!(rd, RecordData::Unknown { rtype: 65535, ref rdata } if rdata == &data));
 }
 
+#[test]
+fn record_data_nsec3param() {
+    let rd = RecordData::Nsec3param {
+        hash_algorithm: 1,
+        flags: 0,
+        iterations: 10,
+        salt: alloc::vec![0xab, 0xcd],
+    };
+    assert!(matches!(rd, RecordData::Nsec3param { iterations: 10, .. }));
+}
+
+#[test]
+fn record_data_dlv() {
+    let rd = RecordData::Dlv {
+        key_tag: 12345,
+        algorithm: 8,
+        digest_type: 2,
+        digest: alloc::vec![0xaa, 0xbb, 0xcc],
+    };
+    assert!(matches!(rd, RecordData::Dlv { key_tag: 12345, .. }));
+}
+
 // Note: #[non_exhaustive] is only enforced from external crates.
 // The attribute is verified by review, not by an in-crate test.
