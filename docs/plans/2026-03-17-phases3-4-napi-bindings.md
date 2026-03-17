@@ -22,28 +22,28 @@
 
 | File | Crate | Purpose |
 | --- | --- | --- |
-| `bindings/src/error.rs` | bindings | `BindSdkError` — maps Core/Net errors to JS |
-| `bindings/src/domain.rs` | bindings | `JsDomainName` class |
-| `bindings/src/zone.rs` | bindings | `JsZoneFile` — parse/serialize |
-| `bindings/src/record.rs` | bindings | `JsResourceRecord`, `JsRecordData` |
-| `bindings/src/tsig.rs` | bindings | `JsTsigKey` (Arc wrapper — no key material crosses FFI) |
-| `bindings/src/update.rs` | bindings | `JsUpdateBuilder` chain API |
-| `bindings/src/rndc.rs` | bindings | `JsRndcClient` — async rndc commands (native only) |
-| `bindings/src/nsupdate.rs` | bindings | `JsNsUpdateSender` — async send (native only) |
-| `bindings/src/stats.rs` | bindings | `JsStatsClient` — async stats (native only) |
-| `bindings/src/transfer.rs` | bindings | `JsTransferClient` — async iterator (native only) |
-| `bindings/src/pool.rs` | bindings | `JsRndcPool` — pool wrapper (native only) |
-| `bindings/package.json` | bindings | npm package manifest (`"private": true`) |
-| `bindings/build.rs` | bindings | napi-rs v3 build script |
-| `bindings/tests/smoke.mjs` | bindings | Node.js smoke test |
-| `bindings/tests/smoke.bun.ts` | bindings | Bun smoke test |
+| `crates/bind9-sdk-bindings/src/error.rs` | bindings | `BindSdkError` — maps Core/Net errors to JS |
+| `crates/bind9-sdk-bindings/src/domain.rs` | bindings | `JsDomainName` class |
+| `crates/bind9-sdk-bindings/src/zone.rs` | bindings | `JsZoneFile` — parse/serialize |
+| `crates/bind9-sdk-bindings/src/record.rs` | bindings | `JsResourceRecord`, `JsRecordData` |
+| `crates/bind9-sdk-bindings/src/tsig.rs` | bindings | `JsTsigKey` (Arc wrapper — no key material crosses FFI) |
+| `crates/bind9-sdk-bindings/src/update.rs` | bindings | `JsUpdateBuilder` chain API |
+| `crates/bind9-sdk-bindings/src/rndc.rs` | bindings | `JsRndcClient` — async rndc commands (native only) |
+| `crates/bind9-sdk-bindings/src/nsupdate.rs` | bindings | `JsNsUpdateSender` — async send (native only) |
+| `crates/bind9-sdk-bindings/src/stats.rs` | bindings | `JsStatsClient` — async stats (native only) |
+| `crates/bind9-sdk-bindings/src/transfer.rs` | bindings | `JsTransferClient` — async iterator (native only) |
+| `crates/bind9-sdk-bindings/src/pool.rs` | bindings | `JsRndcPool` — pool wrapper (native only) |
+| `crates/bind9-sdk-bindings/package.json` | bindings | npm package manifest (`"private": true`) |
+| `crates/bind9-sdk-bindings/build.rs` | bindings | napi-rs v3 build script |
+| `crates/bind9-sdk-bindings/tests/smoke.mjs` | bindings | Node.js smoke test |
+| `crates/bind9-sdk-bindings/tests/smoke.bun.ts` | bindings | Bun smoke test |
 
 ### Modified files
 
 | File | Changes |
 | --- | --- |
-| `bindings/Cargo.toml` | napi-rs v2 → v3 deps, feature flags |
-| `bindings/src/lib.rs` | Replace placeholder comments with module declarations |
+| `crates/bind9-sdk-bindings/Cargo.toml` | napi-rs v2 → v3 deps, feature flags |
+| `crates/bind9-sdk-bindings/src/lib.rs` | Replace placeholder comments with module declarations |
 | `Cargo.toml` (workspace) | Add napi v3, napi-derive v3 to workspace deps |
 
 ## Gate Check: napi-rs v3 Readiness
@@ -105,14 +105,18 @@ Before starting Phase 3 implementation, verify the research spike findings:
   description = "Node.js/Bun native addon + WASM bindings for bind9-sdk"
 
   [lib]
-  crate-type = ["cdylib"]
+  # Both crate-types are required:
+  # - "cdylib" for napi-rs to produce the native .node addon
+  # - "rlib" so that `cargo test` can link unit tests (cdylib-only breaks cargo test)
+  crate-type = ["cdylib", "rlib"]
 
   [dependencies]
   bind9-sdk-core = { path = "../bind9-sdk-core" }
   bind9-sdk-net = { path = "../bind9-sdk-net", optional = true }
   napi = { workspace = true }
   napi-derive = { workspace = true }
-  data-encoding = { workspace = true }  # base64 decode for TSIG key secrets
+  # Note: No data-encoding needed — TSIG key creation uses TsigKey::from_base64()
+  # which handles base64 decoding internally via the `base64` crate already in workspace.
   serde_json = { workspace = true }      # tagged union rdata serialization
 
   [features]
@@ -349,6 +353,8 @@ Before starting Phase 3 implementation, verify the research spike findings:
 **Worktree:** `.worktrees/wt-j`
 **Depends on:** WT-I merged
 
+**TDD approach for bindings:** Unlike pure Rust modules where we write a failing `#[test]` first, napi-rs bindings are tested via the Node.js/Bun smoke tests (Task 11). The TDD cycle for each binding task is: (1) write binding code, (2) `cargo build -p bind9-sdk-bindings` to verify Rust compiles, (3) `npm run build` to produce `.node`, (4) run `node -e "..."` inline smoke test to verify JS interop, (5) commit. Full smoke tests in Task 11 provide the regression suite.
+
 #### Task 5: Zone Parsing Bindings
 
 **Files:**
@@ -492,11 +498,10 @@ Before starting Phase 3 implementation, verify the research spike findings:
                   format!("unsupported algorithm: {other}")
               )),
           };
-          let secret = data_encoding::BASE64.decode(secret_base64.as_bytes())
-              .map_err(|e| napi::Error::from_reason(format!("invalid base64: {e}")))?;
-          // TsigKey::new() takes owned DomainName + owned Vec<u8>
+              // TsigKey::from_base64() handles base64 decoding internally,
+          // including whitespace stripping. No need for data-encoding crate.
           let domain = DomainName::new(&name).map_err(BindSdkError::from_core)?;
-          let key = TsigKey::new(domain, algo, secret)
+          let key = TsigKey::from_base64(domain, algo, &secret_base64)
               .map_err(BindSdkError::from_core)?;
           Ok(Self { inner: Arc::new(key) })
       }
@@ -533,29 +538,124 @@ Before starting Phase 3 implementation, verify the research spike findings:
 
 - [ ] **Step 8.1: Implement JsUpdateBuilder**
 
-  Chain API mirroring the Rust typestate pattern but flattened for JS:
+  **Design note:** The Rust `UpdateBuilder` uses a consuming-self typestate pattern:
+  `add_record(mut self, record) -> Self` and `sign(self, key, timestamp) -> UpdateBuilder<Signed>`.
+  napi-rs methods use `&mut self`, so we wrap the builder in `Option` and use the take-and-replace pattern.
 
   ```rust
+  use napi_derive::napi;
+  use bind9_sdk_core::DomainName;
+  use bind9_sdk_core::record::{RecordClass, RecordData, ResourceRecord, Ttl};
+  use bind9_sdk_core::update::{UpdateBuilder, Unsigned};
+  use crate::error::BindSdkError;
+  use crate::tsig::JsTsigKey;
+
+  /// Builder for RFC 2136 dynamic DNS update messages.
+  ///
+  /// Wraps `UpdateBuilder<Unsigned>` in an `Option` to work around the
+  /// consuming-self typestate pattern. Each method takes the inner builder,
+  /// calls the consuming method, and puts the result back.
   #[napi]
   pub struct JsUpdateBuilder {
-      // Internal state — wraps UpdateBuilder<Unsigned>
+      inner: Option<UpdateBuilder<Unsigned>>,
+  }
+
+  impl JsUpdateBuilder {
+      /// Take the inner builder, returning an error if already consumed (signed).
+      fn take(&mut self) -> napi::Result<UpdateBuilder<Unsigned>> {
+          self.inner.take().ok_or_else(|| {
+              napi::Error::from_reason("UpdateBuilder already consumed (signed)")
+          })
+      }
   }
 
   #[napi]
   impl JsUpdateBuilder {
+      /// Create a new update builder for the given zone.
+      ///
+      /// `UpdateBuilder::new()` takes `(DomainName, RecordClass)`.
       #[napi(constructor)]
-      pub fn new(zone: String) -> napi::Result<Self> { ... }
+      pub fn new(zone: String) -> napi::Result<Self> {
+          let domain = DomainName::new(&zone).map_err(BindSdkError::from_core)?;
+          let builder = UpdateBuilder::new(domain, RecordClass::IN);
+          Ok(Self { inner: Some(builder) })
+      }
 
+      /// Add a record to the update.
+      ///
+      /// Parameters are strings — the binding constructs a `ResourceRecord`
+      /// from them. `rdata` format matches zone file text format (e.g. "192.0.2.1"
+      /// for A records, "10 mail.example.com." for MX).
       #[napi]
-      pub fn add_record(&mut self, name: String, ttl: u32, rtype: String, rdata: String) -> napi::Result<&Self> { ... }
+      pub fn add_record(
+          &mut self,
+          name: String,
+          ttl: u32,
+          rtype: String,
+          rdata: String,
+      ) -> napi::Result<&Self> {
+          let builder = self.take()?;
+          let record = parse_record_from_strings(&name, ttl, &rtype, &rdata)?;
+          self.inner = Some(builder.add_record(record));
+          Ok(self)
+      }
 
+      /// Delete a specific record from the zone.
       #[napi]
-      pub fn delete_record(&mut self, name: String, rtype: String, rdata: String) -> napi::Result<&Self> { ... }
+      pub fn delete_record(
+          &mut self,
+          name: String,
+          ttl: u32,
+          rtype: String,
+          rdata: String,
+      ) -> napi::Result<&Self> {
+          let builder = self.take()?;
+          let record = parse_record_from_strings(&name, ttl, &rtype, &rdata)?;
+          self.inner = Some(builder.delete_record(record));
+          Ok(self)
+      }
 
-      /// Sign the update with a TSIG key and return the wire-format message.
+      /// Sign the update with a TSIG key and return wire-format bytes.
+      ///
+      /// This consumes the builder — further calls will error.
+      /// Internally calls `builder.sign(key, timestamp)` → `UpdateBuilder<Signed>`,
+      /// then `.build()` → `UpdateMessage`, then extracts `.wire_bytes`.
       #[napi]
-      pub fn sign(&mut self, key: &JsTsigKey) -> napi::Result<Buffer> { ... }
+      pub fn sign(&mut self, key: &JsTsigKey) -> napi::Result<napi::bindgen_prelude::Buffer> {
+          let builder = self.take()?;
+          let timestamp = std::time::SystemTime::now()
+              .duration_since(std::time::UNIX_EPOCH)
+              .unwrap_or_default()
+              .as_secs();
+          let signed = builder.sign(key.inner_ref(), timestamp);
+          let message = signed.build();
+          Ok(message.wire_bytes().to_vec().into())
+      }
   }
+
+  /// Parse a ResourceRecord from string parameters.
+  /// This is a helper that constructs the record from zone-file-style text.
+  fn parse_record_from_strings(
+      name: &str,
+      ttl: u32,
+      rtype: &str,
+      rdata: &str,
+  ) -> napi::Result<ResourceRecord> {
+      // Implementation: parse name as DomainName, ttl as Ttl,
+      // use rdata_text::parse_rdata() to parse the rdata string
+      // into a RecordData variant based on the rtype.
+      todo!("implement record parsing from string params")
+  }
+  ```
+
+  **Note:** `JsTsigKey` needs an `inner_ref()` method that returns `&TsigKey` (add to `tsig.rs`):
+  ```rust
+  impl JsTsigKey {
+      pub(crate) fn inner_ref(&self) -> &TsigKey {
+          &self.inner
+      }
+  }
+  ```
   ```
 
 - [ ] **Step 8.2: Build and test**

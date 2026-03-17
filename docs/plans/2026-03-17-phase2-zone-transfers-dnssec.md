@@ -20,16 +20,16 @@
 
 | File | Crate | Purpose |
 | --- | --- | --- |
-| `core/src/rdata/mod.rs` | core | `RecordData` enum (moved from `core/src/rdata.rs`) |
-| `core/src/rdata/tests.rs` | core | Unit tests for RecordData (moved from inline) |
-| `core/src/zone/rdata_dnssec.rs` | core | DNSSEC text parse + serialize (DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, NSEC3PARAM, DLV) |
-| `core/src/dnssec.rs` | core | CDS generation, DS digest, key tag computation, DELETE sentinels |
-| `core/src/transfer.rs` | core | `TransferSession` typestate, `XfrRecord`, `XfrStream` types |
-| `net/src/transfer/mod.rs` | net | `TransferClient` — AXFR/IXFR streaming client |
-| `net/src/transfer/wire.rs` | net | DNS wire format parsing for zone transfer responses |
-| `net/src/transfer/tests.rs` | net | Unit tests with mock TCP streams |
-| `net/src/rndc/dnssec.rs` | net | KASP response parsing (`DnssecStatus`, `DsCheckResult`) |
-| `net/tests/transfer_integration.rs` | net | Integration test: AXFR from Podman container |
+| `crates/bind9-sdk-core/src/rdata/mod.rs` | core | `RecordData` enum (moved from `core/src/rdata.rs`) |
+| `crates/bind9-sdk-core/src/rdata/tests.rs` | core | Unit tests for RecordData (moved from inline) |
+| `crates/bind9-sdk-core/src/zone/rdata_dnssec.rs` | core | DNSSEC **text** parse + serialize for existing variants (DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY) + new variants (NSEC3PARAM, DLV). RecordData enum already has all variants except NSEC3PARAM/DLV. |
+| `crates/bind9-sdk-core/src/dnssec.rs` | core | CDS generation, DS digest, key tag computation, DELETE sentinels |
+| `crates/bind9-sdk-core/src/transfer.rs` | core | `TransferSession` typestate, `XfrRecord`, `XfrStream` types |
+| `crates/bind9-sdk-net/src/transfer/mod.rs` | net | `TransferClient` — AXFR/IXFR streaming client |
+| `crates/bind9-sdk-net/src/transfer/wire.rs` | net | DNS wire format parsing for zone transfer responses |
+| `crates/bind9-sdk-net/src/transfer/tests.rs` | net | Unit tests with mock TCP streams |
+| `crates/bind9-sdk-net/src/rndc/dnssec.rs` | net | KASP response parsing (`DnssecStatus`, `DsCheckResult`) |
+| `crates/bind9-sdk-net/tests/transfer_integration.rs` | net | Integration test: AXFR from Podman container |
 | `tests/bind9/zones/dnssec.example.com.zone` | infra | DNSSEC-signed test zone |
 | `tests/bind9/zones/transfer.example.com.zone` | infra | AXFR-enabled test zone |
 | `Makefile` | root | `make test-integration` target |
@@ -38,22 +38,22 @@
 
 | File | Changes |
 | --- | --- |
-| `core/src/rdata.rs` | Split to `core/src/rdata/mod.rs` (move enum + tests to submodule) |
-| `core/src/zone/rdata_text.rs` | Add DNSSEC type arms to `parse_rdata()` and `serialize_rdata()` — delegate to new `rdata_dnssec.rs` |
-| `core/src/protocol.rs` | Add `Nsec3param` and `Dlv` variants to `RecordType` |
-| `core/src/record.rs` | Add `SerialStrategy` enum, `Serial::next()` method |
-| `core/src/error.rs` | Add `column` field to `CoreError::ZoneParse` (GPT-ZONE-COL audit item). Note: `line` is `u32`, not `usize` |
-| `core/src/lib.rs` | Add `pub mod dnssec;`, `pub mod transfer;` |
-| `net/src/error.rs` | Add `TransferFailed`, `SerialMismatch`, `IncompleteTransfer`, `XfrProtocolError`, `TlsRequired` variants |
-| `net/src/tls.rs` | Add localhost exemption logic, self-signed cert support for integration tests |
-| `net/src/rndc/command.rs` | Add `DnssecStatus`, `DnssecCheckDs` command variants |
-| `net/src/rndc/mod.rs` | F-002: rndc nonce hardening |
-| `net/src/lib.rs` | Add `pub mod transfer;` |
+| `crates/bind9-sdk-core/src/rdata.rs` | Split to `core/src/rdata/mod.rs` (move enum + tests to submodule) |
+| `crates/bind9-sdk-core/src/zone/rdata_text.rs` | Add DNSSEC type arms to `parse_rdata()` and `serialize_rdata()` — delegate to new `rdata_dnssec.rs` |
+| `crates/bind9-sdk-core/src/protocol.rs` | Add `Nsec3param` and `Dlv` variants to `RecordType` |
+| `crates/bind9-sdk-core/src/record.rs` | Add `SerialStrategy` enum with `next()` method |
+| `crates/bind9-sdk-core/src/error.rs` | Add `column` field to `CoreError::ZoneParse` (GPT-ZONE-COL audit item). Note: `line` is `u32`, not `usize` |
+| `crates/bind9-sdk-core/src/lib.rs` | Add `pub mod dnssec;`, `pub mod transfer;` |
+| `crates/bind9-sdk-net/src/error.rs` | Add `TransferFailed`, `SerialMismatch`, `IncompleteTransfer`, `XfrProtocolError`, `TlsRequired` variants |
+| `crates/bind9-sdk-net/src/tls.rs` | Add localhost exemption logic, self-signed cert support for integration tests |
+| `crates/bind9-sdk-net/src/rndc/command.rs` | Add `DnssecStatus`, `DnssecCheckDs` command variants |
+| `crates/bind9-sdk-net/src/rndc/mod.rs` | F-002: rndc nonce hardening |
+| `crates/bind9-sdk-net/src/lib.rs` | Add `pub mod transfer;` |
 | `tests/bind9/named.conf` | Add DNSSEC-signed zone, AXFR-enabled zone with TSIG |
 | `tests/bind9/podman-compose.yml` | Health check improvements |
 | `Cargo.toml` (workspace) | Add `tokio-stream`, `data-encoding` to workspace deps |
-| `core/Cargo.toml` | Add `data-encoding` dependency (no_std compatible) |
-| `net/Cargo.toml` | Add `tokio-stream` dependency |
+| `crates/bind9-sdk-core/Cargo.toml` | Add `data-encoding` dependency (no_std compatible) |
+| `crates/bind9-sdk-net/Cargo.toml` | Add `tokio-stream` dependency |
 
 ## P2-W0: E2E Infrastructure
 
@@ -483,7 +483,7 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
   "DLV" => rdata_dnssec::parse_dlv(tokens),
   ```
 
-  In `serialize_rdata()`, replace the catch-all `other => serialize_as_generic(other)` with explicit arms:
+  In `serialize_rdata()`, add explicit arms for DNSSEC types **before** the existing catch-all `other => serialize_as_generic(other)`. Keep the catch-all — other non-DNSSEC variants still need it. (Task 9 will add RRSIG/NSEC/NSEC3/NSEC3PARAM arms to the same block.)
 
   ```rust
   RecordData::Dnskey { flags, protocol, algorithm, ref public_key } =>
@@ -493,7 +493,7 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
   // ... similar for CDS, CDNSKEY, DLV
   ```
 
-  Add `mod rdata_dnssec;` to `zone/mod.rs`.
+  Add `pub(crate) mod rdata_dnssec;` to `zone/mod.rs`. The module is used internally by `rdata_text.rs` (same crate) but should not be part of the public API.
 
 - [ ] **Step 8.5: Run tests**
 
@@ -549,6 +549,8 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
 - [ ] **Step 9.4: Wire into rdata_text.rs**
 
   Add parse arms for "RRSIG", "NSEC", "NSEC3", "NSEC3PARAM" and serialize arms for the corresponding `RecordData` variants.
+
+  **Important:** `parse_rrsig(tokens, origin)` and `parse_nsec(tokens, origin)` require an `&DomainName` origin parameter (the signer name and next-domain name may be relative). The `parse_rdata()` function in `rdata_text.rs` must thread the zone origin through to these parsers. If `parse_rdata()` doesn't currently take an origin, add `origin: &DomainName` as a parameter and update all call sites (the zone parser already tracks origin context).
 
 - [ ] **Step 9.5: Run tests**
 
@@ -669,11 +671,11 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
 
   ```rust
   #[test]
-  fn transfer_request_axfr() {
+  fn transfer_session_axfr() {
       let zone = DomainName::new("example.com.").unwrap();
-      let req = TransferRequest::axfr(zone.clone());
-      assert_eq!(req.zone(), &zone);
-      assert!(req.is_axfr());
+      let session = TransferSession::<Pending>::axfr(zone.clone());
+      assert_eq!(session.zone(), &zone);
+      assert!(session.is_axfr());
   }
   ```
 
@@ -714,6 +716,7 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
 
   /// Whether this is a full (AXFR) or incremental (IXFR) transfer.
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  #[non_exhaustive]
   pub enum TransferKind {
       Axfr,
       Ixfr,
@@ -741,7 +744,7 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
 
   ```bash
   git add crates/bind9-sdk-core/src/transfer.rs crates/bind9-sdk-core/src/lib.rs
-  git commit -m "feat(core): transfer types — TransferRequest, TransferKind, TransferRecord"
+  git commit -m "feat(core): transfer types — TransferSession typestate, TransferKind, TransferRecord"
   ```
 
 #### Task 13: DNS Wire Format Parsing
@@ -1231,13 +1234,15 @@ After all three worktrees complete:
   git merge feat/ixfr-axfr --no-ff -m "feat: P2-W1 IXFR/AXFR zone transfer client (WT-B)"
   ```
 
-- [ ] **Step 22.3: Merge WT-A (DNSSEC types — may conflict on core/lib.rs pub mod)**
+- [ ] **Step 22.3: Merge WT-A (DNSSEC types — may conflict on core/lib.rs pub mod + ZoneParse)**
 
   ```bash
   git merge feat/dnssec-types --no-ff -m "feat: P2-W1 DNSSEC record types (WT-A)"
   ```
 
-  Expected trivial conflict: both WT-A and WT-B add `pub mod` declarations to `core/lib.rs`. Resolve by keeping both.
+  Expected conflicts:
+  1. **Trivial:** Both WT-A and WT-B add `pub mod` declarations to `core/lib.rs`. Resolve by keeping both.
+  2. **Non-trivial:** WT-C adds `column: Option<u32>` to `CoreError::ZoneParse`, but WT-A's `rdata_dnssec.rs` constructs `ZoneParse` with the old 2-field format. After merging WT-C first, WT-A's `ZoneParse { line, reason }` construction sites must be updated to include `column: None`. The agent should run `cargo build -p bind9-sdk-core` after merge to catch these.
 
 - [ ] **Step 22.4: Run full quality gate**
 
@@ -1274,7 +1279,8 @@ After all three worktrees complete:
           algorithm: 13,
           public_key: vec![/* 64 bytes of test key */],
       };
-      let cds = CdsRecord::from_dnskey(&dnskey, DigestType::Sha256).unwrap();
+      let owner = DomainName::new("example.com.").unwrap();
+      let cds = CdsRecord::from_dnskey(&owner, &dnskey, DigestType::Sha256).unwrap();
       assert_eq!(cds.algorithm, 13);
       assert_eq!(cds.digest_type, 2); // SHA-256 = 2
       assert_eq!(cds.digest.len(), 32);
@@ -1286,6 +1292,7 @@ After all three worktrees complete:
   ```rust
   /// Digest algorithm for DS/CDS record generation.
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  #[non_exhaustive]
   pub enum DigestType {
       /// SHA-256 (mandatory per RFC 4509).
       Sha256,
@@ -1369,6 +1376,7 @@ After all three worktrees complete:
   }
 
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  #[non_exhaustive]
   pub enum KeyRole { Ksk, Zsk, Csk }
 
   /// Parsed output of `rndc dnssec -checkds <zone>`.

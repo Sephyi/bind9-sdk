@@ -20,8 +20,8 @@
 
 | File | Crate | Purpose |
 | --- | --- | --- |
-| `core/src/zone/diff.rs` | core | Zone diff engine — `Zone::diff()`, `ZoneDiff`, `DiffEntry` |
-| `net/src/pool.rs` | net | `RndcPool` — semaphore-based concurrency limiter |
+| `crates/bind9-sdk-core/src/zone/diff.rs` | core | Zone diff engine — `Zone::diff()`, `ZoneDiff`, `DiffEntry` |
+| `crates/bind9-sdk-net/src/pool.rs` | net | `RndcPool` — semaphore-based concurrency limiter |
 | `crates/bind9-sdk-cli/Cargo.toml` | cli | New binary crate |
 | `crates/bind9-sdk-cli/src/main.rs` | cli | Entry point |
 | `crates/bind9-sdk-cli/src/error.rs` | cli | `CliError` enum |
@@ -36,9 +36,9 @@
 
 | File | Changes |
 | --- | --- |
-| `core/src/zone/mod.rs` | Add `pub mod diff;`, add `Zone::diff()` method |
-| `net/src/lib.rs` | Add `pub mod pool;` |
-| `net/src/config.rs` | Add pool config fields to `ClientConfig` |
+| `crates/bind9-sdk-core/src/zone/mod.rs` | Add `pub mod diff;`, add `Zone::diff()` method |
+| `crates/bind9-sdk-net/src/lib.rs` | Add `pub mod pool;` |
+| `crates/bind9-sdk-net/src/config.rs` | Add pool config fields to `ClientConfig` |
 | `Cargo.toml` (workspace) | Add `bind9-sdk-cli` member, `clap`, `clap_complete`, `toml` to workspace deps |
 
 ## P5-W1: Two Parallel Worktrees
@@ -147,7 +147,7 @@
           name: DomainName::new("new.example.com.").unwrap(),
           class: RecordClass::IN,
           ttl: Ttl::new(3600).unwrap(),
-          rdata: RecordData::A(Ipv4Addr::new(192, 0, 2, 99)),
+          rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 99)),
       });
       let diff = zone_a.diff(&zone_b);
       assert_eq!(diff.len(), 1);
@@ -201,7 +201,7 @@
       let diff = zone_a.diff(&zone_b);
       let updates = diff.to_updates();
       assert!(!updates.is_empty());
-      // Added records become Add entries, removed become Delete
+      // Added records become AddRecord entries, removed become DeleteRecord
   }
   ```
 
@@ -211,9 +211,9 @@
   impl ZoneDiff {
       /// Convert diff entries to RFC 2136 update entries.
       ///
-      /// - `Added` → `UpdateEntry::Add`
-      /// - `Removed` → `UpdateEntry::Delete`
-      /// - `TtlChanged` → `UpdateEntry::Delete` + `UpdateEntry::Add` (with new TTL)
+      /// - `Added` → `UpdateEntry::AddRecord(record)`
+      /// - `Removed` → `UpdateEntry::DeleteRecord(record)`
+      /// - `TtlChanged` → `UpdateEntry::DeleteRecord(old)` + `UpdateEntry::AddRecord(new_ttl)` (with new TTL)
       pub fn to_updates(&self) -> Vec<UpdateEntry> { ... }
   }
   ```
@@ -472,6 +472,8 @@
 
   Add `pool_size: Option<usize>` field with builder method `with_pool(size)`.
 
+  **Important:** `ClientConfig` is `#[non_exhaustive]` and constructed via struct literal. Adding a new field is a breaking change for any external struct literal construction (which is already impossible thanks to `#[non_exhaustive]`). However, all *internal* construction sites in tests and the net crate must be updated to include `pool_size: None`. Search for `ClientConfig {` across the workspace and update every occurrence.
+
 - [ ] **Step 7.3: Run tests**
 
   Run: `cargo test -p bind9-sdk-net --lib`
@@ -491,18 +493,20 @@
 
 - [ ] **Step 8.1: Write integration test**
 
+  **Note:** The `test_key()` helper in `net/src/config.rs` is `#[cfg(test)]` and not accessible from integration test files (they compile as separate crates). Either: (a) create a shared `tests/common/mod.rs` test helper, or (b) construct the `TsigKey` directly in the integration test using `TsigKey::from_base64()`.
+
   ```rust
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:9953"]
   async fn pool_burst_10_through_2() {
-      // ClientConfig is constructed as struct literal, not builder pattern.
-      // See crates/bind9-sdk-net/src/config.rs for field names.
-      let config = test_config(); // test helper with pool_size: Some(2)
-      let pool = RndcPool::new(config, 2);
+      // Construct config directly — test_key() is #[cfg(test)] and
+      // inaccessible from integration test crates. Use TsigKey::from_base64().
+      let config = make_test_config(); // local helper in this file
+      let pool = Arc::new(RndcPool::new(config, 2));
 
       let mut handles = Vec::new();
       for _ in 0..10 {
-          let pool = pool.clone();
+          let pool = Arc::clone(&pool);
           handles.push(tokio::spawn(async move {
               let guard = pool.acquire().await.unwrap();
               // Execute rndc status through this guard
@@ -613,11 +617,11 @@
   pub enum CliError {
       /// Network operation failed.
       #[error(transparent)]
-      Net(#[from] bind9_sdk::net::NetError),
+      Net(#[from] bind9_sdk::NetError),
 
       /// Core operation failed.
       #[error(transparent)]
-      Core(#[from] bind9_sdk::core::CoreError),
+      Core(#[from] bind9_sdk::CoreError),
 
       /// Config file parse error.
       #[error("config error: {0}")]
