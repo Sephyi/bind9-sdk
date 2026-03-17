@@ -85,6 +85,9 @@
       /// Record exists in source but not in target.
       Removed(ResourceRecord),
       /// Record exists in both but with different TTL.
+      /// (Spec §4 calls this "Modified" — `TtlChanged` is more precise since
+      /// the diff algorithm compares by name+class+rtype+rdata identity, and
+      /// TTL is the only remaining field that can differ.)
       TtlChanged {
           record: ResourceRecord,
           old_ttl: crate::record::Ttl,
@@ -138,9 +141,9 @@
   ```rust
   #[test]
   fn diff_detects_added_record() {
-      let mut zone_a = make_test_zone();
+      let zone_a = make_test_zone();
       let mut zone_b = make_test_zone();
-      zone_b.add_record(ResourceRecord {
+      zone_b.records.push(ResourceRecord {
           name: DomainName::new("new.example.com.").unwrap(),
           class: RecordClass::IN,
           ttl: Ttl::new(3600).unwrap(),
@@ -274,8 +277,16 @@
           records_a in prop::collection::vec(arb_resource_record(), 0..20),
           records_b in prop::collection::vec(arb_resource_record(), 0..20),
       ) {
-          let zone_a = Zone::from_records(records_a);
-          let zone_b = Zone::from_records(records_b);
+          let zone_a = Zone {
+              name: DomainName::new("example.com.").unwrap(),
+              class: RecordClass::IN,
+              records: records_a,
+          };
+          let zone_b = Zone {
+              name: DomainName::new("example.com.").unwrap(),
+              class: RecordClass::IN,
+              records: records_b,
+          };
           let diff = zone_a.diff(&zone_b);
           let applied = zone_a.apply_diff(&diff);
           // After applying diff, the resulting zone should match zone_b
@@ -357,26 +368,39 @@
   /// Each `acquire()` creates a fresh `RndcConnection` (rndc connections
   /// are not persistent — each command is a full connect→auth→command→close
   /// cycle). The pool limits how many concurrent connections exist.
+  ///
+  /// `ClientConfig` is NOT Clone (it contains `TsigKey` which intentionally
+  /// doesn't impl Clone to prevent key material duplication). The pool wraps
+  /// config in `Arc` so multiple guards can reference it without cloning.
   pub struct RndcPool {
-      config: ClientConfig,
+      config: Arc<ClientConfig>,
       semaphore: Arc<Semaphore>,
       idle_timeout: Duration,
   }
 
   /// An acquired pool slot. Releases the semaphore permit on drop.
+  /// Holds an Arc reference to the shared config.
   pub struct PoolGuard {
       _permit: tokio::sync::OwnedSemaphorePermit,
-      config: ClientConfig,
+      config: Arc<ClientConfig>,
+  }
+
+  impl PoolGuard {
+      /// Access the connection config.
+      pub fn config(&self) -> &ClientConfig {
+          &self.config
+      }
   }
 
   impl RndcPool {
       /// Create a new pool with the given concurrency limit.
       ///
+      /// Takes ownership of the `ClientConfig` and wraps it in `Arc`.
       /// `max_concurrent` defaults to 4 if 0 is passed.
       pub fn new(config: ClientConfig, max_concurrent: usize) -> Self {
           let max = if max_concurrent == 0 { 4 } else { max_concurrent };
           Self {
-              config,
+              config: Arc::new(config),
               semaphore: Arc::new(Semaphore::new(max)),
               idle_timeout: Duration::from_secs(30),
           }
@@ -394,7 +418,7 @@
               .map_err(|_| NetError::Connection("pool closed".into()))?;
           Ok(PoolGuard {
               _permit: permit,
-              config: self.config.clone(),
+              config: Arc::clone(&self.config),
           })
       }
 
@@ -405,7 +429,7 @@
   }
   ```
 
-  Note: This is a semaphore-based concurrency limiter, NOT a persistent connection pool. Each rndc command creates a fresh connection because the `RndcConnection<Authenticated<'k>>` lifetime makes pooling persistent connections impractical. The semaphore prevents overwhelming the BIND9 server.
+  Note: This is a semaphore-based concurrency limiter, NOT a persistent connection pool. Each rndc command creates a fresh connection because the `RndcConnection<Authenticated<'k>>` lifetime makes pooling persistent connections impractical. The semaphore prevents overwhelming the BIND9 server. `ClientConfig` is wrapped in `Arc` (not cloned) because `TsigKey` intentionally doesn't implement `Clone`.
 
 - [ ] **Step 6.4: Run tests**
 
@@ -429,15 +453,19 @@
   ```rust
   #[test]
   fn client_config_pool_defaults() {
-      let config = ClientConfig::new("127.0.0.1", 953);
-      assert_eq!(config.pool_size(), None); // Pool disabled by default
+      let config = test_config(); // uses struct literal construction (see net/src/config.rs)
+      assert_eq!(config.pool_size, None); // Pool disabled by default
   }
 
   #[test]
   fn client_config_with_pool() {
-      let config = ClientConfig::new("127.0.0.1", 953).with_pool(4);
-      assert_eq!(config.pool_size(), Some(4));
+      let mut config = test_config();
+      config.pool_size = Some(4);
+      assert_eq!(config.pool_size, Some(4));
   }
+
+  // Helper matching existing net crate test pattern:
+  // fn test_config() -> ClientConfig { ClientConfig { rndc_addr: ..., rndc_key: test_key(), ... } }
   ```
 
 - [ ] **Step 7.2: Add pool config to ClientConfig**
@@ -467,9 +495,9 @@
   #[tokio::test]
   #[ignore = "requires live BIND9 on localhost:9953"]
   async fn pool_burst_10_through_2() {
-      let config = ClientConfig::new("127.0.0.1", 9953)
-          .with_key("rndc-key", /* key bytes */)
-          .with_pool(2);
+      // ClientConfig is constructed as struct literal, not builder pattern.
+      // See crates/bind9-sdk-net/src/config.rs for field names.
+      let config = test_config(); // test helper with pool_size: Some(2)
       let pool = RndcPool::new(config, 2);
 
       let mut handles = Vec::new();

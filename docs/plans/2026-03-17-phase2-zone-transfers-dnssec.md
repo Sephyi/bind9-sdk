@@ -42,7 +42,7 @@
 | `core/src/zone/rdata_text.rs` | Add DNSSEC type arms to `parse_rdata()` and `serialize_rdata()` — delegate to new `rdata_dnssec.rs` |
 | `core/src/protocol.rs` | Add `Nsec3param` and `Dlv` variants to `RecordType` |
 | `core/src/record.rs` | Add `SerialStrategy` enum, `Serial::next()` method |
-| `core/src/error.rs` | Add `column` field to `CoreError::ZoneParse` (GPT-ZONE-COL audit item) |
+| `core/src/error.rs` | Add `column` field to `CoreError::ZoneParse` (GPT-ZONE-COL audit item). Note: `line` is `u32`, not `usize` |
 | `core/src/lib.rs` | Add `pub mod dnssec;`, `pub mod transfer;` |
 | `net/src/error.rs` | Add `TransferFailed`, `SerialMismatch`, `IncompleteTransfer`, `XfrProtocolError`, `TlsRequired` variants |
 | `net/src/tls.rs` | Add localhost exemption logic, self-signed cert support for integration tests |
@@ -271,7 +271,7 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
 
 - [ ] **Step 5.2: Move RecordData enum to rdata/mod.rs**
 
-  Move contents of `rdata.rs` to `rdata/mod.rs`. Extract the `#[cfg(test)] mod tests` block to `rdata/tests.rs`. Add `#[cfg(test)] mod tests;` at the bottom of `mod.rs`.
+  Move contents of `rdata.rs` to `rdata/mod.rs`. Extract the `#[cfg(test)] mod tests` block to `rdata/tests.rs`. Add `#[cfg(test)] mod tests;` at the bottom of `mod.rs`. Add SPDX headers to both new files.
 
 - [ ] **Step 5.3: Run tests to verify no breakage**
 
@@ -400,6 +400,8 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
   ```
 
 #### Task 8: DNSSEC Text Parse/Serialize — DNSKEY, DS, CDS, CDNSKEY, DLV
+
+Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLSA, SSHFP, CSYNC variants. This task adds **text format** parse/serialize for them (currently they fall through to `serialize_as_generic()` which emits `\# 0`). Only NSEC3PARAM and DLV are new enum variants (added in Task 7).
 
 **Files:**
 - Create: `crates/bind9-sdk-core/src/zone/rdata_dnssec.rs`
@@ -681,13 +683,33 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
 
 - [ ] **Step 12.3: Implement core transfer types**
 
+  Per spec: `TransferSession<Pending/Active>` typestate in core.
+
   ```rust
-  /// Transfer request — AXFR or IXFR.
-  pub struct TransferRequest {
+  /// Typestate marker: transfer session created but not started.
+  pub struct Pending;
+  /// Typestate marker: transfer is actively streaming records.
+  pub struct Active;
+
+  /// A zone transfer session with typestate tracking.
+  ///
+  /// `TransferSession<Pending>` → call `start()` → `TransferSession<Active>`
+  pub struct TransferSession<State> {
       zone: DomainName,
       kind: TransferKind,
-      /// Current serial for IXFR (server sends diff from this serial).
       current_serial: Option<Serial>,
+      _state: core::marker::PhantomData<State>,
+  }
+
+  impl TransferSession<Pending> {
+      /// Create a new AXFR transfer session.
+      pub fn axfr(zone: DomainName) -> Self { ... }
+      /// Create a new IXFR transfer session.
+      pub fn ixfr(zone: DomainName, current_serial: Serial) -> Self { ... }
+      /// Zone being transferred.
+      pub fn zone(&self) -> &DomainName { &self.zone }
+      /// Whether this is a full transfer.
+      pub fn is_axfr(&self) -> bool { matches!(self.kind, TransferKind::Axfr) }
   }
 
   /// Whether this is a full (AXFR) or incremental (IXFR) transfer.
@@ -699,6 +721,7 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
 
   /// A single record from a zone transfer response.
   #[derive(Debug, Clone, PartialEq, Eq)]
+  #[non_exhaustive]
   pub enum TransferRecord {
       /// Begin of transfer (first SOA).
       BeginSoa(ResourceRecord),
@@ -856,7 +879,11 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
   ```rust
   #[test]
   fn axfr_query_includes_tsig() {
-      let key = TsigKey::new("test-key", TsigAlgorithm::HmacSha256, &[0u8; 32]).unwrap();
+      let key = TsigKey::new(
+          DomainName::new("test-key.").unwrap(),
+          TsigAlgorithm::HmacSha256,
+          vec![0u8; 32],
+      ).unwrap();
       let query = encode_axfr_query(
           &DomainName::new("example.com.").unwrap(),
           Some(&key),
@@ -952,9 +979,9 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
   async fn axfr_transfer_example_com() {
       let stream = TcpStream::connect("127.0.0.1:8053").await.unwrap();
       let key = TsigKey::new(
-          "rndc-key",
+          DomainName::new("rndc-key.").unwrap(),
           TsigAlgorithm::HmacSha256,
-          &base64_decode("/* key from tests/bind9/rndc.conf */"),
+          base64_decode("/* key from tests/bind9/rndc.conf */"),
       ).unwrap();
       let mut client = TransferClient::new(stream);
       let zone = DomainName::new("transfer.example.com.").unwrap();
@@ -1092,7 +1119,7 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
   #[test]
   fn zone_parse_error_has_column() {
       let input = "example.com. 3600 IN A not-an-ip";
-      let result = ZoneFile::parse(input, &DomainName::new("example.com.").unwrap());
+      let result = ZoneFile::parse(input);
       let err = result.unwrap_err();
       match err {
           CoreError::ZoneParse { line, column, .. } => {
@@ -1108,13 +1135,13 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
   In `error.rs`, change:
 
   ```rust
-  ZoneParse { line: usize, reason: String }
+  ZoneParse { line: u32, reason: String }
   ```
 
   to:
 
   ```rust
-  ZoneParse { line: usize, column: Option<usize>, reason: String }
+  ZoneParse { line: u32, column: Option<u32>, reason: String }
   ```
 
   Update all existing `CoreError::ZoneParse { line, reason }` construction sites to include `column: None` initially, then propagate column info from the tokenizer where available.

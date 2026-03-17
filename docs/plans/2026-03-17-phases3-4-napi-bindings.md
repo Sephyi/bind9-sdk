@@ -112,6 +112,8 @@ Before starting Phase 3 implementation, verify the research spike findings:
   bind9-sdk-net = { path = "../bind9-sdk-net", optional = true }
   napi = { workspace = true }
   napi-derive = { workspace = true }
+  data-encoding = { workspace = true }  # base64 decode for TSIG key secrets
+  serde_json = { workspace = true }      # tagged union rdata serialization
 
   [features]
   default = ["nodejs"]
@@ -226,6 +228,10 @@ Before starting Phase 3 implementation, verify the research spike findings:
 
   mod domain;
   mod error;
+
+  // Net-dependent modules (rndc, nsupdate, stats, transfer, pool) are added
+  // in Phase 4 behind #[cfg(feature = "nodejs")] since they depend on
+  // bind9-sdk-net which is gated behind the `nodejs` feature.
   ```
 
 - [ ] **Step 2.4: Build and verify**
@@ -365,10 +371,12 @@ Before starting Phase 3 implementation, verify the research spike findings:
   #[napi]
   impl JsZoneFile {
       /// Parse a zone file from text.
+      ///
+      /// `ZoneFile::parse()` takes a single `&str` argument.
+      /// The origin is inferred from the `$ORIGIN` directive or SOA record.
       #[napi(factory)]
-      pub fn parse(text: String, origin: String) -> napi::Result<Self> {
-          let origin = DomainName::new(&origin).map_err(BindSdkError::from_core)?;
-          let inner = ZoneFile::parse(&text, &origin).map_err(BindSdkError::from_core)?;
+      pub fn parse(text: String) -> napi::Result<Self> {
+          let inner = ZoneFile::parse(&text).map_err(BindSdkError::from_core)?;
           Ok(Self { inner })
       }
 
@@ -379,9 +387,10 @@ Before starting Phase 3 implementation, verify the research spike findings:
       }
 
       /// Number of records in the zone.
+      /// `ZoneFile.zone.records` is a pub `Vec<ResourceRecord>` field.
       #[napi]
       pub fn record_count(&self) -> u32 {
-          self.inner.records().len() as u32
+          self.inner.zone.records.len() as u32
       }
   }
   ```
@@ -396,7 +405,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
 
   ```bash
   npm run build
-  node -e "const { JsZoneFile } = require('./index.js'); const z = JsZoneFile.parse('example.com. 3600 IN A 192.0.2.1', 'example.com.'); console.log(z.recordCount());"
+  node -e "const { JsZoneFile } = require('./index.js'); const z = JsZoneFile.parse('\$ORIGIN example.com.\nexample.com. 3600 IN A 192.0.2.1'); console.log(z.recordCount());"
   ```
 
 - [ ] **Step 5.4: Commit**
@@ -454,7 +463,9 @@ Before starting Phase 3 implementation, verify the research spike findings:
   ```rust
   use std::sync::Arc;
   use napi_derive::napi;
+  use bind9_sdk_core::DomainName;
   use bind9_sdk_core::tsig::{TsigKey, TsigAlgorithm};
+  use crate::error::BindSdkError;
 
   /// A TSIG key for DNS authentication.
   ///
@@ -483,7 +494,9 @@ Before starting Phase 3 implementation, verify the research spike findings:
           };
           let secret = data_encoding::BASE64.decode(secret_base64.as_bytes())
               .map_err(|e| napi::Error::from_reason(format!("invalid base64: {e}")))?;
-          let key = TsigKey::new(&name, algo, &secret)
+          // TsigKey::new() takes owned DomainName + owned Vec<u8>
+          let domain = DomainName::new(&name).map_err(BindSdkError::from_core)?;
+          let key = TsigKey::new(domain, algo, secret)
               .map_err(BindSdkError::from_core)?;
           Ok(Self { inner: Arc::new(key) })
       }
@@ -603,8 +616,8 @@ Before starting Phase 3 implementation, verify the research spike findings:
   console.assert(d.toString() === 'example.com.');
   console.assert(d.isAbsolute() === true);
 
-  // ZoneFile
-  const zone = JsZoneFile.parse('example.com. 3600 IN A 192.0.2.1', 'example.com.');
+  // ZoneFile — parse() takes a single string argument
+  const zone = JsZoneFile.parse('$ORIGIN example.com.\nexample.com. 3600 IN A 192.0.2.1');
   console.assert(zone.recordCount() === 1);
   console.assert(zone.serialize().includes('192.0.2.1'));
 
