@@ -264,6 +264,26 @@ async fn transfer_client_error_on_rcode() {
     assert!(err.to_string().contains("RCODE 5"));
 }
 
+#[tokio::test]
+async fn transfer_rejects_non_localhost_without_tls() {
+    let addr: std::net::SocketAddr = "10.0.0.1:53".parse().unwrap();
+    let result = super::TransferClient::connect(addr, None).await;
+    assert!(matches!(result, Err(crate::NetError::TlsRequired { .. })));
+}
+
+#[tokio::test]
+async fn transfer_allows_localhost_without_tls() {
+    // This will fail to connect (no server), but should NOT get TlsRequired error
+    let addr: std::net::SocketAddr = "127.0.0.1:59999".parse().unwrap();
+    let result = super::TransferClient::connect(addr, None).await;
+    // Should be a connection error, not TlsRequired
+    match result {
+        Err(crate::NetError::TlsRequired { .. }) => panic!("localhost should not require TLS"),
+        Err(_) => {} // Connection refused is expected
+        Ok(_) => panic!("should not connect to non-existent server"),
+    }
+}
+
 #[test]
 fn mock_tcp_stream_implements_required_traits() {
     fn assert_async_read_write<T: AsyncRead + AsyncWrite + Unpin>() {}
