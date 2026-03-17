@@ -9,6 +9,7 @@ members = [
     "crates/bind9-sdk-core",
     "crates/bind9-sdk-net",
     "crates/bind9-sdk-bindings",
+    "crates/bind9-sdk-cli",
 ]
 
 [workspace.package]
@@ -93,6 +94,13 @@ async-stream = { version = "0.3" }
 # napi-rs v3 — Node.js/Bun native addon + WASM
 napi = { version = "3", features = ["async", "serde-json"] }
 napi-derive = "3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+toml = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
 
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }
