@@ -24,6 +24,7 @@ pub(crate) fn parse_dnskey(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("DNSKEY expects at least 4 tokens, got {}", tokens.len()),
         });
     }
@@ -36,6 +37,7 @@ pub(crate) fn parse_dnskey(tokens: &[&str]) -> Result<RecordData, CoreError> {
         .decode(b64.as_bytes())
         .map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid DNSKEY base64 key: {e}"),
         })?;
     Ok(RecordData::Dnskey {
@@ -62,6 +64,7 @@ pub(crate) fn parse_ds(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("DS expects at least 4 tokens, got {}", tokens.len()),
         });
     }
@@ -69,7 +72,11 @@ pub(crate) fn parse_ds(tokens: &[&str]) -> Result<RecordData, CoreError> {
     let algorithm = parse_u8(tokens[1], "DS algorithm")?;
     let digest_type = parse_u8(tokens[2], "DS digest_type")?;
     let hex: String = tokens[3..].iter().copied().collect();
-    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse { line: 0, reason })?;
+    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse {
+        line: 0,
+        column: None,
+        reason,
+    })?;
     Ok(RecordData::Ds {
         key_tag,
         algorithm,
@@ -88,6 +95,7 @@ pub(crate) fn parse_cds(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("CDS expects at least 4 tokens, got {}", tokens.len()),
         });
     }
@@ -95,7 +103,11 @@ pub(crate) fn parse_cds(tokens: &[&str]) -> Result<RecordData, CoreError> {
     let algorithm = parse_u8(tokens[1], "CDS algorithm")?;
     let digest_type = parse_u8(tokens[2], "CDS digest_type")?;
     let hex: String = tokens[3..].iter().copied().collect();
-    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse { line: 0, reason })?;
+    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse {
+        line: 0,
+        column: None,
+        reason,
+    })?;
     Ok(RecordData::Cds {
         key_tag,
         algorithm,
@@ -114,6 +126,7 @@ pub(crate) fn parse_cdnskey(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("CDNSKEY expects at least 4 tokens, got {}", tokens.len()),
         });
     }
@@ -125,6 +138,7 @@ pub(crate) fn parse_cdnskey(tokens: &[&str]) -> Result<RecordData, CoreError> {
         .decode(b64.as_bytes())
         .map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid CDNSKEY base64 key: {e}"),
         })?;
     Ok(RecordData::Cdnskey {
@@ -150,6 +164,7 @@ pub(crate) fn parse_dlv(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("DLV expects at least 4 tokens, got {}", tokens.len()),
         });
     }
@@ -157,7 +172,11 @@ pub(crate) fn parse_dlv(tokens: &[&str]) -> Result<RecordData, CoreError> {
     let algorithm = parse_u8(tokens[1], "DLV algorithm")?;
     let digest_type = parse_u8(tokens[2], "DLV digest_type")?;
     let hex: String = tokens[3..].iter().copied().collect();
-    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse { line: 0, reason })?;
+    let digest = decode_hex(&hex).map_err(|reason| CoreError::ZoneParse {
+        line: 0,
+        column: None,
+        reason,
+    })?;
     Ok(RecordData::Dlv {
         key_tag,
         algorithm,
@@ -178,6 +197,7 @@ pub(crate) fn parse_rrsig(tokens: &[&str], origin: &DomainName) -> Result<Record
     if tokens.len() < 9 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("RRSIG expects at least 9 tokens, got {}", tokens.len()),
         });
     }
@@ -194,6 +214,7 @@ pub(crate) fn parse_rrsig(tokens: &[&str], origin: &DomainName) -> Result<Record
         .decode(b64.as_bytes())
         .map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid RRSIG base64 signature: {e}"),
         })?;
     Ok(RecordData::Rrsig {
@@ -236,6 +257,7 @@ pub(crate) fn parse_nsec(tokens: &[&str], origin: &DomainName) -> Result<RecordD
     if tokens.is_empty() {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: "NSEC expects at least 1 token (next_domain)".into(),
         });
     }
@@ -268,6 +290,7 @@ pub(crate) fn parse_nsec3(tokens: &[&str]) -> Result<RecordData, CoreError> {
     if tokens.len() < 5 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("NSEC3 expects at least 5 tokens, got {}", tokens.len()),
         });
     }
@@ -279,6 +302,7 @@ pub(crate) fn parse_nsec3(tokens: &[&str]) -> Result<RecordData, CoreError> {
         .decode(tokens[4].to_ascii_uppercase().as_bytes())
         .map_err(|e| CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid NSEC3 base32hex next_hashed_owner: {e}"),
         })?;
     let type_bitmaps = if tokens.len() > 5 {
@@ -324,6 +348,7 @@ pub(crate) fn parse_nsec3param(tokens: &[&str]) -> Result<RecordData, CoreError>
     if tokens.len() != 4 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("NSEC3PARAM expects 4 tokens, got {}", tokens.len()),
         });
     }
@@ -359,6 +384,7 @@ pub(crate) fn serialize_nsec3param(
 fn parse_u8(s: &str, field: &str) -> Result<u8, CoreError> {
     s.parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} `{s}`: {e}"),
     })
 }
@@ -366,6 +392,7 @@ fn parse_u8(s: &str, field: &str) -> Result<u8, CoreError> {
 fn parse_u16(s: &str, field: &str) -> Result<u16, CoreError> {
     s.parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} `{s}`: {e}"),
     })
 }
@@ -373,6 +400,7 @@ fn parse_u16(s: &str, field: &str) -> Result<u16, CoreError> {
 fn parse_u32(s: &str, field: &str) -> Result<u32, CoreError> {
     s.parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} `{s}`: {e}"),
     })
 }
@@ -390,31 +418,38 @@ fn parse_timestamp(s: &str, field: &str) -> Result<u32, CoreError> {
     if s.len() != 14 {
         return Err(CoreError::ZoneParse {
             line: 0,
+            column: None,
             reason: format!("invalid {field} timestamp `{s}`: expected YYYYMMDDHHMMSS"),
         });
     }
     let year: u32 = s[0..4].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} year: {e}"),
     })?;
     let month: u32 = s[4..6].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} month: {e}"),
     })?;
     let day: u32 = s[6..8].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} day: {e}"),
     })?;
     let hour: u32 = s[8..10].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} hour: {e}"),
     })?;
     let minute: u32 = s[10..12].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} minute: {e}"),
     })?;
     let second: u32 = s[12..14].parse().map_err(|e| CoreError::ZoneParse {
         line: 0,
+        column: None,
         reason: format!("invalid {field} second: {e}"),
     })?;
 
@@ -479,7 +514,11 @@ fn parse_salt(s: &str) -> Result<Vec<u8>, CoreError> {
     if s == "-" {
         Ok(Vec::new())
     } else {
-        decode_hex(s).map_err(|reason| CoreError::ZoneParse { line: 0, reason })
+        decode_hex(s).map_err(|reason| CoreError::ZoneParse {
+            line: 0,
+            column: None,
+            reason,
+        })
     }
 }
 
@@ -513,12 +552,14 @@ fn record_type_from_str(s: &str) -> Result<RecordType, CoreError> {
             if let Some(stripped) = other.strip_prefix("TYPE") {
                 let v: u16 = stripped.parse().map_err(|e| CoreError::ZoneParse {
                     line: 0,
+                    column: None,
                     reason: format!("invalid record type `{s}`: {e}"),
                 })?;
                 Ok(RecordType::from_value(v))
             } else {
                 Err(CoreError::ZoneParse {
                     line: 0,
+                    column: None,
                     reason: format!("unknown record type `{s}`"),
                 })
             }
