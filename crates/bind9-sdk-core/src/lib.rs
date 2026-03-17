@@ -31,6 +31,8 @@ pub mod rdata;
 pub mod record;
 /// Management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`).
 pub mod traits;
+/// Zone transfer types (`TransferSession`, `TransferKind`, `TransferRecord`).
+pub mod transfer;
 /// TSIG authentication types and signing/verification (RFC 8945).
 pub mod tsig;
 /// RFC 2136 dynamic update builder and message types.
@@ -48,6 +50,7 @@ pub use traits::{
     DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneManager,
     ZoneStats,
 };
+pub use transfer::{Active, Pending, TransferKind, TransferRecord, TransferSession};
 pub use tsig::{TsigAlgorithm, TsigKey, TsigRecord};
 pub use update::{
     Prerequisite, Signed, Unsigned, UpdateBuilder, UpdateEntry, UpdateMessage, UpdateResult,
