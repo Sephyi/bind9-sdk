@@ -75,6 +75,7 @@ pub enum Command {
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
+        #[arg(value_enum)]
         shell: Shell,
     },
 }
