@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
+pub mod diff;
 pub(crate) mod parser;
 pub(crate) mod rdata_dnssec;
 pub(crate) mod rdata_text;
 pub(crate) mod serializer;
+
+pub use diff::{DiffEntry, ZoneDiff};
 
 use alloc::string::String;
 use alloc::vec::Vec;
