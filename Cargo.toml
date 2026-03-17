@@ -90,6 +90,10 @@ tokio-rustls = { version = "0.26" }
 tokio-stream = { version = "0.1" }
 async-stream = { version = "0.3" }
 
+# napi-rs v3 — Node.js/Bun native addon + WASM
+napi = { version = "3", features = ["async", "serde-json"] }
+napi-derive = "3"
+
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }
 insta = { version = "1" }
