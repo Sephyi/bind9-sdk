@@ -65,6 +65,9 @@ zeroize = { version = "1", default-features = false, features = [
 # Base64 encoding for TSIG keys — no_std compatible
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
+# Base32hex encoding for NSEC3 — no_std compatible
+data-encoding = { version = "2", default-features = false, features = ["alloc"] }
+
 # Random bytes for key generation — std only (not compiled for WASM)
 getrandom = { version = "0.3", default-features = false }
 

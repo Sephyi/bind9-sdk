@@ -33,6 +33,15 @@ pub(crate) fn parse_rdata(
         "TXT" => parse_txt(tokens),
         "SRV" => parse_srv(tokens, origin),
         "CAA" => parse_caa(tokens),
+        "DNSKEY" => super::rdata_dnssec::parse_dnskey(tokens),
+        "DS" => super::rdata_dnssec::parse_ds(tokens),
+        "CDS" => super::rdata_dnssec::parse_cds(tokens),
+        "CDNSKEY" => super::rdata_dnssec::parse_cdnskey(tokens),
+        "DLV" => super::rdata_dnssec::parse_dlv(tokens),
+        "RRSIG" => super::rdata_dnssec::parse_rrsig(tokens, origin),
+        "NSEC" => super::rdata_dnssec::parse_nsec(tokens, origin),
+        "NSEC3" => super::rdata_dnssec::parse_nsec3(tokens),
+        "NSEC3PARAM" => super::rdata_dnssec::parse_nsec3param(tokens),
         _ => parse_unknown(rtype, tokens),
     }
 }
@@ -66,8 +75,84 @@ pub(crate) fn serialize_rdata(rdata: &RecordData) -> String {
             target,
         } => format!("{priority} {weight} {port} {target}"),
         RecordData::Caa { flags, tag, value } => format!("{flags} {tag} \"{value}\""),
+        RecordData::Dnskey {
+            flags,
+            protocol,
+            algorithm,
+            public_key,
+        } => super::rdata_dnssec::serialize_dnskey(*flags, *protocol, *algorithm, public_key),
+        RecordData::Ds {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+        } => super::rdata_dnssec::serialize_ds(*key_tag, *algorithm, *digest_type, digest),
+        RecordData::Cds {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+        } => super::rdata_dnssec::serialize_cds(*key_tag, *algorithm, *digest_type, digest),
+        RecordData::Cdnskey {
+            flags,
+            protocol,
+            algorithm,
+            public_key,
+        } => super::rdata_dnssec::serialize_cdnskey(*flags, *protocol, *algorithm, public_key),
+        RecordData::Dlv {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+        } => super::rdata_dnssec::serialize_dlv(*key_tag, *algorithm, *digest_type, digest),
+        RecordData::Rrsig {
+            type_covered,
+            algorithm,
+            labels,
+            original_ttl,
+            signature_expiration,
+            signature_inception,
+            key_tag,
+            signer_name,
+            signature,
+        } => super::rdata_dnssec::serialize_rrsig(
+            *type_covered,
+            *algorithm,
+            *labels,
+            *original_ttl,
+            *signature_expiration,
+            *signature_inception,
+            *key_tag,
+            signer_name,
+            signature,
+        ),
+        RecordData::Nsec {
+            next_domain,
+            type_bitmaps,
+        } => super::rdata_dnssec::serialize_nsec(next_domain, type_bitmaps),
+        RecordData::Nsec3 {
+            hash_algorithm,
+            flags,
+            iterations,
+            salt,
+            next_hashed_owner,
+            type_bitmaps,
+        } => super::rdata_dnssec::serialize_nsec3(
+            *hash_algorithm,
+            *flags,
+            *iterations,
+            salt,
+            next_hashed_owner,
+            type_bitmaps,
+        ),
+        RecordData::Nsec3param {
+            hash_algorithm,
+            flags,
+            iterations,
+            salt,
+        } => super::rdata_dnssec::serialize_nsec3param(*hash_algorithm, *flags, *iterations, salt),
         RecordData::Unknown { rtype, rdata } => serialize_unknown(*rtype, rdata),
-        // DNSSEC and other types not yet supported for text format — use generic format
+        // Remaining types not yet supported for text format — use generic format
         other => serialize_as_generic(other),
     }
 }
@@ -345,7 +430,7 @@ fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> 
 }
 
 /// Decode a hex string into bytes.
-fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
     if !hex.len().is_multiple_of(2) {
         return Err(format!("hex string has odd length: {}", hex.len()));
     }
@@ -364,7 +449,7 @@ fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Encode bytes to lowercase hex string.
-fn encode_hex(bytes: &[u8]) -> String {
+pub(crate) fn encode_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         use core::fmt::Write;

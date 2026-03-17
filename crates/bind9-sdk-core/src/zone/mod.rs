@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 pub(crate) mod parser;
+pub(crate) mod rdata_dnssec;
 pub(crate) mod rdata_text;
 pub(crate) mod serializer;
 
