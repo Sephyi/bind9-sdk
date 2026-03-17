@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
-use bind9_sdk_net::rndc::command::RndcCommand;
 use bind9_sdk_net::rndc::RndcConnection;
+use bind9_sdk_net::rndc::command::RndcCommand;
 use bind9_sdk_net::{ClientConfig, RndcPool};
 
 /// rndc address for the test BIND9 instance.
@@ -116,11 +116,7 @@ async fn pool_blocks_third_connection_when_full() {
     let _guard = pool.acquire().await.expect("first acquire failed");
 
     // With the slot held, a second acquire must not complete immediately.
-    let result = tokio::time::timeout(
-        Duration::from_millis(100),
-        pool.acquire(),
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_millis(100), pool.acquire()).await;
     assert!(
         result.is_err(),
         "pool should block second acquire while slot is held"

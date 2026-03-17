@@ -391,7 +391,10 @@ pub fn parse_resource_record(
     let class = RecordClass::from_value(rclass_value);
     // TTL values > 2^31 - 1 are clamped to 0 per RFC 8767
     let ttl = Ttl::new(ttl_value).unwrap_or_else(|_| {
-        tracing::warn!(ttl_value, "TTL exceeds RFC 8767 max (2^31-1), clamping to 0");
+        tracing::warn!(
+            ttl_value,
+            "TTL exceeds RFC 8767 max (2^31-1), clamping to 0"
+        );
         Ttl::new(0).unwrap()
     });
 

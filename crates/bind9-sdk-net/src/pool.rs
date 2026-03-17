@@ -140,11 +140,7 @@ mod tests {
         assert_eq!(pool.available(), 0);
 
         // Third acquire should timeout — pool exhausted.
-        let result = tokio::time::timeout(
-            Duration::from_millis(50),
-            pool.acquire(),
-        )
-        .await;
+        let result = tokio::time::timeout(Duration::from_millis(50), pool.acquire()).await;
         assert!(result.is_err(), "should timeout — pool exhausted");
     }
 
