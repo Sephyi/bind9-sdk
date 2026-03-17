@@ -46,6 +46,33 @@ pub struct ClientConfig {
 
     /// Timeout for individual operations (default: 10 seconds).
     pub timeout: Duration,
+
+    /// Maximum concurrent rndc connections for [`RndcPool`](crate::pool::RndcPool).
+    ///
+    /// `None` means the pool will use its own default (4).
+    /// `Some(0)` is treated the same as `None`.
+    pub pool_size: Option<usize>,
+}
+
+impl ClientConfig {
+    /// Create a minimal configuration with only the required fields.
+    ///
+    /// All optional fields (`stats_url`, `dns_addr`, `tls`, `pool_size`) are
+    /// set to `None`. The `timeout` defaults to 10 seconds.
+    ///
+    /// Use direct struct construction (within the crate) to set optional fields,
+    /// or modify individual fields after calling this constructor.
+    pub fn new(rndc_addr: std::net::SocketAddr, rndc_key: TsigKey) -> Self {
+        Self {
+            rndc_addr,
+            rndc_key,
+            stats_url: None,
+            dns_addr: None,
+            tls: None,
+            timeout: std::time::Duration::from_secs(10),
+            pool_size: None,
+        }
+    }
 }
 
 /// A client for managing a BIND9 server.
@@ -241,6 +268,7 @@ mod tests {
             dns_addr: Some("127.0.0.1:53".parse().unwrap()),
             tls: None,
             timeout: Duration::from_secs(10),
+            pool_size: None,
         };
         assert_eq!(config.rndc_addr.port(), 953);
         assert!(config.stats_url.is_some());
@@ -256,6 +284,7 @@ mod tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
+            pool_size: None,
         };
         assert!(config.stats_url.is_none());
         assert!(config.dns_addr.is_none());
@@ -271,6 +300,7 @@ mod tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(10),
+            pool_size: None,
         };
         let client = Bind9Client::new(config);
         assert_eq!(client.config().rndc_addr.port(), 953);
@@ -292,6 +322,7 @@ mod tests {
             dns_addr: None,
             tls: Some(tls),
             timeout: Duration::from_secs(10),
+            pool_size: None,
         };
         assert!(config.tls.is_some());
     }
@@ -348,6 +379,7 @@ mod stats_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
+            pool_size: None,
         };
         let client = Bind9Client::new(config);
         let result = client.server_stats().await;
@@ -366,6 +398,7 @@ mod stats_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
+            pool_size: None,
         };
         let client = Bind9Client::new(config);
         let zone = bind9_sdk_core::domain::DomainName::new("example.com.").unwrap();
@@ -401,6 +434,7 @@ mod dynamic_updater_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
+            pool_size: None,
         };
         let _client = Bind9Client::new(config);
         // Trait impl is verified at compile time via _assert_dynamic_updater_impl
