@@ -50,6 +50,10 @@ pub enum RecordType {
     Csync,
     /// Responsible person (type 17).
     Rp,
+    /// NSEC3 hash parameters (type 51, RFC 5155).
+    Nsec3param,
+    /// DNSSEC lookaside validation (type 32769, historic, RFC 4431).
+    Dlv,
     /// Any other record type not listed above, identified by its numeric code.
     Other(u16),
 }
@@ -81,6 +85,8 @@ impl RecordType {
             44 => Self::Sshfp,
             62 => Self::Csync,
             17 => Self::Rp,
+            51 => Self::Nsec3param,
+            32769 => Self::Dlv,
             other => Self::Other(other),
         }
     }
@@ -109,6 +115,8 @@ impl RecordType {
             Self::Sshfp => 44,
             Self::Csync => 62,
             Self::Rp => 17,
+            Self::Nsec3param => 51,
+            Self::Dlv => 32769,
             Self::Other(v) => *v,
         }
     }
@@ -138,6 +146,8 @@ impl fmt::Display for RecordType {
             Self::Sshfp => f.write_str("SSHFP"),
             Self::Csync => f.write_str("CSYNC"),
             Self::Rp => f.write_str("RP"),
+            Self::Nsec3param => f.write_str("NSEC3PARAM"),
+            Self::Dlv => f.write_str("DLV"),
             Self::Other(v) => write!(f, "TYPE{v}"),
         }
     }
@@ -315,5 +325,21 @@ mod tests {
         let rcode = Rcode::from_value(999);
         assert_eq!(rcode, Rcode::Other(999));
         assert_eq!(rcode.value(), 999);
+    }
+
+    #[test]
+    fn record_type_nsec3param() {
+        let rt = RecordType::from_value(51);
+        assert_eq!(rt, RecordType::Nsec3param);
+        assert_eq!(rt.value(), 51);
+        assert_eq!(alloc::format!("{rt}"), "NSEC3PARAM");
+    }
+
+    #[test]
+    fn record_type_dlv() {
+        let rt = RecordType::from_value(32769);
+        assert_eq!(rt, RecordType::Dlv);
+        assert_eq!(rt.value(), 32769);
+        assert_eq!(alloc::format!("{rt}"), "DLV");
     }
 }

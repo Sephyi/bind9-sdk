@@ -78,6 +78,8 @@ fn rdata_type_string(rdata: &crate::rdata::RecordData) -> String {
         RecordData::Sshfp { .. } => String::from("SSHFP"),
         RecordData::Csync { .. } => String::from("CSYNC"),
         RecordData::Rp { .. } => String::from("RP"),
+        RecordData::Nsec3param { .. } => String::from("NSEC3PARAM"),
+        RecordData::Dlv { .. } => String::from("DLV"),
         RecordData::Unknown { rtype, .. } => format!("TYPE{rtype}"),
     }
 }
@@ -333,5 +335,22 @@ example.com. 3600 IN A 192.0.2.1
         let zf2 = ZoneFile::parse(&serialized).unwrap();
         let serialized2 = zf2.serialize();
         insta::assert_snapshot!(serialized2);
+    }
+
+    /// Snapshot serialization of a zone with DNSSEC records (DNSKEY, DS, RRSIG, NSEC).
+    #[test]
+    fn snapshot_dnssec_zone_serialization() {
+        let input = "\
+$ORIGIN example.com.
+$TTL 3600
+example.com. 3600 IN SOA ns1.example.com. admin.example.com. 2026031401 3600 900 604800 86400
+example.com. 3600 IN NS ns1.example.com.
+example.com. 3600 IN DNSKEY 257 3 13 dGVzdGtleQ==
+example.com. 3600 IN DS 12345 13 2 aabbccdd
+example.com. 3600 IN NSEC3PARAM 1 0 10 aabb
+";
+        let zf = ZoneFile::parse(input).unwrap();
+        let output = zf.serialize();
+        insta::assert_snapshot!(output);
     }
 }

@@ -223,6 +223,8 @@ fn rdata_type_value(rdata: &crate::rdata::RecordData) -> u16 {
         RecordData::Sshfp { .. } => 44,
         RecordData::Csync { .. } => 62,
         RecordData::Rp { .. } => 17,
+        RecordData::Nsec3param { .. } => 51,
+        RecordData::Dlv { .. } => 32769,
         RecordData::Unknown { rtype, .. } => *rtype,
     }
 }
@@ -408,6 +410,29 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
         RecordData::Rp { mbox, txt } => {
             mbox.write_wire(wire);
             txt.write_wire(wire);
+        }
+        RecordData::Nsec3param {
+            hash_algorithm,
+            flags,
+            iterations,
+            salt,
+        } => {
+            wire.push(*hash_algorithm);
+            wire.push(*flags);
+            wire.extend_from_slice(&iterations.to_be_bytes());
+            wire.push(salt.len() as u8);
+            wire.extend_from_slice(salt);
+        }
+        RecordData::Dlv {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+        } => {
+            wire.extend_from_slice(&key_tag.to_be_bytes());
+            wire.push(*algorithm);
+            wire.push(*digest_type);
+            wire.extend_from_slice(digest);
         }
     }
 }
