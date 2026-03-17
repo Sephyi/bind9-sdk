@@ -334,6 +334,19 @@
 - [ ] **Step 6.1: Write failing test**
 
   ```rust
+  /// Helper — constructs a test ClientConfig via struct literal (same-crate access).
+  /// Mirrors the existing test_key() pattern in config.rs.
+  fn pool_config() -> ClientConfig {
+      ClientConfig {
+          rndc_addr: "127.0.0.1:9953".parse().unwrap(),
+          rndc_key: test_key(),
+          stats_url: None,
+          nsupdate_addr: None,
+          tls: None,
+          pool_size: None,
+      }
+  }
+
   #[tokio::test]
   async fn pool_limits_concurrency() {
       let pool = RndcPool::new(pool_config(), 2);
@@ -375,7 +388,6 @@
   pub struct RndcPool {
       config: Arc<ClientConfig>,
       semaphore: Arc<Semaphore>,
-      idle_timeout: Duration,
   }
 
   /// An acquired pool slot. Releases the semaphore permit on drop.
@@ -402,14 +414,7 @@
           Self {
               config: Arc::new(config),
               semaphore: Arc::new(Semaphore::new(max)),
-              idle_timeout: Duration::from_secs(30),
           }
-      }
-
-      /// Set the idle timeout for releasing unused permits.
-      pub fn with_idle_timeout(mut self, timeout: Duration) -> Self {
-          self.idle_timeout = timeout;
-          self
       }
 
       /// Acquire a pool slot. Blocks if all slots are in use.
@@ -599,7 +604,7 @@
   clap_complete = { workspace = true }
   tokio = { workspace = true }
   toml = { workspace = true }
-  serde = { workspace = true }
+  serde = { workspace = true, features = ["std"] }  # workspace serde is no_std; CLI needs std
   tracing = { workspace = true }
   tracing-subscriber = { version = "0.3", features = ["env-filter"] }
   ```
@@ -617,7 +622,7 @@
   pub enum CliError {
       /// Network operation failed.
       #[error(transparent)]
-      Net(#[from] bind9_sdk::NetError),
+      Net(#[from] bind9_sdk::net::NetError),
 
       /// Core operation failed.
       #[error(transparent)]
@@ -739,6 +744,8 @@
 - Create: `crates/bind9-sdk-cli/src/commands/dnssec.rs`
 - Create: `crates/bind9-sdk-cli/src/commands/stats.rs`
 - Modify: `crates/bind9-sdk-cli/src/main.rs`
+
+  **TDD note:** Clap command structure is scaffolding — the "test" is `cargo run -- --help` at Step 12.4 which verifies the structure parses and renders. Full TDD with `assert_cmd` is deferred to integration tests (Task 18).
 
 - [ ] **Step 12.1: Define clap CLI structure**
 
@@ -887,6 +894,8 @@
 - Modify: `crates/bind9-sdk-cli/src/commands/record.rs`
 - Modify: `crates/bind9-sdk-cli/src/commands/dnssec.rs`
 - Modify: `crates/bind9-sdk-cli/src/commands/stats.rs`
+
+  **TDD note:** These commands are thin wrappers around SDK methods (already tested in core/net). Unit tests validate command output formatting; integration tests against live BIND9 in Task 18 validate end-to-end behavior.
 
 - [ ] **Step 14.1: Implement record add/delete**
 

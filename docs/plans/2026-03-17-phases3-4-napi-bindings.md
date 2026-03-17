@@ -85,6 +85,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   In workspace `Cargo.toml`, add:
 
   ```toml
+  # Feature names are from v2 — confirm exact v3 feature names from research spike
   napi = { version = "3", features = ["async", "serde-json"] }
   napi-derive = "3"
   ```
@@ -111,7 +112,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   crate-type = ["cdylib", "rlib"]
 
   [dependencies]
-  bind9-sdk-core = { path = "../bind9-sdk-core" }
+  bind9-sdk-core = { path = "../bind9-sdk-core", features = ["serde"] }  # serde needed for RecordData → JSON
   bind9-sdk-net = { path = "../bind9-sdk-net", optional = true }
   napi = { workspace = true }
   napi-derive = { workspace = true }
@@ -291,8 +292,6 @@ Before starting Phase 3 implementation, verify the research spike findings:
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
   // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
-  extern crate napi_build;
 
   fn main() {
       napi_build::setup();
@@ -623,13 +622,12 @@ Before starting Phase 3 implementation, verify the research spike findings:
       #[napi]
       pub fn sign(&mut self, key: &JsTsigKey) -> napi::Result<napi::bindgen_prelude::Buffer> {
           let builder = self.take()?;
-          let timestamp = std::time::SystemTime::now()
-              .duration_since(std::time::UNIX_EPOCH)
-              .unwrap_or_default()
-              .as_secs();
-          let signed = builder.sign(key.inner_ref(), timestamp);
+          // sign_now() handles timestamping automatically (requires `std` feature,
+          // which bindings have since they depend on bind9-sdk-net)
+          let signed = builder.sign_now(key.inner_ref());
           let message = signed.build();
-          Ok(message.wire_bytes().to_vec().into())
+          // wire_bytes is pub(crate); use public accessor as_bytes()
+          Ok(message.as_bytes().to_vec().into())
       }
   }
 
@@ -641,10 +639,19 @@ Before starting Phase 3 implementation, verify the research spike findings:
       rtype: &str,
       rdata: &str,
   ) -> napi::Result<ResourceRecord> {
-      // Implementation: parse name as DomainName, ttl as Ttl,
-      // use rdata_text::parse_rdata() to parse the rdata string
-      // into a RecordData variant based on the rtype.
-      todo!("implement record parsing from string params")
+      let domain = DomainName::new(name).map_err(BindSdkError::from_core)?;
+      let ttl_val = Ttl::new(ttl).map_err(BindSdkError::from_core)?;
+      // Construct a minimal zone-file line and parse it via ZoneFile::parse().
+      // rdata_text::parse_rdata() is pub(crate) and not accessible from bindings.
+      // Approach: build a zone file snippet and extract the first record.
+      let snippet = format!(
+          "$ORIGIN {name}\n{name} {ttl} IN {rtype} {rdata}\n"
+      );
+      let zone_file = bind9_sdk_core::zone::ZoneFile::parse(&snippet)
+          .map_err(BindSdkError::from_core)?;
+      zone_file.zone.records.into_iter().next().ok_or_else(|| {
+          napi::Error::from_reason("failed to parse record from string params")
+      })
   }
   ```
 
@@ -722,8 +729,8 @@ Before starting Phase 3 implementation, verify the research spike findings:
   console.assert(zone.serialize().includes('192.0.2.1'));
 
   // TSIG (constructor only — can't sign without network)
-  const key = new JsTsigKey('test', 'hmac-sha256', 'dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGs=');
-  console.assert(key.name() === 'test');
+  const key = new JsTsigKey('test.', 'hmac-sha256', 'dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGs=');
+  console.assert(key.name() === 'test.'); // DomainName always stores absolute form
 
   console.log('Node.js smoke test passed');
   ```

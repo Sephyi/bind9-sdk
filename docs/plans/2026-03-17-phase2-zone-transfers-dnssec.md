@@ -258,6 +258,8 @@ All three worktrees branch from `development` after P2-W0 merges. They run in pa
 
 #### Task 5: Split rdata.rs to Submodule
 
+This split is organizational — `rdata.rs` currently has 232 lines and only 2 new variants are added (NSEC3PARAM, DLV, ~30 lines). The split prepares the module for the `rdata_dnssec.rs` text parser in Task 8, keeping the enum definition separate from tests for cleaner navigation.
+
 **Files:**
 - Create: `crates/bind9-sdk-core/src/rdata/mod.rs`
 - Create: `crates/bind9-sdk-core/src/rdata/tests.rs`
@@ -458,7 +460,7 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
   - `serialize_cdnskey(...)` — delegate to `serialize_dnskey`
   - `serialize_dlv(...)` — delegate to `serialize_ds`
 
-  Base64 encoding/decoding: use `data-encoding` crate (no_std compatible). Add to `core/Cargo.toml`:
+  Base64 encoding/decoding: use the existing `base64` crate (already in workspace for TSIG). Only add `data-encoding` for base32hex encoding needed by NSEC3 (Task 9). Add `data-encoding` to `core/Cargo.toml`:
 
   ```toml
   [dependencies]
@@ -470,6 +472,8 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
   ```toml
   data-encoding = { version = "2", default-features = false, features = ["alloc"] }
   ```
+
+  Note: `data-encoding` is for base32hex (NSEC3) only. For base64 (DNSKEY public keys, RRSIG signatures), use `base64::prelude::*` which is already available in the workspace.
 
 - [ ] **Step 8.4: Wire into rdata_text.rs**
 
@@ -1018,12 +1022,23 @@ Note: `RecordData` already has DNSKEY, RRSIG, NSEC, NSEC3, DS, CDS, CDNSKEY, TLS
 - [ ] **Step 18.1: Write failing test**
 
   ```rust
+  #[cfg(feature = "std")]
   #[test]
   fn serial_strategy_date_counter() {
       let strategy = SerialStrategy::DateCounter;
       let current = Serial::new(2026031700);
       let next = strategy.next(current);
+      // Date-based logic requires std::time::SystemTime.
+      // Without std, DateCounter falls back to current + 1.
       assert_eq!(next.value(), 2026031701);
+  }
+
+  #[test]
+  fn serial_strategy_monotonic() {
+      let strategy = SerialStrategy::Monotonic;
+      let current = Serial::new(100);
+      let next = strategy.next(current);
+      assert_eq!(next.value(), 101);
   }
   ```
 
@@ -1389,7 +1404,7 @@ After all three worktrees complete:
 
 - [ ] **Step 24.3: Add rndc command variants**
 
-  In `command.rs`, add `DnssecStatus(DomainName)` and `DnssecCheckDs(DomainName)` to `RndcCommand`.
+  In `command.rs`, add `DnssecStatus { zone: String }` and `DnssecCheckDs { zone: String }` to `RndcCommand`. Note: existing `RndcCommand` variants use `String` for zone names (not `DomainName`), matching the convention established by `ReloadZone { zone: String }`, `Freeze { zone: String }`, etc.
 
 - [ ] **Step 24.4: Run tests**
 
