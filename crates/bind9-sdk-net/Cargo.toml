@@ -26,6 +26,8 @@ rustls = { workspace = true }
 webpki-roots = { workspace = true }
 tokio-rustls = { workspace = true }
 base64 = { workspace = true }
+tokio-stream = { workspace = true }
+async-stream = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"
