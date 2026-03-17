@@ -15,6 +15,8 @@ pub mod wire;
 #[cfg(test)]
 mod tests;
 
+use std::time::Duration;
+
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::rdata::RecordData;
 use bind9_sdk_core::record::Serial;
@@ -31,12 +33,22 @@ use self::wire::{
     write_tcp_dns_message,
 };
 
+/// Default per-message read timeout for zone transfers (60 seconds).
+const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Default maximum number of records before aborting transfer (10 million).
+const DEFAULT_MAX_RECORDS: usize = 10_000_000;
+
 /// A zone transfer client that operates over any async TCP-like stream.
 ///
 /// Generic over the transport `S` to allow testing with mock streams.
 /// In production, `S` is typically `tokio::net::TcpStream`.
 pub struct TransferClient<S> {
     stream: S,
+    /// Per-message read timeout. Defaults to 60 seconds.
+    timeout: Duration,
+    /// Maximum number of records before aborting. Defaults to 10 million.
+    max_records: usize,
 }
 
 impl TransferClient<tokio::net::TcpStream> {
@@ -72,7 +84,23 @@ impl TransferClient<tokio::net::TcpStream> {
 impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
     /// Create a new transfer client wrapping the given stream.
     pub fn new(stream: S) -> Self {
-        Self { stream }
+        Self {
+            stream,
+            timeout: DEFAULT_TRANSFER_TIMEOUT,
+            max_records: DEFAULT_MAX_RECORDS,
+        }
+    }
+
+    /// Set the per-message read timeout.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set the maximum number of records before aborting the transfer.
+    pub fn with_max_records(mut self, max_records: usize) -> Self {
+        self.max_records = max_records;
+        self
     }
 
     /// Perform an AXFR (full zone transfer).
@@ -93,7 +121,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
 
         tracing::debug!("AXFR query sent");
 
-        Ok(transfer_record_stream(self.stream, zone))
+        Ok(transfer_record_stream(
+            self.stream,
+            zone,
+            self.timeout,
+            self.max_records,
+        ))
     }
 
     /// Perform an IXFR (incremental zone transfer).
@@ -113,22 +146,39 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
 
         tracing::debug!("IXFR query sent");
 
-        Ok(transfer_record_stream(self.stream, zone))
+        Ok(transfer_record_stream(
+            self.stream,
+            zone,
+            self.timeout,
+            self.max_records,
+        ))
     }
 }
 
 /// Create an async stream that reads DNS messages from `stream` and yields
 /// `TransferRecord`s until the closing SOA is received.
+///
+/// Each `read_tcp_dns_message` call is wrapped in a timeout to prevent
+/// a malicious or slow server from holding the client indefinitely.
+/// Total record count is capped at `max_records` to prevent memory exhaustion.
 fn transfer_record_stream<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     zone: DomainName,
+    timeout: Duration,
+    max_records: usize,
 ) -> impl Stream<Item = Result<TransferRecord, NetError>> {
     async_stream::try_stream! {
         let mut awaiting_first_soa = true;
         let mut soa_count: u32 = 0;
+        let mut record_count: usize = 0;
 
         'outer: loop {
-            let msg = read_tcp_dns_message(&mut stream).await?;
+            // F-003: wrap each read in a timeout to prevent indefinite blocking
+            let msg = tokio::time::timeout(timeout, read_tcp_dns_message(&mut stream))
+                .await
+                .map_err(|_| NetError::TransferFailed {
+                    reason: format!("transfer read timed out after {}s", timeout.as_secs()),
+                })??;
             let header = DnsHeader::parse(&msg)?;
 
             if !header.is_response {
@@ -141,6 +191,11 @@ fn transfer_record_stream<S: AsyncRead + AsyncWrite + Unpin>(
                 })?;
             }
 
+            // TODO: verify TSIG on responses when query was signed (RFC 8945 §5.3.1).
+            // Currently, response TSIG records are not validated, which means a
+            // man-in-the-middle could inject unsigned records into a TSIG-authenticated
+            // transfer stream. This is tracked as a known limitation.
+
             // Skip the question section
             let mut offset = 12;
             for _ in 0..header.question_count {
@@ -152,6 +207,16 @@ fn transfer_record_stream<S: AsyncRead + AsyncWrite + Unpin>(
             for _ in 0..header.answer_count {
                 let (rr, consumed) = parse_resource_record(&msg, offset)?;
                 offset += consumed;
+
+                // F-007: limit total records to prevent resource exhaustion
+                record_count += 1;
+                if record_count > max_records {
+                    Err(NetError::TransferFailed {
+                        reason: format!(
+                            "transfer exceeded maximum record count ({max_records})"
+                        ),
+                    })?;
+                }
 
                 let is_soa = matches!(rr.rdata, RecordData::Soa { .. }) && rr.name == zone;
 

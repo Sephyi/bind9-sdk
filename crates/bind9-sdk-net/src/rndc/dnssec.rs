@@ -14,6 +14,7 @@ use crate::error::NetError;
 /// Contains the DNSSEC policy name and information about each key
 /// managed by the KASP (Key and Signing Policy) engine.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DnssecStatus {
     /// The DNSSEC policy name (e.g., "default", "custom").
     pub policy: String,
@@ -23,6 +24,7 @@ pub struct DnssecStatus {
 
 /// Information about a single DNSSEC key managed by KASP.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DnssecKeyInfo {
     /// Key tag (RFC 4034 Appendix B) identifying this key.
     pub tag: u16,
@@ -49,6 +51,7 @@ pub enum KeyRole {
 /// Indicates whether the CDS RRset has been published to or withdrawn
 /// from the parent zone.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DsCheckResult {
     /// Whether the CDS RRset is published at the parent.
     pub published: bool,
