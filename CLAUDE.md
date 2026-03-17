@@ -20,7 +20,7 @@ Distributes as two coordinated artifacts from one codebase: a Rust crate (`bind9
 ```bash
 # Type-check all crates (both native and WASM targets)
 cargo check --workspace
-cargo check --workspace --target wasm32-unknown-unknown
+cargo check -p bind9-sdk-core --target wasm32-unknown-unknown
 
 # Build
 cargo build --workspace
@@ -53,12 +53,15 @@ bind9-sdk/                     ← git repo root (this directory)
 │   └── src/lib.rs
 ├── crates/
 │   ├── bind9-sdk-core/        ← no_std + alloc; DNS types, zone parsing, RFC 2136, TSIG
-│   │   └── src/zone/          ← zone parser/serializer/rdata_text submodule
+│   │   └── src/
+│   │       ├── tsig/          ← TSIG: key, record, wire, tests
+│   │       ├── update/        ← RFC 2136: builder, message, tests
+│   │       └── zone/          ← zone parser/serializer; parser/ is itself a submodule
 │   ├── bind9-sdk-net/         ← tokio; rndc TCP, nsupdate sender, IXFR/AXFR, stats HTTP
 │   │   └── src/rndc/          ← rndc wire protocol submodule
 │   └── bind9-sdk-bindings/    ← napi-rs v2 (Node.js/Bun native addon; v3 migration Phase 4)
 ├── docs/
-│   ├── plans/                 ← implementation plans (10 files)
+│   ├── plans/                 ← implementation plans (13 files)
 │   └── specs/                 ← design specs (3 files)
 ├── Cargo.toml                 ← workspace root
 ├── rust-toolchain.toml
@@ -120,7 +123,7 @@ Key patterns enforced across all implementation:
 - **napi-rs requires a native build step** — `cargo build --features nodejs` alone is not enough; napi-rs needs `napi build --release` to generate the `.node` file and JS bindings. Currently on napi-rs v2; v3 migration (with auto WASM fallback) is planned for Phase 4.
 - **TSIG key format in `rndc.conf`** — base64-encoded raw HMAC-SHA256 key material, not PEM. The `algorithm hmac-sha256;` line is not a hint about encoding — it specifies the MAC algorithm directly.
 - **BIND9 rndc framing** — message length is encoded as a big-endian u32 (4 bytes), not the 2-byte DNS TCP length. Misreading this is the most common rndc client implementation bug.
-- **`cargo check --workspace` does not check WASM target** — always also run `cargo check --workspace --target wasm32-unknown-unknown` before PR to catch no_std violations in core.
+- **`cargo check --workspace` does not check WASM target** — always also run `cargo check -p bind9-sdk-core --target wasm32-unknown-unknown` before PR to catch `no_std` violations in core. The `--workspace` variant fails because non-core crates depend on `getrandom` which doesn't compile on `wasm32-unknown-unknown`.
 
 ## Code Style
 
