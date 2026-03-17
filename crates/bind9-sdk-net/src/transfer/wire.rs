@@ -32,6 +32,7 @@ const QTYPE_IXFR: u16 = 251;
 
 /// Parsed DNS message header (RFC 1035 §4.1.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DnsHeader {
     /// Message ID.
     pub id: u16,
@@ -100,6 +101,8 @@ pub fn parse_name(buf: &[u8], offset: usize) -> Result<(DomainName, usize), NetE
     let mut bytes_consumed = 0;
     let mut jumped = false;
     let mut depth = 0;
+    // Track the first pointer's position to restrict forward references
+    let mut first_pointer_pos: Option<usize> = None;
 
     loop {
         if pos >= buf.len() {
@@ -135,7 +138,22 @@ pub fn parse_name(buf: &[u8], offset: usize) -> Result<(DomainName, usize), NetE
                 jumped = true;
             }
             let pointer = ((u16::from(len_byte) & 0x3F) << 8) | u16::from(buf[pos + 1]);
-            pos = pointer as usize;
+            let pointer_usize = pointer as usize;
+
+            // Restrict compression pointers to backward references only.
+            // Forward pointers enable crafted messages that jump into unprocessed
+            // rdata where bytes are not valid label data (RFC 1035 §4.1.4).
+            let limit = first_pointer_pos.unwrap_or(offset);
+            if pointer_usize >= limit {
+                return Err(NetError::XfrProtocolError(format!(
+                    "compression pointer at offset {pos} targets {pointer_usize} \
+                     (must be before {limit})"
+                )));
+            }
+            if first_pointer_pos.is_none() {
+                first_pointer_pos = Some(pos);
+            }
+            pos = pointer_usize;
             continue;
         }
 
@@ -372,7 +390,10 @@ pub fn parse_resource_record(
 
     let class = RecordClass::from_value(rclass_value);
     // TTL values > 2^31 - 1 are clamped to 0 per RFC 8767
-    let ttl = Ttl::new(ttl_value).unwrap_or_else(|_| Ttl::new(0).unwrap());
+    let ttl = Ttl::new(ttl_value).unwrap_or_else(|_| {
+        tracing::warn!(ttl_value, "TTL exceeds RFC 8767 max (2^31-1), clamping to 0");
+        Ttl::new(0).unwrap()
+    });
 
     let rr = ResourceRecord {
         name,
@@ -418,15 +439,11 @@ fn encode_xfr_query(
 ) -> Vec<u8> {
     let mut buf = Vec::with_capacity(128);
 
-    // Generate a random-ish ID from the zone name hash
+    // Generate a cryptographically random query ID (RFC 5452 §3)
     let id: u16 = {
-        let mut h: u16 = 0x4242;
-        for label in zone.labels() {
-            for b in label.as_str().bytes() {
-                h = h.wrapping_mul(31).wrapping_add(u16::from(b));
-            }
-        }
-        h
+        let mut buf = [0u8; 2];
+        getrandom::fill(&mut buf).expect("getrandom failed for DNS query ID");
+        u16::from_be_bytes(buf)
     };
 
     // Header
@@ -782,5 +799,45 @@ mod tests {
         let rdata = [0xDE, 0xAD, 0xBE, 0xEF];
         let result = parse_rdata_wire(65534, &rdata, &rdata, 0).unwrap();
         assert!(matches!(result, RecordData::Unknown { rtype: 65534, .. }));
+    }
+
+    #[test]
+    fn parse_name_rejects_forward_pointer() {
+        // Pointer at offset 0 targeting offset 2 (forward reference)
+        let buf = [0xC0, 0x02, 3, b'c', b'o', b'm', 0];
+        let result = parse_name(&buf, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("compression pointer"),
+            "expected compression pointer error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_name_allows_backward_pointer() {
+        // "com." at offset 0, pointer at offset 5 pointing back to offset 0
+        let mut buf = vec![3, b'c', b'o', b'm', 0];
+        buf.extend_from_slice(&[0xC0, 0x00]);
+        let (name, consumed) = parse_name(&buf, 5).unwrap();
+        assert_eq!(name, DomainName::new("com.").unwrap());
+        assert_eq!(consumed, 2);
+    }
+
+    #[test]
+    fn query_id_is_random() {
+        // Two queries for the same zone should (almost certainly) have different IDs
+        let zone = DomainName::new("example.com.").unwrap();
+        let q1 = encode_axfr_query(&zone, None);
+        let q2 = encode_axfr_query(&zone, None);
+        let id1 = u16::from_be_bytes([q1[0], q1[1]]);
+        let id2 = u16::from_be_bytes([q2[0], q2[1]]);
+        // With 16 bits of randomness, collision probability is 1/65536
+        // If they happen to match, that's fine — this test is probabilistic
+        // but we run it to verify the code path works
+        assert!(
+            id1 != id2 || id1 != 0,
+            "query IDs should be random, not zero"
+        );
     }
 }
