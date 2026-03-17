@@ -19,6 +19,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+/// DNSSEC utilities: CDS/CDNSKEY generation, key tag computation.
+pub mod dnssec;
 /// Validated DNS domain name and label types.
 pub mod domain;
 /// Error type for all `bind9-sdk-core` operations.
@@ -41,6 +43,7 @@ pub mod update;
 pub mod zone;
 
 // Curated re-exports for common access
+pub use dnssec::{CdsRecord, DigestType, compute_key_tag};
 pub use domain::{DomainName, Label};
 pub use error::CoreError;
 pub use protocol::{Rcode, RecordType};
