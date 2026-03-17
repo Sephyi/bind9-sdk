@@ -27,6 +27,8 @@ webpki-roots = { workspace = true }
 tokio-rustls = { workspace = true }
 base64 = { workspace = true }
 getrandom = { workspace = true, features = ["std"] }
+tokio-stream = { workspace = true }
+async-stream = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"

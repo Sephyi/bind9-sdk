@@ -57,6 +57,33 @@ pub enum NetError {
     #[error(transparent)]
     Core(#[from] bind9_sdk_core::CoreError),
 
+    /// A zone transfer (AXFR/IXFR) failed.
+    #[error("zone transfer failed: {reason}")]
+    TransferFailed {
+        /// Human-readable description of the transfer failure.
+        reason: String,
+    },
+
+    /// The SOA serial in the transfer response did not match expectations.
+    #[error("serial mismatch: expected {expected}, got {actual}")]
+    SerialMismatch {
+        /// The serial number we expected.
+        expected: u32,
+        /// The serial number we received.
+        actual: u32,
+    },
+
+    /// A zone transfer ended before the closing SOA record was received.
+    #[error("incomplete zone transfer: {reason}")]
+    IncompleteTransfer {
+        /// Human-readable description of what was missing.
+        reason: String,
+    },
+
+    /// An XFR protocol-level error (unexpected message structure, bad framing).
+    #[error("XFR protocol error: {0}")]
+    XfrProtocolError(String),
+
     /// An I/O error from the operating system.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -148,6 +175,43 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
         let net_err: NetError = io_err.into();
         assert!(matches!(net_err, NetError::Io(_)));
+    }
+
+    #[test]
+    fn transfer_failed_display() {
+        let err = NetError::TransferFailed {
+            reason: "connection reset".into(),
+        };
+        assert_eq!(err.to_string(), "zone transfer failed: connection reset");
+    }
+
+    #[test]
+    fn serial_mismatch_display() {
+        let err = NetError::SerialMismatch {
+            expected: 2024010101,
+            actual: 2024010100,
+        };
+        assert_eq!(
+            err.to_string(),
+            "serial mismatch: expected 2024010101, got 2024010100"
+        );
+    }
+
+    #[test]
+    fn incomplete_transfer_display() {
+        let err = NetError::IncompleteTransfer {
+            reason: "missing closing SOA".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "incomplete zone transfer: missing closing SOA"
+        );
+    }
+
+    #[test]
+    fn xfr_protocol_error_display() {
+        let err = NetError::XfrProtocolError("unexpected RCODE".into());
+        assert_eq!(err.to_string(), "XFR protocol error: unexpected RCODE");
     }
 
     #[test]

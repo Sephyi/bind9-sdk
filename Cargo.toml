@@ -83,6 +83,10 @@ webpki-roots = { version = "1" }
 # Tokio rustls integration
 tokio-rustls = { version = "0.26" }
 
+# Async streams for zone transfer API
+tokio-stream = { version = "0.1" }
+async-stream = { version = "0.3" }
+
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }
 insta = { version = "1" }
