@@ -38,6 +38,7 @@
 //! the `_auth` entry or the version header.
 
 pub mod command;
+pub mod dnssec;
 pub(crate) mod protocol;
 
 use std::collections::BTreeMap;

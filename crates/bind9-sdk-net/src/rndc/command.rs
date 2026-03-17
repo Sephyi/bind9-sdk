@@ -89,6 +89,10 @@ pub enum RndcCommand {
         domain: Option<String>,
         lifetime: Option<u32>,
     },
+    /// Query DNSSEC status for a zone.
+    DnssecStatus { zone: String },
+    /// Check DS record publication status for a zone.
+    DnssecCheckDs { zone: String },
     /// Raw command string -- escape hatch for commands not yet in the enum.
     Raw(String),
 }
@@ -139,6 +143,8 @@ impl RndcCommand {
                 domain: Some(d),
                 lifetime: None,
             } => format!("nta -remove {d}"),
+            Self::DnssecStatus { zone } => format!("dnssec -status {zone}"),
+            Self::DnssecCheckDs { zone } => format!("dnssec -checkds {zone}"),
             Self::Raw(cmd) => cmd.clone(),
         }
     }
@@ -506,6 +512,22 @@ mod tests {
             lifetime: None,
         };
         assert_eq!(cmd.to_command_string(), "nta -remove bad.example.com");
+    }
+
+    #[test]
+    fn command_dnssec_status() {
+        let cmd = RndcCommand::DnssecStatus {
+            zone: "example.com".into(),
+        };
+        assert_eq!(cmd.to_command_string(), "dnssec -status example.com");
+    }
+
+    #[test]
+    fn command_dnssec_checkds() {
+        let cmd = RndcCommand::DnssecCheckDs {
+            zone: "example.com".into(),
+        };
+        assert_eq!(cmd.to_command_string(), "dnssec -checkds example.com");
     }
 
     #[test]
