@@ -1,0 +1,70 @@
+// SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+//
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+//! bind9 CLI — command-line tool for BIND9 DNS server management.
+
+mod commands;
+mod config;
+mod connect;
+mod error;
+mod output;
+
+use std::process::ExitCode;
+
+use clap::{CommandFactory, Parser};
+use tracing_subscriber::EnvFilter;
+
+use commands::{Cli, Command};
+use connect::build_client_config;
+use error::CliError;
+
+fn main() -> ExitCode {
+    // Initialize tracing from BIND9_LOG or RUST_LOG environment variable.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_env("BIND9_LOG")
+                .or_else(|_| EnvFilter::try_from_default_env())
+                .unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .with_target(false)
+        .init();
+
+    let cli = Cli::parse();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    match rt.block_on(run(cli)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            let code = e.exit_code();
+            ExitCode::from(code as u8)
+        }
+    }
+}
+
+async fn run(cli: Cli) -> Result<(), CliError> {
+    // Handle completions first — no server config needed.
+    if let Command::Completions { shell } = &cli.command {
+        let mut cmd = Cli::command();
+        clap_complete::generate(*shell, &mut cmd, "bind9", &mut std::io::stdout());
+        return Ok(());
+    }
+
+    let format = cli.output;
+
+    // Build client config from CLI args + config file.
+    let config = build_client_config(&cli)?;
+
+    match &cli.command {
+        Command::Zone(zone_cmd) => commands::zone::execute(zone_cmd, format, config).await,
+        Command::Record(record_cmd) => commands::record::execute(record_cmd, format, config).await,
+        Command::Dnssec(dnssec_cmd) => commands::dnssec::execute(dnssec_cmd, format, config).await,
+        Command::Stats => commands::stats::execute(format, config).await,
+        Command::Completions { .. } => unreachable!(),
+    }
+}
