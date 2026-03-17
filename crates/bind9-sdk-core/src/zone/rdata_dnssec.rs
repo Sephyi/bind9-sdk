@@ -861,4 +861,120 @@ mod tests {
         let formatted = format_timestamp(ts);
         assert_eq!(formatted, "20260401000000");
     }
+
+    // -- Proptest roundtrips --
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn dnskey_roundtrip(
+                flags in 0u16..=65535,
+                protocol in 0u8..=255,
+                algorithm in 0u8..=255,
+                key_data in proptest::collection::vec(any::<u8>(), 1..64),
+            ) {
+                let text = serialize_dnskey(flags, protocol, algorithm, &key_data);
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                let parsed = parse_dnskey(&tokens).unwrap();
+                match parsed {
+                    RecordData::Dnskey { flags: f, protocol: p, algorithm: a, public_key } => {
+                        prop_assert_eq!(f, flags);
+                        prop_assert_eq!(p, protocol);
+                        prop_assert_eq!(a, algorithm);
+                        prop_assert_eq!(public_key, key_data);
+                    }
+                    other => prop_assert!(false, "expected DNSKEY, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn ds_roundtrip(
+                key_tag in 0u16..=65535,
+                algorithm in 0u8..=255,
+                digest_type in 0u8..=255,
+                digest_data in proptest::collection::vec(any::<u8>(), 1..32),
+            ) {
+                let text = serialize_ds(key_tag, algorithm, digest_type, &digest_data);
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                let parsed = parse_ds(&tokens).unwrap();
+                match parsed {
+                    RecordData::Ds { key_tag: kt, algorithm: a, digest_type: dt, digest } => {
+                        prop_assert_eq!(kt, key_tag);
+                        prop_assert_eq!(a, algorithm);
+                        prop_assert_eq!(dt, digest_type);
+                        prop_assert_eq!(digest, digest_data);
+                    }
+                    other => prop_assert!(false, "expected DS, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn nsec3_roundtrip(
+                hash_alg in 0u8..=255,
+                flags in 0u8..=255,
+                iterations in 0u16..=65535,
+                salt_data in proptest::collection::vec(any::<u8>(), 0..8),
+                next_hash in proptest::collection::vec(any::<u8>(), 20..21),
+            ) {
+                let text = serialize_nsec3(hash_alg, flags, iterations, &salt_data, &next_hash, &[]);
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                let parsed = parse_nsec3(&tokens).unwrap();
+                match parsed {
+                    RecordData::Nsec3 {
+                        hash_algorithm, flags: f, iterations: it, salt, next_hashed_owner, ..
+                    } => {
+                        prop_assert_eq!(hash_algorithm, hash_alg);
+                        prop_assert_eq!(f, flags);
+                        prop_assert_eq!(it, iterations);
+                        prop_assert_eq!(salt, salt_data);
+                        prop_assert_eq!(next_hashed_owner, next_hash);
+                    }
+                    other => prop_assert!(false, "expected NSEC3, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn rrsig_roundtrip(
+                algorithm in 1u8..=15,
+                labels in 0u8..=10,
+                original_ttl in 0u32..=86400,
+                key_tag in 0u16..=65535,
+                sig_data in proptest::collection::vec(any::<u8>(), 1..64),
+            ) {
+                let origin = DomainName::new("example.com.").unwrap();
+                // Use fixed timestamps to avoid edge cases
+                let expiration = 1775000000u32;
+                let inception = 1772000000u32;
+                let text = serialize_rrsig(
+                    1, algorithm, labels, original_ttl,
+                    expiration, inception, key_tag,
+                    &origin, &sig_data,
+                );
+                let tokens: Vec<&str> = text.split_whitespace().collect();
+                let parsed = parse_rrsig(&tokens, &origin).unwrap();
+                match parsed {
+                    RecordData::Rrsig {
+                        type_covered: tc, algorithm: a, labels: l,
+                        original_ttl: ot, signature_expiration: se,
+                        signature_inception: si, key_tag: kt,
+                        ref signer_name, ref signature,
+                    } => {
+                        prop_assert_eq!(tc, 1);
+                        prop_assert_eq!(a, algorithm);
+                        prop_assert_eq!(l, labels);
+                        prop_assert_eq!(ot, original_ttl);
+                        prop_assert_eq!(se, expiration);
+                        prop_assert_eq!(si, inception);
+                        prop_assert_eq!(kt, key_tag);
+                        prop_assert_eq!(signer_name.clone(), origin);
+                        prop_assert_eq!(signature.clone(), sig_data);
+                    }
+                    other => prop_assert!(false, "expected RRSIG, got {other:?}"),
+                }
+            }
+        }
+    }
 }
