@@ -279,6 +279,7 @@ Instead of passing flags every time, create a config file:
 
 - 🍎 **macOS:** `~/Library/Application Support/bind9-sdk/config.toml`
 - 🐧 **Linux:** `~/.config/bind9-sdk/config.toml`
+- 🪟 **Windows:** `%APPDATA%\bind9-sdk\config.toml`
 
 ```toml
 [server]
