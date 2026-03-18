@@ -81,9 +81,84 @@ This produces three files:
 | `index.js` | Platform loader (auto-detects OS/arch) |
 | `index.d.ts` | TypeScript type definitions |
 
+## Using from source (pre-publication)
+
+The SDK is not yet published to crates.io or npm. You can use it directly from git or a local checkout.
+
+### Rust — git dependency
+
+Point your `Cargo.toml` at the repository:
+
+```toml
+[dependencies]
+# From GitHub (latest development branch)
+bind9-sdk = { git = "https://github.com/Sephyi/bind9-sdk", branch = "development" }
+
+# Or pin to a specific commit
+bind9-sdk = { git = "https://github.com/Sephyi/bind9-sdk", rev = "303f445" }
+
+# Or from a local checkout
+bind9-sdk = { path = "../bind9-sdk/bind9-sdk" }
+```
+
+> [!NOTE]
+> The path must point to the `bind9-sdk/` subdirectory (the re-export crate), not the repository root.
+
+To disable the network features (rndc, nsupdate, transfers) and use only the `no_std` core:
+
+```toml
+[dependencies]
+bind9-sdk = { git = "https://github.com/Sephyi/bind9-sdk", default-features = false }
+```
+
+### Node.js / Bun — local build
+
+```bash
+# 1. Clone and build
+git clone https://github.com/Sephyi/bind9-sdk.git
+cd bind9-sdk/crates/bind9-sdk-bindings
+npm install
+npm run build
+
+# 2. From your project, link to the built package
+cd /path/to/your-project
+npm link /path/to/bind9-sdk/crates/bind9-sdk-bindings
+
+# Or add it as a file dependency in your package.json
+```
+
+```json
+{
+  "dependencies": {
+    "bind9-sdk": "file:../bind9-sdk/crates/bind9-sdk-bindings"
+  }
+}
+```
+
+Then import as usual:
+
+```javascript
+import { JsDomainName, JsZoneFile } from 'bind9-sdk';
+```
+
+### CLI — install from source
+
+```bash
+# Clone and build
+git clone https://github.com/Sephyi/bind9-sdk.git
+cd bind9-sdk
+
+# Install the CLI binary to ~/.cargo/bin/
+cargo install --path crates/bind9-sdk-cli
+
+# Or build without installing
+cargo build -p bind9-sdk-cli --release
+# Binary is at target/release/bind9
+```
+
 ## Rust API
 
-Add to your `Cargo.toml`:
+Once published, add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
