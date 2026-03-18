@@ -4,9 +4,7 @@ SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 -->
 
-# bind9-sdk
-
-![MSRV] ![License]
+# 🌐 bind9-sdk &emsp; ![MSRV] ![License]
 
 [MSRV]: https://img.shields.io/badge/MSRV-1.94-orange.svg
 [License]: https://img.shields.io/badge/license-TBD-yellow.svg
@@ -20,19 +18,37 @@ A Rust-native library for programmatic BIND9 DNS server management. Implements t
 
 Ships as three coordinated artifacts from one codebase:
 
-- **Rust crate** (`bind9-sdk`) — the primary library, published to crates.io
-- **Node.js/Bun native addon** (`bind9-sdk-bindings`) — napi-rs v3, native `.node` + WASM fallback
-- **CLI tool** (`bind9`) — zone, record, DNSSEC, and stats management from the terminal
+- 🦀 **Rust crate** (`bind9-sdk`) — the primary library, published to crates.io
+- 📦 **Node.js/Bun native addon** (`bind9-sdk-bindings`) — napi-rs v3, native `.node` + WASM fallback
+- 🐚 **CLI tool** (`bind9`) — zone, record, DNSSEC, and stats management from the terminal
 
-## Prerequisites
+## ✨ Highlights
+
+- 🔌 **Full rndc wire protocol** — 25+ commands over TCP, no shell subprocesses, no `rndc` binary needed
+- 📝 **RFC 2136 dynamic updates** — add, delete, and replace DNS records with TSIG signing
+- 🔄 **AXFR/IXFR zone transfers** — async streaming client with compression pointer rejection and per-message timeouts
+- 📄 **Zone file parser** — RFC 1035 compliant parser/serializer with zone diffing
+- 📊 **Statistics API** — BIND9 statistics-channel JSON API client
+- 🔐 **TSIG authentication** — HMAC-SHA256/SHA512, secrets zeroized on drop, never in logs
+- 🧱 **`no_std` core** — core crate compiles without std, works in WASM and embedded contexts
+- 🔗 **Connection pooling** — `RndcPool` for high-throughput rndc operations
+- 🧪 **574 tests** — unit, property (proptest), snapshot (insta), and integration tests
+- 🦀 **Single workspace** — one repo, one `cargo build`, all three artifacts
+
+## 📋 Prerequisites
 
 - **Rust 1.94+** — `rust-toolchain.toml` pins the channel
 - **BIND9 9.20** — for integration tests (Podman rootless or native `named`)
 - **Node.js 18+** — for the napi-rs native addon (optional)
 
-## Building
+## 🔨 Building from source
 
-### Rust library
+```bash
+git clone https://github.com/Sephyi/bind9-sdk.git
+cd bind9-sdk
+```
+
+### 🦀 Rust library
 
 ```bash
 # Build all crates
@@ -48,7 +64,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-### CLI tool
+### 🐚 CLI tool
 
 ```bash
 # Build the CLI binary
@@ -56,9 +72,12 @@ cargo build -p bind9-sdk-cli --release
 
 # The binary is at target/release/bind9
 ./target/release/bind9 --help
+
+# Or install to ~/.cargo/bin/
+cargo install --path crates/bind9-sdk-cli
 ```
 
-### Node.js native addon
+### 📦 Node.js native addon
 
 ```bash
 cd crates/bind9-sdk-bindings
@@ -81,11 +100,11 @@ This produces three files:
 | `index.js` | Platform loader (auto-detects OS/arch) |
 | `index.d.ts` | TypeScript type definitions |
 
-## Using from source (pre-publication)
+## 📥 Using before publication
 
 The SDK is not yet published to crates.io or npm. You can use it directly from git or a local checkout.
 
-### Rust — git dependency
+### 🦀 Rust — git dependency
 
 Point your `Cargo.toml` at the repository:
 
@@ -111,7 +130,7 @@ To disable the network features (rndc, nsupdate, transfers) and use only the `no
 bind9-sdk = { git = "https://github.com/Sephyi/bind9-sdk", default-features = false }
 ```
 
-### Node.js / Bun — local build
+### 📦 Node.js / Bun — local build
 
 ```bash
 # 1. Clone and build
@@ -141,22 +160,7 @@ Then import as usual:
 import { JsDomainName, JsZoneFile } from 'bind9-sdk';
 ```
 
-### CLI — install from source
-
-```bash
-# Clone and build
-git clone https://github.com/Sephyi/bind9-sdk.git
-cd bind9-sdk
-
-# Install the CLI binary to ~/.cargo/bin/
-cargo install --path crates/bind9-sdk-cli
-
-# Or build without installing
-cargo build -p bind9-sdk-cli --release
-# Binary is at target/release/bind9
-```
-
-## Rust API
+## 🦀 Rust API
 
 Once published, add to your `Cargo.toml`:
 
@@ -165,7 +169,7 @@ Once published, add to your `Cargo.toml`:
 bind9-sdk = "0.1"
 ```
 
-### Parse a zone file
+### 📄 Parse a zone file
 
 ```rust
 use bind9_sdk::{ZoneFile, DomainName};
@@ -176,7 +180,7 @@ for record in &zone.zone.records {
 }
 ```
 
-### Zone diff
+### 🔀 Zone diff
 
 ```rust
 use bind9_sdk::ZoneFile;
@@ -188,7 +192,7 @@ let diff = old.zone.diff(&new.zone);
 println!("{diff}"); // Shows added/removed/changed records
 ```
 
-### Dynamic update (RFC 2136)
+### 📝 Dynamic update (RFC 2136)
 
 ```rust
 use bind9_sdk::{
@@ -218,7 +222,7 @@ let sender = NsUpdateSender::new("127.0.0.1:53".parse()?);
 let response = sender.send(&update, Some(&key)).await?;
 ```
 
-### rndc control
+### 🔌 rndc control
 
 ```rust
 use bind9_sdk::{Bind9Client, ClientConfig, DomainName, NamedControl};
@@ -233,7 +237,7 @@ println!("BIND {} — {} zones", status.version, status.zone_count);
 client.reload_zone(&DomainName::new("example.com.")?).await?;
 ```
 
-### AXFR zone transfer
+### 🔄 AXFR zone transfer
 
 ```rust
 use bind9_sdk::{TransferClient, DomainName, TransferRecord};
@@ -252,11 +256,11 @@ while let Some(result) = stream.next().await {
 }
 ```
 
-## CLI Usage
+## 🐚 CLI Usage
 
 The `bind9` CLI provides zone, record, DNSSEC, and stats management.
 
-### Global options
+### ⚙️ Global options
 
 All commands accept these flags (CLI flags override config file values):
 
@@ -269,12 +273,12 @@ All commands accept these flags (CLI flags override config file values):
 --output <FORMAT>     Output format: text (default) or json
 ```
 
-### Configuration file
+### 📁 Configuration file
 
 Instead of passing flags every time, create a config file:
 
-- **macOS:** `~/Library/Application Support/bind9-sdk/config.toml`
-- **Linux:** `~/.config/bind9-sdk/config.toml`
+- 🍎 **macOS:** `~/Library/Application Support/bind9-sdk/config.toml`
+- 🐧 **Linux:** `~/.config/bind9-sdk/config.toml`
 
 ```toml
 [server]
@@ -289,7 +293,7 @@ key_secret = "base64-encoded-secret-here"
 algorithm = "hmac-sha256"  # or hmac-sha512
 ```
 
-### Zone commands
+### 🗂️ Zone commands
 
 ```bash
 # List zones (shows server status and zone count)
@@ -308,7 +312,7 @@ bind9 zone export example.com. --dns-port 53
 bind9 zone diff old.zone new.zone
 ```
 
-### Record commands
+### 📝 Record commands
 
 Record commands use RFC 2136 dynamic updates and require `--dns-port`.
 
@@ -331,7 +335,7 @@ bind9 record delete example.com. www.example.com. A --dns-port 53
 
 Supported record types: `A`, `AAAA`, `CNAME`, `NS`, `PTR`, `SOA`, `MX`, `TXT`, `SRV`, `CAA`, `DNSKEY`, `RRSIG`, `NSEC`, `NSEC3`, `NSEC3PARAM`, `DS`, `CDS`, `CDNSKEY`, `TLSA`, `SSHFP`, `CSYNC`, `RP`, `DLV`, plus RFC 3597 `TYPEn` syntax for any type by number.
 
-### DNSSEC commands
+### 🔐 DNSSEC commands
 
 ```bash
 # Show DNSSEC status for a zone
@@ -341,7 +345,7 @@ bind9 dnssec status example.com.
 bind9 dnssec checkds example.com.
 ```
 
-### Stats
+### 📊 Stats
 
 ```bash
 # Fetch server statistics (requires stats_url in config or BIND9 statistics-channel)
@@ -349,7 +353,7 @@ bind9 stats
 bind9 stats --output json
 ```
 
-### Shell completions
+### 🐚 Shell completions
 
 ```bash
 # Generate completions for your shell
@@ -358,7 +362,7 @@ bind9 completions zsh >> ~/.zshrc
 bind9 completions fish > ~/.config/fish/completions/bind9.fish
 ```
 
-## Node.js / Bun API
+## 📦 Node.js / Bun API
 
 ```javascript
 import { JsDomainName, JsZoneFile, JsRndcClient } from 'bind9-sdk';
@@ -380,7 +384,7 @@ console.log(status);
 
 Available binding modules: `domain`, `zone`, `record`, `tsig`, `update`, `rndc`, `nsupdate`, `stats`, `transfer`, `pool`.
 
-## Architecture
+## 🏗️ Architecture
 
 ```txt
 bind9-sdk/
@@ -395,27 +399,27 @@ bind9-sdk/
 
 | Crate | `no_std` | What it provides |
 | --- | --- | --- |
-| `bind9-sdk-core` | Yes | DNS types, zone parser/serializer, zone diff, RFC 2136 UpdateBuilder, TSIG (HMAC-SHA256/SHA512) |
-| `bind9-sdk-net` | No | rndc wire protocol (25+ commands), NsUpdateSender, AXFR/IXFR client, stats HTTP, connection pool |
+| `bind9-sdk-core` | ✅ | DNS types, zone parser/serializer, zone diff, RFC 2136 UpdateBuilder, TSIG (HMAC-SHA256/SHA512) |
+| `bind9-sdk-net` | ❌ | rndc wire protocol (25+ commands), NsUpdateSender, AXFR/IXFR client, stats HTTP, connection pool |
 | `bind9-sdk-bindings` | — | Node.js/Bun native addon via napi-rs v3 (11 binding modules) |
 | `bind9-sdk-cli` | — | `bind9` binary with zone/record/dnssec/stats subcommands |
 | `bind9-sdk` | — | Re-export crate — the single dependency users add |
 
-## Compliance and Security
+## 🛡️ Compliance and Security
 
 Designed to meet GDPR, NIS2, NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II requirements for DNS infrastructure. Secure defaults out of the box.
 
-- **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop, never in logs or errors.
-- **Transport** — XoT for non-localhost transfers. TLS 1.3 only. Strict cert validation default.
-- **DNSSEC** — All IANA algorithms (8-16). Ed25519 default. KSK rollover safety gates.
-- **Supply Chain** — SBOM per release. `cargo audit` in CI. `#![forbid(unsafe_code)]` in core.
-- **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns. HMAC-SHA256/SHA512 default.
+- 🔒 **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop, never in logs or errors.
+- 🔐 **Transport** — XoT for non-localhost transfers. TLS 1.3 only. Strict cert validation default.
+- 🛡️ **DNSSEC** — All IANA algorithms (8–16). Ed25519 default. KSK rollover safety gates.
+- 📦 **Supply Chain** — SBOM per release. `cargo audit` in CI. `#![forbid(unsafe_code)]` in core.
+- ⚙️ **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns. HMAC-SHA256/SHA512 default.
 
-## Sponsor
+## 💛 Sponsor
 
 If you find bind9-sdk useful, consider [**sponsoring my work**](https://github.com/sponsors/Sephyi).
 
-## License
+## 📄 License
 
 License not yet decided. The codebase currently carries PolyForm-Noncommercial-1.0.0 headers as a placeholder.
 
