@@ -28,6 +28,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub port: Option<u16>,
 
+    /// DNS port for dynamic updates and zone transfers (overrides config file).
+    #[arg(long, global = true)]
+    pub dns_port: Option<u16>,
+
     /// TSIG key name for rndc authentication.
     #[arg(long, global = true)]
     pub key_name: Option<String>,

@@ -12,7 +12,7 @@
     ]
   },
   "scripts": {
-    "build": "napi build --release",
+    "build": "napi build --release --platform --features nodejs",
     "build:wasm": "napi build --release --target wasm32-wasip1-threads"
   },
   "devDependencies": {

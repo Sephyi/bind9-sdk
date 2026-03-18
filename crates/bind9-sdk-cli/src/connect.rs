@@ -6,9 +6,9 @@
 
 use std::net::SocketAddr;
 
-use bind9_sdk::DomainName;
 use bind9_sdk::core::tsig::{TsigAlgorithm, TsigKey};
 use bind9_sdk::net::ClientConfig;
+use bind9_sdk::DomainName;
 
 use crate::commands::Cli;
 use crate::config::CliConfig;
@@ -73,16 +73,20 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
 
     let mut config = ClientConfig::new(addr, tsig_key);
 
-    // Set optional fields
+    // Set optional fields — CLI --dns-port takes precedence over config file
+    let dns_port = cli
+        .dns_port
+        .or(file_config.as_ref().and_then(|c| c.server.dns_port));
+    if let Some(dns_port) = dns_port {
+        let dns_addr: SocketAddr = format!("{host}:{dns_port}").parse().map_err(|e| {
+            CliError::Config(format!("invalid DNS address '{host}:{dns_port}': {e}"))
+        })?;
+        config.dns_addr = Some(dns_addr);
+    }
+
     if let Some(ref file_cfg) = file_config {
         if let Some(ref stats_url) = file_cfg.server.stats_url {
             config.stats_url = Some(stats_url.clone());
-        }
-        if let Some(dns_port) = file_cfg.server.dns_port {
-            let dns_addr: SocketAddr = format!("{host}:{dns_port}").parse().map_err(|e| {
-                CliError::Config(format!("invalid DNS address '{host}:{dns_port}': {e}"))
-            })?;
-            config.dns_addr = Some(dns_addr);
         }
     }
 
