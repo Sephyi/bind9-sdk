@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
+use bind9_sdk_core::DomainName;
 use bind9_sdk_core::record::{RecordClass, ResourceRecord, Ttl};
 use bind9_sdk_core::update::{Unsigned, UpdateBuilder, UpdateMessage};
 use bind9_sdk_core::zone::ZoneFile;
-use bind9_sdk_core::DomainName;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 

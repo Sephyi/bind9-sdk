@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 use bind9_sdk_core::DomainName;
+use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 use napi_derive::napi;
 
 use crate::error::BindSdkError;

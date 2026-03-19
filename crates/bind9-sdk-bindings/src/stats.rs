@@ -45,8 +45,9 @@ impl JsStatsClient {
     /// Returns the raw JSON response from the `/server` endpoint.
     #[napi]
     pub async fn server_stats(&self) -> napi::Result<serde_json::Value> {
-        let client = StatsHttpClient::new(&self.url, Duration::from_secs(u64::from(self.timeout_secs)))
-            .map_err(BindSdkError::from_net)?;
+        let client =
+            StatsHttpClient::new(&self.url, Duration::from_secs(u64::from(self.timeout_secs)))
+                .map_err(BindSdkError::from_net)?;
 
         let stats = client
             .fetch_server_stats()
@@ -68,8 +69,9 @@ impl JsStatsClient {
     #[napi]
     pub async fn zone_stats(&self, zone: String) -> napi::Result<serde_json::Value> {
         let domain = DomainName::new(&zone).map_err(BindSdkError::from_core)?;
-        let client = StatsHttpClient::new(&self.url, Duration::from_secs(u64::from(self.timeout_secs)))
-            .map_err(BindSdkError::from_net)?;
+        let client =
+            StatsHttpClient::new(&self.url, Duration::from_secs(u64::from(self.timeout_secs)))
+                .map_err(BindSdkError::from_net)?;
 
         let stats = client
             .fetch_zone_stats(&domain)

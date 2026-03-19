@@ -5,7 +5,7 @@
 use bind9_sdk_core::rdata::RecordData;
 use bind9_sdk_core::record::ResourceRecord;
 use napi_derive::napi;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A DNS resource record as a plain JavaScript object.
 ///

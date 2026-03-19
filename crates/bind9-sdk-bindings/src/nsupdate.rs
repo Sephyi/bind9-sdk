@@ -86,7 +86,8 @@ fn parse_algorithm(algorithm: &str) -> napi::Result<TsigAlgorithm> {
     match algorithm {
         "hmac-sha256" => Ok(TsigAlgorithm::HmacSha256),
         "hmac-sha512" => Ok(TsigAlgorithm::HmacSha512),
-        "hmac-sha1" => {
+        "hmac-sha1" =>
+        {
             #[allow(deprecated)]
             Ok(TsigAlgorithm::HmacSha1)
         }

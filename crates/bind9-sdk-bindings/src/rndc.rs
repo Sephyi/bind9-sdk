@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
-use bind9_sdk_net::rndc::command::RndcCommand;
 use bind9_sdk_net::rndc::RndcConnection;
+use bind9_sdk_net::rndc::command::RndcCommand;
 use napi_derive::napi;
 
 use crate::error::BindSdkError;
@@ -41,8 +41,8 @@ impl JsRndcClient {
     ) -> napi::Result<Self> {
         let algo = parse_algorithm(&algorithm)?;
         let domain = DomainName::new(&key_name).map_err(BindSdkError::from_core)?;
-        let key =
-            TsigKey::from_base64(domain, algo, &key_secret_base64).map_err(BindSdkError::from_core)?;
+        let key = TsigKey::from_base64(domain, algo, &key_secret_base64)
+            .map_err(BindSdkError::from_core)?;
         Ok(Self {
             host,
             port,
@@ -192,7 +192,8 @@ fn parse_algorithm(algorithm: &str) -> napi::Result<TsigAlgorithm> {
     match algorithm {
         "hmac-sha256" => Ok(TsigAlgorithm::HmacSha256),
         "hmac-sha512" => Ok(TsigAlgorithm::HmacSha512),
-        "hmac-sha1" => {
+        "hmac-sha1" =>
+        {
             #[allow(deprecated)]
             Ok(TsigAlgorithm::HmacSha1)
         }
