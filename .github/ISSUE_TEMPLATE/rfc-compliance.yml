@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+name: RFC Compliance Issue
+description: Report a deviation from an IETF RFC specification
+labels: [rfc-compliance]
+
+body:
+  - type: input
+    id: rfc
+    attributes:
+      label: RFC Number
+      description: The RFC this relates to.
+      placeholder: "RFC 8945"
+    validations:
+      required: true
+
+  - type: input
+    id: section
+    attributes:
+      label: Section
+      description: Specific section(s) of the RFC.
+      placeholder: "§4.5.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What the SDK does incorrectly relative to the RFC.
+    validations:
+      required: true
+
+  - type: textarea
+    id: rfc-text
+    attributes:
+      label: Expected Behavior (per RFC)
+      description: Quote or paraphrase the relevant RFC text.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sdk-behavior
+    attributes:
+      label: SDK Behavior
+      description: What the SDK actually does. Include code examples or wire dumps if available.
+    validations:
+      required: true

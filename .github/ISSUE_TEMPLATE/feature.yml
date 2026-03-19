@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: [enhancement]
+
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of bind9-sdk would this affect?
+      options:
+        - Rust crate (bind9-sdk)
+        - Node.js / Bun bindings
+        - CLI tool (bind9)
+        - Documentation
+        - CI / Infrastructure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Use Case
+      description: What problem does this solve? What are you trying to do?
+      placeholder: "I'm trying to manage BIND9 zones and I need ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like this to work? API sketches welcome.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Other approaches you've thought about or workarounds you're using.
+    validations:
+      required: false

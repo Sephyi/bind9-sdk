@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security Vulnerability
+    url: mailto:me@sephy.io
+    about: Report security vulnerabilities privately — do not open a public issue.
