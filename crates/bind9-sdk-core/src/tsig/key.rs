@@ -44,14 +44,24 @@ impl TsigKey {
             return Err(CoreError::Tsig("key material must not be empty".into()));
         }
         #[cfg(feature = "std")]
-        if key_material.len() < algorithm.key_length() {
-            tracing::warn!(
-                key_name = %name,
-                algorithm = %algorithm,
-                actual_len = key_material.len(),
-                recommended_len = algorithm.key_length(),
-                "TSIG key shorter than algorithm's recommended length"
-            );
+        {
+            #[allow(deprecated)]
+            if matches!(algorithm, TsigAlgorithm::HmacSha1) {
+                tracing::warn!(
+                    key_name = %name,
+                    algorithm = %algorithm,
+                    "HMAC-SHA1 is cryptographically weak; use HMAC-SHA256 or HMAC-SHA512 for new deployments"
+                );
+            }
+            if key_material.len() < algorithm.key_length() {
+                tracing::warn!(
+                    key_name = %name,
+                    algorithm = %algorithm,
+                    actual_len = key_material.len(),
+                    recommended_len = algorithm.key_length(),
+                    "TSIG key shorter than algorithm's recommended length"
+                );
+            }
         }
         Ok(Self {
             name,
