@@ -33,14 +33,15 @@ Ships as three coordinated artifacts from one codebase:
 - 🔐 **TSIG authentication** — HMAC-SHA256/SHA512, secrets zeroized on drop, never in logs
 - 🧱 **`no_std` core** — core crate compiles without std, works in WASM and embedded contexts
 - 🔗 **Connection pooling** — `RndcPool` for high-throughput rndc operations
-- 🧪 **574 tests** — unit, property (proptest), snapshot (insta), and integration tests
+- 🧪 **576 tests** — unit, property (proptest), snapshot (insta), and integration tests
 - 🦀 **Single workspace** — one repo, one `cargo build`, all three artifacts
 
 ## 📋 Prerequisites
 
 - **Rust 1.94+** — `rust-toolchain.toml` pins the channel
-- **BIND9 9.20** — for integration tests (Podman rootless or native `named`)
 - **Node.js 18+** — for the napi-rs native addon (optional)
+- **BIND9 9.20** — for integration tests (Podman rootless or native `named`)
+- **[mise](https://mise.jdx.dev)** — recommended for toolchain and task management (optional)
 
 ## 🔨 Building from source
 
@@ -49,9 +50,41 @@ git clone https://github.com/Sephyi/bind9-sdk.git
 cd bind9-sdk
 ```
 
-### 🦀 Rust library
+### Using mise (recommended)
+
+[mise](https://mise.jdx.dev) manages the Rust toolchain, Node.js, and provides task shortcuts. A `mise.toml` is included in the repo.
 
 ```bash
+# Install tools (Rust 1.94, Node LTS) and configure git hooks
+mise install
+mise run setup
+
+# Common tasks
+mise run build              # Build all crates (release)
+mise run build:cli          # Build CLI binary (release)
+mise run build:bindings     # Build napi-rs .node file + JS/TS bindings (release)
+mise run check              # Type-check all crates (fast, no codegen)
+mise run check:wasm         # Check no_std WASM compliance
+mise run check:bindings     # Check napi-rs bindings compile
+mise run test               # Run unit tests
+mise run test:integration   # Run integration tests (starts BIND9 container)
+mise run clippy             # Lint
+mise run fmt                # Format all files
+mise run fmt:check          # Check formatting only
+mise run ci                 # Full CI gate (fmt, clippy, wasm, test, audit)
+mise run cli                # Run CLI in debug mode (pass args after --)
+mise run doc                # Build and open API docs
+mise run clean              # Remove build artifacts
+```
+
+### Manually
+
+If you prefer not to use mise, ensure Rust 1.94+ and Node.js 18+ are installed.
+
+```bash
+# Set up git hooks
+git config core.hooksPath .githooks
+
 # Build all crates
 cargo build --workspace
 
@@ -62,13 +95,16 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Format check
-cargo fmt --check
+cargo fmt --all --check
 ```
 
 ### 🐚 CLI tool
 
 ```bash
-# Build the CLI binary
+# With mise
+mise run build:cli
+
+# Or manually
 cargo build -p bind9-sdk-cli --release
 
 # The binary is at target/release/bind9
@@ -81,13 +117,13 @@ cargo install --path crates/bind9-sdk-cli
 ### 📦 Node.js native addon
 
 ```bash
+# With mise (handles npm install + napi build)
+mise run build:bindings
+
+# Or manually
 cd crates/bind9-sdk-bindings
-
-# Install napi-rs CLI
 npm install
-
-# Build the native .node file + JS/TS bindings
-npm run build
+npx napi build --release
 
 # Verify it works
 node tests/smoke.mjs
@@ -291,9 +327,34 @@ stats_url = "http://127.0.0.1:8053"
 
 [auth]
 key_name = "rndc-key"
-key_secret = "base64-encoded-secret-here"
 algorithm = "hmac-sha256"  # or hmac-sha512
+# key_secret = "..."       # NOT recommended — use `bind9 auth set-key` instead
 ```
+
+> [!WARNING]
+> Do not store `key_secret` in the config file — it is plaintext on disk. Use `bind9 auth set-key` to store the secret in your OS credential store (macOS Keychain, Linux Secret Service, Windows Credential Manager). The config file `key_secret` field is supported as a last-resort fallback and emits a warning when used.
+
+### 🔑 Secret resolution order
+
+When the CLI needs the TSIG key secret, it checks these sources in order:
+
+1. **`--key-secret` flag** — highest priority, useful for scripting
+2. **OS credential store** — macOS Keychain / Linux Secret Service / Windows Credential Manager
+3. **Config file** `[auth].key_secret` — fallback with a warning
+
+### 🔐 Auth commands
+
+Manage TSIG key secrets in your OS credential store instead of plaintext config files.
+
+```bash
+# Store a key (prompts for secret on stdin if --secret is omitted)
+bind9 auth set-key --profile 127.0.0.1:953 --secret "base64-encoded-secret"
+
+# Remove a stored key
+bind9 auth delete-key --profile 127.0.0.1:953
+```
+
+The `--profile` value should match the `host:port` of the server you connect to (e.g., `127.0.0.1:953`).
 
 ### 🗂️ Zone commands
 
@@ -409,13 +470,13 @@ bind9-sdk/
 
 ## 🛡️ Compliance and Security
 
-Designed to meet GDPR, NIS2, NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II requirements for DNS infrastructure. Secure defaults out of the box.
+Targeting GDPR, NIS2, NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II compliance for DNS infrastructure.
 
-- 🔒 **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop, never in logs or errors.
-- 🔐 **Transport** — XoT for non-localhost transfers. TLS 1.3 only. Strict cert validation default.
-- 🛡️ **DNSSEC** — All IANA algorithms (8–16). Ed25519 default. KSK rollover safety gates.
-- 📦 **Supply Chain** — SBOM per release. `cargo audit` in CI. `#![forbid(unsafe_code)]` in core.
-- ⚙️ **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns. HMAC-SHA256/SHA512 default.
+- 🔒 **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop (`Zeroizing<Vec<u8>>`), never in logs or errors. Compile-time typestate prevents unauthenticated commands.
+- 🔐 **Transport** — Non-localhost zone transfers rejected without TLS config. TLS 1.3 pinned (rustls). rndc TLS and XoT transport planned for v0.2.
+- 🛡️ **DNSSEC** — DNSKEY, DS, CDS, CDNSKEY, RRSIG, NSEC/NSEC3 record types. CDS generation with SHA-256/SHA-384. DNSSEC rndc commands (sign, validation, checkds). Key rollover helpers planned for v1.0.
+- 📦 **Supply Chain** — `cargo audit` in CI. `#![forbid(unsafe_code)]` in core and net. SBOM generation planned.
+- ⚙️ **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns at compile time and runtime. HMAC-SHA256/SHA512 default. Key material stored in OS credential store (macOS Keychain, Linux Secret Service).
 
 ## 💛 Sponsor
 
