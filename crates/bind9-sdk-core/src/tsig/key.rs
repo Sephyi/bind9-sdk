@@ -175,6 +175,12 @@ impl TsigKey {
     }
 }
 
+impl fmt::Display for TsigKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TsigKey({}, {}, [REDACTED])", self.name, self.algorithm)
+    }
+}
+
 impl fmt::Debug for TsigKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TsigKey")
