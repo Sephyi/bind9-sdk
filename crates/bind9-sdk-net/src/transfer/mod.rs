@@ -5,8 +5,8 @@
 //! AXFR/IXFR zone transfer client.
 //!
 //! Provides [`TransferClient`] for performing zone transfers over DNS-over-TCP.
-//! The client returns an async [`Stream`](tokio_stream::Stream) of
-//! [`TransferRecord`]s, allowing incremental processing of large zones.
+//! The client returns an async [`Stream`] of [`TransferRecord`]s, allowing
+//! incremental processing of large zones.
 //!
 //! Supports optional TSIG authentication (RFC 8945) for signed transfers.
 
@@ -57,9 +57,9 @@ impl TransferClient<tokio::net::TcpStream> {
     /// For non-localhost addresses, TLS is required (XoT per REQ-TLS-1).
     /// Localhost connections are exempt from the TLS requirement.
     ///
-    /// When `tls` is `Some`, the connection should use
-    /// [`TransferClient::connect_tls`] (not yet implemented). Passing
-    /// `Some` currently returns a [`NetError::Tls`] error.
+    /// When `tls` is `Some`, the connection should use a TLS transport
+    /// (not yet implemented). Passing `Some` currently returns a
+    /// [`NetError::Tls`] error.
     pub async fn connect(
         addr: std::net::SocketAddr,
         tls: Option<&TlsConfig>,

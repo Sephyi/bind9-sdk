@@ -39,8 +39,7 @@ impl RndcPool {
     /// Create a new pool wrapping `config` with a concurrency limit of
     /// `max_concurrent` slots.
     ///
-    /// If `max_concurrent` is `0` the pool defaults to
-    /// [`DEFAULT_MAX_CONCURRENT`] (4) slots.
+    /// If `max_concurrent` is `0` the pool defaults to 4 slots.
     pub fn new(config: ClientConfig, max_concurrent: usize) -> Self {
         let limit = if max_concurrent == 0 {
             DEFAULT_MAX_CONCURRENT
