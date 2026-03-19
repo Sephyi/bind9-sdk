@@ -101,6 +101,9 @@ clap_complete = "4"
 toml = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
+keyring = { version = "3", features = ["apple-native", "linux-native"] }
+secrecy = { version = "0.10", features = ["serde"] }
+rpassword = "5"
 
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }

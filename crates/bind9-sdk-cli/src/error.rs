@@ -27,6 +27,10 @@ pub enum CliError {
     /// TOML deserialization error.
     #[error("TOML parse error: {0}")]
     Toml(#[from] toml::de::Error),
+
+    /// OS credential store (keyring) error.
+    #[error("keyring error: {0}")]
+    Keyring(#[from] keyring::Error),
 }
 
 impl CliError {

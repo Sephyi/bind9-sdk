@@ -21,6 +21,9 @@ bind9-sdk = { path = "../../bind9-sdk" }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 dirs = { workspace = true }
+keyring = { workspace = true }
+rpassword = { workspace = true }
+secrecy = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

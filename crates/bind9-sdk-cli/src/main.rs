@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod connect;
 mod error;
+mod keyring;
 mod output;
 
 use std::process::ExitCode;
@@ -48,11 +49,17 @@ fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<(), CliError> {
-    // Handle completions first — no server config needed.
-    if let Command::Completions { shell } = &cli.command {
-        let mut cmd = Cli::command();
-        clap_complete::generate(*shell, &mut cmd, "bind9", &mut std::io::stdout());
-        return Ok(());
+    // Handle commands that don't need server config.
+    match &cli.command {
+        Command::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(*shell, &mut cmd, "bind9", &mut std::io::stdout());
+            return Ok(());
+        }
+        Command::Auth(auth_cmd) => {
+            return commands::auth::execute(auth_cmd);
+        }
+        _ => {}
     }
 
     let format = cli.output;
@@ -65,6 +72,6 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Record(record_cmd) => commands::record::execute(record_cmd, format, config).await,
         Command::Dnssec(dnssec_cmd) => commands::dnssec::execute(dnssec_cmd, format, config).await,
         Command::Stats => commands::stats::execute(format, config).await,
-        Command::Completions { .. } => unreachable!(),
+        Command::Auth(_) | Command::Completions { .. } => unreachable!(),
     }
 }

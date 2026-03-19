@@ -3,12 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! Build SDK client configuration from CLI args and config file.
+//!
+//! Secret resolution order:
+//! 1. CLI `--key-secret` flag (highest priority)
+//! 2. OS credential store via `keyring` crate
+//! 3. Config file `[auth].key_secret` (lowest priority, fallback)
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 
+use bind9_sdk::DomainName;
 use bind9_sdk::core::tsig::{TsigAlgorithm, TsigKey};
 use bind9_sdk::net::ClientConfig;
-use bind9_sdk::DomainName;
+use secrecy::{ExposeSecret, SecretString};
+use tracing::{debug, warn};
 
 use crate::commands::Cli;
 use crate::config::CliConfig;
@@ -43,10 +50,36 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
         .and_then(|c| c.auth.as_ref())
         .map(|a| a.key_name.as_str()));
 
-    let key_secret = cli.key_secret.as_deref().or(file_config
-        .as_ref()
-        .and_then(|c| c.auth.as_ref())
-        .map(|a| a.key_secret.as_str()));
+    // Secret resolution: CLI flag > keyring > config file
+    let key_secret: Option<SecretString> = if let Some(ref cli_secret) = cli.key_secret {
+        debug!("using TSIG key secret from CLI flag");
+        Some(SecretString::from(cli_secret.clone()))
+    } else {
+        // Try the OS credential store first, using host:port as the profile.
+        let profile = format!("{host}:{port}");
+        let keyring_secret = crate::keyring::get_secret(&profile).unwrap_or_else(|e| {
+            debug!(error = %e, "keyring lookup failed, falling back to config file");
+            None
+        });
+
+        if keyring_secret.is_some() {
+            debug!("using TSIG key secret from OS credential store");
+            keyring_secret
+        } else if let Some(file_secret) = file_config
+            .as_ref()
+            .and_then(|c| c.auth.as_ref())
+            .map(|a| &a.key_secret)
+        {
+            warn!(
+                "using TSIG key secret from plaintext config file — \
+                 this is insecure; use `bind9 auth set-key` to store \
+                 the secret in your OS credential store instead"
+            );
+            Some(SecretString::from(file_secret.expose_secret().to_owned()))
+        } else {
+            None
+        }
+    };
 
     let (Some(key_name), Some(key_secret)) = (key_name, key_secret) else {
         return Ok(None);
@@ -64,12 +97,18 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
         .or_else(|_| DomainName::new(&format!("{key_name}.")))
         .map_err(|e| CliError::Config(format!("invalid key name '{key_name}': {e}")))?;
 
-    let tsig_key = TsigKey::from_base64(key_domain, algorithm, key_secret)
+    let tsig_key = TsigKey::from_base64(key_domain, algorithm, key_secret.expose_secret())
         .map_err(|e| CliError::Config(format!("invalid key secret: {e}")))?;
 
     let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .map_err(|e| CliError::Config(format!("invalid server address '{host}:{port}': {e}")))?;
+        .to_socket_addrs()
+        .map_err(|e| {
+            CliError::Config(format!(
+                "cannot resolve server address '{host}:{port}': {e}"
+            ))
+        })?
+        .next()
+        .ok_or_else(|| CliError::Config(format!("no addresses found for '{host}:{port}'")))?;
 
     let mut config = ClientConfig::new(addr, tsig_key);
 
@@ -78,16 +117,24 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
         .dns_port
         .or(file_config.as_ref().and_then(|c| c.server.dns_port));
     if let Some(dns_port) = dns_port {
-        let dns_addr: SocketAddr = format!("{host}:{dns_port}").parse().map_err(|e| {
-            CliError::Config(format!("invalid DNS address '{host}:{dns_port}': {e}"))
-        })?;
+        let dns_addr: SocketAddr = format!("{host}:{dns_port}")
+            .to_socket_addrs()
+            .map_err(|e| {
+                CliError::Config(format!(
+                    "cannot resolve DNS address '{host}:{dns_port}': {e}"
+                ))
+            })?
+            .next()
+            .ok_or_else(|| {
+                CliError::Config(format!("no addresses found for '{host}:{dns_port}'"))
+            })?;
         config.dns_addr = Some(dns_addr);
     }
 
-    if let Some(ref file_cfg) = file_config {
-        if let Some(ref stats_url) = file_cfg.server.stats_url {
-            config.stats_url = Some(stats_url.clone());
-        }
+    if let Some(ref file_cfg) = file_config
+        && let Some(ref stats_url) = file_cfg.server.stats_url
+    {
+        config.stats_url = Some(stats_url.clone());
     }
 
     Ok(Some(config))

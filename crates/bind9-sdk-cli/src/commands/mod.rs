@@ -4,6 +4,7 @@
 
 //! CLI command structure using clap derive.
 
+pub mod auth;
 pub mod dnssec;
 pub mod record;
 pub mod stats;
@@ -72,6 +73,10 @@ pub enum Command {
     /// DNSSEC management commands.
     #[command(subcommand)]
     Dnssec(dnssec::DnssecCommand),
+
+    /// Manage TSIG key credentials in the OS credential store.
+    #[command(subcommand)]
+    Auth(auth::AuthCommand),
 
     /// Fetch server statistics from the BIND9 statistics-channel.
     Stats,
