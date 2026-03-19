@@ -123,7 +123,7 @@ mise run build:bindings
 # Or manually
 cd crates/bind9-sdk-bindings
 npm install
-npx napi build --release
+npm run build
 
 # Verify it works
 node tests/smoke.mjs

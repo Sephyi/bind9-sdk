@@ -33,7 +33,7 @@ description = "Build napi-rs native .node file + JS/TS bindings (release)"
 dir = "crates/bind9-sdk-bindings"
 run = """
 npm install
-npx napi build --release
+npm run build
 """
 
 # Check (type-check only, no codegen — faster than build)
