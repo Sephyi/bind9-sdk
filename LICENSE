@@ -1,0 +1,16 @@
+bind9-sdk is dual-licensed under:
+
+  1. GNU Affero General Public License v3.0 only (AGPL-3.0-only)
+  2. A commercial license (LicenseRef-Commercial)
+
+You may use this software under either license at your option.
+
+The full text of each license is available in the LICENSES/ directory:
+
+  LICENSES/AGPL-3.0-only.txt      — the open-source license
+  LICENSES/LicenseRef-Commercial.txt — the commercial license
+
+For commercial licensing inquiries, contact: me@sephy.io
+
+Individual source files carry SPDX license headers per the REUSE
+specification (https://reuse.software). See REUSE.toml for details.
