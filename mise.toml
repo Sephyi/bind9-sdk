@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+[tools]
+rust = "1.94.0"
+node = "lts"
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+# Setup
+
+[tasks.setup]
+description = "Configure git hooks for the repository"
+run = """
+git config core.hooksPath .githooks
+echo "Git hooks configured to use .githooks/"
+"""
+
+# Build (all release — use `check` or `run:cli` for fast debug iteration)
+
+[tasks.build]
+description = "Build all workspace crates (release)"
+run = "cargo build --workspace --release"
+
+[tasks."build:cli"]
+description = "Build the CLI binary (release)"
+run = "cargo build -p bind9-sdk-cli --release"
+
+[tasks."build:bindings"]
+description = "Build napi-rs native .node file + JS/TS bindings (release)"
+dir = "crates/bind9-sdk-bindings"
+run = """
+npm install
+npx napi build --release
+"""
+
+# Check (type-check only, no codegen — faster than build)
+
+[tasks.check]
+description = "Type-check all workspace crates"
+run = "cargo check --workspace"
+
+[tasks."check:wasm"]
+description = "Check no_std compliance for core crate on WASM target"
+run = "cargo check -p bind9-sdk-core --target wasm32-unknown-unknown"
+
+[tasks."check:bindings"]
+description = "Check napi-rs bindings compile (does not produce .node file)"
+run = "cargo check -p bind9-sdk-bindings --features nodejs"
+
+# Format
+
+[tasks.fmt]
+description = "Format all Rust files"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting without modifying files"
+run = "cargo fmt --all --check"
+
+# Lint + Audit
+
+[tasks.clippy]
+description = "Run clippy lints on all targets"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.audit]
+description = "Run security audit on dependencies"
+run = "cargo audit"
+
+# Test
+
+[tasks.test]
+description = "Run all unit tests"
+run = "cargo test --workspace"
+
+[tasks."test:integration"]
+description = "Run integration tests against live BIND9 (starts/stops container)"
+depends = ["integration:up"]
+run = """
+cargo test --workspace -- --ignored
+status=$?
+podman-compose -f tests/bind9/podman-compose.yml down -v
+exit $status
+"""
+
+# Integration infrastructure
+
+[tasks."integration:up"]
+description = "Start BIND9 test container"
+run = """
+podman-compose -f tests/bind9/podman-compose.yml up -d
+echo "Waiting for BIND9 health..."
+for i in $(seq 1 30); do
+  if podman-compose -f tests/bind9/podman-compose.yml exec bind9 rndc status >/dev/null 2>&1; then
+    echo "BIND9 healthy after $i seconds"
+    break
+  fi
+  sleep 1
+done
+"""
+
+[tasks."integration:down"]
+description = "Stop BIND9 test container"
+run = "podman-compose -f tests/bind9/podman-compose.yml down -v"
+
+# CI
+
+[tasks.ci]
+description = "Run full CI gate: fmt, clippy, WASM, tests, audit"
+depends = ["fmt:check", "clippy", "check:wasm", "test", "audit"]
+
+# Docs + Utilities
+
+[tasks.doc]
+description = "Build and open API documentation"
+run = "cargo doc -p bind9-sdk --no-deps --open"
+
+[tasks."doc:build"]
+description = "Build API documentation (no browser)"
+run = "cargo doc -p bind9-sdk --no-deps"
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "cargo clean"
+
+[tasks.cli]
+description = "Run the CLI binary in debug mode (pass args after --)"
+run = "cargo run -p bind9-sdk-cli --"
