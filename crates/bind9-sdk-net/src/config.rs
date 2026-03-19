@@ -54,6 +54,20 @@ pub struct ClientConfig {
     pub pool_size: Option<usize>,
 }
 
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("rndc_addr", &self.rndc_addr)
+            .field("rndc_key", &"[REDACTED]")
+            .field("stats_url", &self.stats_url)
+            .field("dns_addr", &self.dns_addr)
+            .field("tls", &self.tls.as_ref().map(|_| "[configured]"))
+            .field("timeout", &self.timeout)
+            .field("pool_size", &self.pool_size)
+            .finish()
+    }
+}
+
 impl ClientConfig {
     /// Create a minimal configuration with only the required fields.
     ///
@@ -273,6 +287,22 @@ mod tests {
         assert_eq!(config.rndc_addr.port(), 953);
         assert!(config.stats_url.is_some());
         assert_eq!(config.timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn client_config_debug_redacts_key() {
+        let config = ClientConfig {
+            rndc_addr: "127.0.0.1:953".parse().unwrap(),
+            rndc_key: test_key(),
+            stats_url: None,
+            dns_addr: None,
+            tls: None,
+            timeout: Duration::from_secs(10),
+            pool_size: None,
+        };
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[REDACTED]"), "key must be redacted");
+        assert!(!debug.contains("0xAA"), "raw key bytes must not appear");
     }
 
     #[test]
