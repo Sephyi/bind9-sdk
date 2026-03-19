@@ -38,6 +38,11 @@ pub enum RecordData {
         /// Primary name server for the zone.
         mname: DomainName,
         /// Mailbox of the zone administrator (encoded as a domain name).
+        ///
+        /// **GDPR note:** This field typically contains an email address
+        /// (with `@` replaced by `.`), which constitutes personal data per
+        /// GDPR Art. 4(1). Operators should consider privacy implications
+        /// when exposing SOA records publicly.
         rname: DomainName,
         /// Zone serial number; must increase on every change.
         serial: Serial,
