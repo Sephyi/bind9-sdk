@@ -113,7 +113,8 @@ impl TsigRecord {
 
         // MAC input = [prior MAC (length-prefixed)] + DNS message + TSIG variables
         // Prior MAC is included for response or multi-message TSIG (RFC 8945 §4.5.3)
-        let mut mac_input = Vec::with_capacity(message.len() + tsig_vars.len());
+        // Wrapped in Zeroizing to clear HMAC input (contains key-derived data) on drop
+        let mut mac_input = Zeroizing::new(Vec::with_capacity(message.len() + tsig_vars.len()));
         if let Some(prior) = request_mac {
             mac_input.extend_from_slice(&(prior.len() as u16).to_be_bytes());
             mac_input.extend_from_slice(prior);
@@ -392,8 +393,10 @@ impl TsigRecord {
         tsig_vars.extend_from_slice(&response_tsig.other_data);
 
         // Build MAC input: request_mac (length-prefixed) + response + tsig_vars
-        let mut mac_input =
-            Vec::with_capacity(2 + request_mac.len() + response_message.len() + tsig_vars.len());
+        // Wrapped in Zeroizing to clear HMAC input on drop
+        let mut mac_input = Zeroizing::new(Vec::with_capacity(
+            2 + request_mac.len() + response_message.len() + tsig_vars.len(),
+        ));
         mac_input.extend_from_slice(&(request_mac.len() as u16).to_be_bytes());
         mac_input.extend_from_slice(request_mac);
         mac_input.extend_from_slice(response_message);
