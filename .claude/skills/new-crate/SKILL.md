@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 ---
 name: new-crate
@@ -51,7 +51,7 @@ mkdir -p "$CLAUDE_PROJECT_DIR/crates/<crate-name>/src"
 ```toml
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 #
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 [package]
 name = "<crate-name>"
@@ -77,7 +77,7 @@ Add `[dependencies]` section:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // (for --no-std only):
 #![no_std]

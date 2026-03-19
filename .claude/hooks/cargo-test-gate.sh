@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 #
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PostToolUse hook: run targeted cargo test for the crate containing the edited file.
 # Only runs lib tests (fast, ~1-3s per crate). Full suite via /ci-check.
 #

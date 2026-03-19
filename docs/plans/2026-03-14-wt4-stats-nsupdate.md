@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # WT-4: Stats HTTP + nsupdate Sender Implementation Plan
@@ -42,7 +42,7 @@ Write the test that verifies `StatsHttpClient` can be constructed from a valid U
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use crate::error::NetError;
 
@@ -827,7 +827,7 @@ git commit -m "test(net): add ignored integration test stubs for live BIND9 stat
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -1532,7 +1532,7 @@ Update `crates/bind9-sdk-net/src/lib.rs` to ensure public types are accessible:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 pub mod config;
 pub mod error;

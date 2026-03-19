@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # WT-1: Zone Parser + Serializer Implementation Plan
@@ -32,7 +32,7 @@ Create `crates/bind9-sdk-core/src/zone/parser.rs` with token types and tests. Th
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -579,7 +579,7 @@ Create `crates/bind9-sdk-core/src/zone/rdata_text.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::format;
 use alloc::string::String;
@@ -2497,7 +2497,7 @@ Create `crates/bind9-sdk-core/src/zone/serializer.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::format;
 use alloc::string::String;

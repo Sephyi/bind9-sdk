@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 #
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 version = 1
 
@@ -8,9 +8,13 @@ version = 1
 [[annotations]]
 path = [
     "Cargo.lock",
+    "crates/bind9-sdk-bindings/package.json",
+    "crates/bind9-sdk-bindings/package-lock.json",
+    "crates/bind9-sdk-core/src/zone/snapshots/*.snap",
+    "crates/bind9-sdk-net/tests/compile-fail/*.stderr",
     ".github/**",
     ".claude/**",
     "npm/**",
 ]
 SPDX-FileCopyrightText = "2026 Sephyi <me@sephy.io>"
-SPDX-License-Identifier = "PolyForm-Noncommercial-1.0.0"
+SPDX-License-Identifier = "AGPL-3.0-only OR LicenseRef-Commercial"

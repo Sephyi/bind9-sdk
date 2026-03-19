@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 # Phase 1 Completion Plan
 
@@ -227,7 +227,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   //! Integration tests for RFC 2136 nsupdate against a live BIND9 instance.
   //!
@@ -472,7 +472,7 @@ DNS update port is **15353** (container maps port 53 → host 15353).
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   //! Integration tests for the BIND9 statistics-channel HTTP client.
   //!
@@ -1156,7 +1156,7 @@ Before starting, scan the current `tsig.rs` to map imports and internal function
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   use alloc::string::String;
   use alloc::vec::Vec;
@@ -1177,7 +1177,7 @@ Before starting, scan the current `tsig.rs` to map imports and internal function
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   use alloc::vec::Vec;
   use zeroize::Zeroizing;
@@ -1191,7 +1191,7 @@ Before starting, scan the current `tsig.rs` to map imports and internal function
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   use alloc::string::String;
   use crate::error::CoreError;
@@ -1201,7 +1201,7 @@ Before starting, scan the current `tsig.rs` to map imports and internal function
 
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   extern crate alloc;
 
@@ -1426,14 +1426,14 @@ in scope — license warnings from the dry-run are expected and non-blocking.
 
   Common issues to look for:
   - Missing `description` field (already present in `bind9-sdk/Cargo.toml`)
-  - Missing `license` field (present — `PolyForm-Noncommercial-1.0.0`)
+  - Missing `license` field (present — `AGPL-3.0-only OR LicenseRef-Commercial`)
   - Missing `repository` or `homepage` fields (present)
   - Unknown license SPDX identifier warning (PolyForm-Noncommercial is not in the SPDX license list
     used by crates.io — this will be a warning or error)
   - `license-file` vs `license` field conflict
 
   **Expected outcome for the license field:**
-  `PolyForm-Noncommercial-1.0.0` is not an SPDX identifier recognized by crates.io's validator.
+  `AGPL-3.0-only OR LicenseRef-Commercial` is not an SPDX identifier recognized by crates.io's validator.
   The dry-run may warn or error about the unrecognized license. This is expected and non-blocking —
   OQ-005 is deferred (no release planned). The dry-run validates packaging structure, not publish readiness.
 
@@ -1447,7 +1447,7 @@ in scope — license warnings from the dry-run are expected and non-blocking.
 ### Step 5.2 — OQ-005 (License): Deferred
 
 **Decision: No crates.io release is planned for this phase.** The license question (OQ-005)
-remains open — PolyForm-Noncommercial-1.0.0 stays as-is. No `Cargo.toml` changes needed.
+remains open — AGPL-3.0-only OR LicenseRef-Commercial stays as-is. No `Cargo.toml` changes needed.
 
 The `cargo publish --dry-run` in Steps 5.1/5.7 may warn about the non-SPDX license identifier.
 This is expected and acceptable since actual publishing is not in scope.
@@ -1631,7 +1631,7 @@ Per CLAUDE.md § Verification Workflow, run all three mandatory review agents be
   ```
 
   Expected: `Uploading bind9-sdk vX.Y.Z` (dry-run; not actually uploaded). License warnings
-  about `PolyForm-Noncommercial-1.0.0` are expected and non-blocking (OQ-005 deferred). Only
+  about `AGPL-3.0-only OR LicenseRef-Commercial` are expected and non-blocking (OQ-005 deferred). Only
   fatal packaging errors (missing fields, broken deps) need fixing.
 
 ### Step 5.8 — Full workspace final quality gate

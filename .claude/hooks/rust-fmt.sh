@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PostToolUse hook: format .rs files with rustfmt after Edit/Write
 # Reads tool input JSON from stdin, extracts file_path, skips non-Rust files.
 

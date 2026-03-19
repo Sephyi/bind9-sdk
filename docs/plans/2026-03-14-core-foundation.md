@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # Core Foundation Implementation Plan
@@ -45,7 +45,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -73,7 +73,7 @@ Each file:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 ```
 
 - [ ] **Step 3: Verify the crate compiles on both native and WASM targets**
@@ -164,7 +164,7 @@ Write the full `crates/bind9-sdk-core/src/error.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::string::String;
 
@@ -320,7 +320,7 @@ Expected: FAIL — `Label` not defined
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::format;
 use alloc::string::String;
@@ -757,7 +757,7 @@ Expected: FAIL — types not defined
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::format;
 use core::fmt;
@@ -1011,7 +1011,7 @@ Expected: FAIL — `RecordData` not defined
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -1408,7 +1408,7 @@ Expected: FAIL — traits not defined
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::vec::Vec;
 
@@ -1538,7 +1538,7 @@ Update `crates/bind9-sdk-core/src/lib.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -1566,7 +1566,7 @@ Update `bind9-sdk/src/lib.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! # bind9-sdk
 //!

@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # Phase 1 Pre-Worktree Scaffolding Implementation Plan
@@ -120,7 +120,7 @@ Create `crates/bind9-sdk-core/src/protocol.rs` with tests first (the implementat
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use core::fmt;
 
@@ -418,7 +418,7 @@ git commit -m "feat(core): add RecordType and Rcode enums in protocol.rs"
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::vec::Vec;
 
@@ -560,7 +560,7 @@ git commit -m "feat(core): add Zone and ZoneSummary types in zone/mod.rs"
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // TSIG key material and HMAC signing — fleshed out in WT-2 plan.
 // This stub exists so the module declaration compiles.
@@ -571,7 +571,7 @@ git commit -m "feat(core): add Zone and ZoneSummary types in zone/mod.rs"
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::vec::Vec;
 
@@ -851,7 +851,7 @@ Update `lib.rs` to declare all new modules and add curated re-exports:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -912,7 +912,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // NetError enum — fleshed out in WT-2 plan.
 ```
@@ -921,7 +921,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // TLS 1.3 configuration — fleshed out in WT-2 plan.
 ```
@@ -930,7 +930,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // Bind9Client skeleton and ClientConfig — fleshed out in WT-2 plan.
 ```
@@ -939,7 +939,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // rndc wire protocol — fleshed out in WT-3 plan.
 ```
@@ -948,7 +948,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // Statistics-channel HTTP client — fleshed out in WT-4 plan.
 ```
@@ -957,7 +957,7 @@ Each stub file has the SPDX header and a doc comment explaining what it will con
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // nsupdate sender (UDP/TCP) — fleshed out in WT-4 plan.
 ```
@@ -969,7 +969,7 @@ Replace `crates/bind9-sdk-net/src/lib.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 pub mod config;
 pub mod error;

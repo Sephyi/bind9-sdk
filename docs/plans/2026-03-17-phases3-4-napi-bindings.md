@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 # Phases 3-4 Implementation Plan — napi-rs Bindings + npm Package (JS Track)
 
@@ -153,7 +153,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   use napi::bindgen_prelude::*;
   use napi_derive::napi;
@@ -180,7 +180,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   use napi_derive::napi;
   use bind9_sdk_core::DomainName;
@@ -229,7 +229,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   mod domain;
   mod error;
@@ -291,7 +291,7 @@ Before starting Phase 3 implementation, verify the research spike findings:
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   fn main() {
       napi_build::setup();

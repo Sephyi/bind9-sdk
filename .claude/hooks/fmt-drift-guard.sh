@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 #
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # Stop hook: catch cross-file rustfmt drift after a Claude session.
 #
 # PostToolUse rust-fmt.sh formats each edited file individually, but if Claude

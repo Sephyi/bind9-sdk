@@ -17,7 +17,7 @@ If `REUSE_NOT_INSTALLED` appears above, tell the user to install it with `pipx i
 ## Project defaults
 
 - Copyright: `Sephyi <me@sephy.io>`
-- License: `PolyForm-Noncommercial-1.0.0`
+- License: `AGPL-3.0-only OR LicenseRef-Commercial`
 - Year: !`date +%Y`
 
 ## Files to annotate
@@ -41,7 +41,7 @@ Files without comment syntax or auto-generated files: binary files (images, font
 ```bash
 reuse annotate \
   --copyright "Sephyi <me@sephy.io>" \
-  --license PolyForm-Noncommercial-1.0.0 \
+  --license AGPL-3.0-only OR LicenseRef-Commercial \
   --year !`date +%Y` \
   --force \
   $ARGUMENTS
@@ -58,7 +58,7 @@ Add an `[[annotations]]` block to `REUSE.toml` following the existing pattern:
 path = "<file-or-glob>"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "!`date +%Y` Sephyi <me@sephy.io>"
-SPDX-License-Identifier = "PolyForm-Noncommercial-1.0.0"
+SPDX-License-Identifier = "AGPL-3.0-only OR LicenseRef-Commercial"
 SPDX-FileComment = "<brief reason why inline header cannot be used>"
 ```
 

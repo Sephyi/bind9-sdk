@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 # Post-WT-5 Hardening + E2E Infrastructure Plan
 
@@ -699,7 +699,7 @@ mkdir -p tests/bind9/zones
 
 ```dockerfile
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y bind9 bind9-utils && rm -rf /var/lib/apt/lists/*
@@ -716,7 +716,7 @@ CMD ["/usr/sbin/named", "-g", "-c", "/etc/bind/named.conf", "-u", "bind"]
 
 ```conf
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // Test BIND9 configuration for bind9-sdk integration tests.
 
@@ -754,7 +754,7 @@ zone "example.com" {
 
 ```zone
 ; SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-; SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+; SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 $TTL 3600
 @   IN  SOA ns1.example.com. admin.example.com. (
@@ -774,7 +774,7 @@ ns1 IN  A   127.0.0.1
 
 ```yaml
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 services:
   bind9:
@@ -797,7 +797,7 @@ services:
 
 ```markdown
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 # Integration Tests
 

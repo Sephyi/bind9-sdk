@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PreToolUse hook: warn if new Cargo.toml files lack edition = "2024".
 # Non-blocking (exit 0) — prints warning only.
 

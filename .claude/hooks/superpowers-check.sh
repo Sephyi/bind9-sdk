@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # SessionStart hook: verify superpowers plugin is active.
 # Superpowers registers its own SessionStart hook that injects 'using-superpowers'
 # content automatically. If the plugin directory is missing, skills like brainstorming,

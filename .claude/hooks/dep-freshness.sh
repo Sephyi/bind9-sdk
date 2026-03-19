@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PostToolUse hook: warn if Cargo.toml dep versions are below known minimums.
 # Non-blocking (exit 0) — prints warnings only.
 

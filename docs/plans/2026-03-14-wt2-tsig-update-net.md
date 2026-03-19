@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # WT-2: TSIG + UpdateBuilder + Net Foundation Implementation Plan
@@ -32,7 +32,7 @@ Replace the stub contents of `crates/bind9-sdk-core/src/tsig.rs` with the TsigAl
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -2422,7 +2422,7 @@ Replace the stub in `crates/bind9-sdk-net/src/error.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use std::time::Duration;
 
@@ -2580,7 +2580,7 @@ Replace the stub in `crates/bind9-sdk-net/src/tls.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use std::sync::Arc;
 
@@ -2700,7 +2700,7 @@ Replace the stub in `crates/bind9-sdk-net/src/config.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -2874,7 +2874,7 @@ Replace the contents of `crates/bind9-sdk-net/src/lib.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 pub mod config;
 pub mod error;

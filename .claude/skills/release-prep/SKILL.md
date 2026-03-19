@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 ---
 name: release-prep
@@ -26,7 +26,7 @@ Required result: 0 vulnerabilities. Any advisory is a blocker.
 cargo deny check
 ```
 
-`licenses FAILED` for `PolyForm-Noncommercial-1.0.0` is expected — OQ-005 is tracking this and it is not a blocker until the license question is resolved. Any other `deny` failure (banned crate, yanked version) IS a blocker.
+`licenses FAILED` for `AGPL-3.0-only OR LicenseRef-Commercial` is expected — OQ-005 is tracking this and it is not a blocker until the license question is resolved. Any other `deny` failure (banned crate, yanked version) IS a blocker.
 
 ### 3. Documentation coverage
 
@@ -66,7 +66,7 @@ Collect each agent's summary and note any CRITICAL or HIGH findings.
 
 Read `PRD.md`. Find the Open Questions table. Report the status of these known publish blockers:
 
-- **OQ-005**: PolyForm-Noncommercial-1.0.0 not in SPDX allow list — `cargo deny check licenses` fails
+- **OQ-005**: AGPL-3.0-only OR LicenseRef-Commercial not in SPDX allow list — `cargo deny check licenses` fails
 - **OQ-007**: rndc `_tim`/`_exp` tolerance — do we accept slightly stale timestamps from BIND9?
 
 Also list any other OQs that are NOT marked RESOLVED.

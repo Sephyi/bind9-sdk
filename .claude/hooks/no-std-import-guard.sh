@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 #
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PreToolUse hook: block bare `use std::` in bind9-sdk-core (no_std crate).
 # Allows `use std::` when preceded by #[cfg(feature = "std")] or inside #[cfg(test)].
 

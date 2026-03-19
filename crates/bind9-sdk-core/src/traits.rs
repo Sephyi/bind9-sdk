@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 // We intentionally use `async fn` in traits rather than `-> impl Future + Send`
 // desugaring. These traits are not used as trait objects (`dyn Trait`); they exist

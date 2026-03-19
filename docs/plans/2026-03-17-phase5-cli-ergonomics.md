@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io> -->
-<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial -->
 
 # Phase 5 Implementation Plan — CLI + Ergonomics (Rust Track)
 
@@ -583,7 +583,7 @@
 
   ```toml
   # SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
-  # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   [package]
   name = "bind9-sdk-cli"
@@ -615,7 +615,7 @@
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   /// CLI errors — one enum per crate.
   #[derive(Debug, thiserror::Error)]
@@ -644,7 +644,7 @@
   ```rust
   // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
   //
-  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
   mod error;
 

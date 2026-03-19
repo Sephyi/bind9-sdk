@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PostToolUse hook: run clippy on the affected crate after .rs edits.
 # Determines crate from file path. Adds ~2-5s latency per edit.
 

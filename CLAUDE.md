@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # bind9-sdk
@@ -141,7 +141,7 @@ Key patterns enforced across all implementation:
 - `cargo fmt` + `clippy --workspace -D warnings` enforced by PostToolUse hook
 - `#![no_std]` in `bind9-sdk-core` — verified by WASM target check
 - SPDX headers on all source files (`// SPDX-...` for Rust, `# SPDX-...` for TOML, `<!-- SPDX-... -->` for Markdown)
-- License: PolyForm-Noncommercial-1.0.0 (REUSE compliant via `REUSE.toml`)
+- License: AGPL-3.0-only OR LicenseRef-Commercial (REUSE compliant via `REUSE.toml`)
 
 ## Claude Code Hooks
 

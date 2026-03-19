@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! This file MUST NOT compile. It verifies that `command()` is not
 //! available on `RndcConnection<Unauthenticated>`.

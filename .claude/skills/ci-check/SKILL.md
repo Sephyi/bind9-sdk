@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 name: ci-check
 description: Run the bind9-sdk CI verification gate (fmt, clippy, wasm, tests, audit, reuse) and report results with actionable feedback
 disable-model-invocation: true

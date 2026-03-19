@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # WT-3: rndc Wire Protocol Implementation Plan
@@ -56,7 +56,7 @@ Create `crates/bind9-sdk-net/src/rndc/protocol.rs` with the SPDX header, type st
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! ISC binary message encoding for the rndc wire protocol.
 //!
@@ -358,7 +358,7 @@ Replace `crates/bind9-sdk-net/src/rndc/mod.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! BIND9 rndc wire protocol client.
 //!
@@ -696,7 +696,7 @@ Create `crates/bind9-sdk-net/src/rndc/command.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! rndc command types and response parsing.
 //!
@@ -1211,7 +1211,7 @@ Replace `crates/bind9-sdk-net/src/rndc/mod.rs` with the full module declaration 
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! BIND9 rndc wire protocol client.
 //!
@@ -1591,7 +1591,7 @@ Create `crates/bind9-sdk-net/tests/rndc_typestate.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! Compile-fail test to verify RndcConnection typestate enforcement.
 //!
@@ -1610,7 +1610,7 @@ Create `crates/bind9-sdk-net/tests/compile-fail/rndc_unauthenticated_command.rs`
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! This file MUST NOT compile. It verifies that `command()` is not
 //! available on `RndcConnection<Unauthenticated>`.
@@ -1760,7 +1760,7 @@ Create `crates/bind9-sdk-net/tests/rndc_integration.rs`:
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! Integration tests for rndc wire protocol against a live BIND9 instance.
 //!
@@ -2141,7 +2141,7 @@ Replace `crates/bind9-sdk-net/src/config.rs` with the `Bind9Client` implementati
 ```rust
 // SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 //
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! BIND9 client configuration and trait implementations.
 //!

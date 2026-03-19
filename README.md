@@ -1,13 +1,14 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
-# 🌐 bind9-sdk &emsp; ![MSRV] ![License]
+# 🌐 bind9-sdk &emsp; ![MSRV] ![AGPL] ![Commercial]
 
 [MSRV]: https://img.shields.io/badge/MSRV-1.94-orange.svg
-[License]: https://img.shields.io/badge/license-TBD-yellow.svg
+[AGPL]: https://img.shields.io/badge/License-AGPL--3.0-blue.svg
+[Commercial]: https://img.shields.io/badge/License-Commercial-green.svg
 
 **The BIND9 management SDK that should have existed a decade ago.**
 
@@ -422,6 +423,9 @@ If you find bind9-sdk useful, consider [**sponsoring my work**](https://github.c
 
 ## 📄 License
 
-License not yet decided. The codebase currently carries PolyForm-Noncommercial-1.0.0 headers as a placeholder.
+This project is **dual-licensed**:
+
+- **Open source** — [GNU Affero General Public License v3.0](LICENSES/AGPL-3.0-only.txt) (AGPL-3.0-only). You may use, modify, and distribute this software under the terms of the AGPL. If you modify and deploy it as a network service, you must release your source code.
+- **Commercial** — A [commercial license](LICENSES/LicenseRef-Commercial.txt) is available for organizations that cannot comply with the AGPL (e.g., proprietary SaaS, closed-source integrations). Contact [me@sephy.io](mailto:me@sephy.io) for licensing.
 
 Copyright 2026 [Sephyi](https://sephy.io)

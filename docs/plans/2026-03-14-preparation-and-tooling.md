@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 -->
 
 # Preparation & Tooling Implementation Plan
@@ -96,7 +96,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 authors = ["Sephyi <me@sephy.io>"]
-license = "PolyForm-Noncommercial-1.0.0"
+license = "AGPL-3.0-only OR LicenseRef-Commercial"
 repository = "https://github.com/sephyi/bind9-sdk"
 rust-version = "1.94"
 ```

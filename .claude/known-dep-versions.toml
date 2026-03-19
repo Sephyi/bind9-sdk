@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # Known minimum dependency versions for bind9-sdk.
 # Used by dep-freshness.sh hook to warn about outdated pinned versions.
 # Updated: 2026-03-14

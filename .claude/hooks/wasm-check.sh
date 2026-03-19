@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
 # PostToolUse hook: run WASM target check on bind9-sdk-core edits.
 # Catches no_std violations (std imports, tokio/net leakage) immediately.
 
