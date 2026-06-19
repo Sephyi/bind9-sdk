@@ -4,9 +4,10 @@
 
 extern crate alloc;
 extern crate std;
+use alloc::format;
+
 use super::*;
 use crate::domain::DomainName;
-use alloc::format;
 
 // --- TsigAlgorithm tests ---
 
@@ -596,6 +597,19 @@ fn tsig_record_with_request_mac_differs() {
 
 // --- parse_from_wire tests ---
 
+fn tsig_rdlength_offset(wire: &[u8]) -> usize {
+    let mut pos = 0;
+    loop {
+        let label_len = wire[pos] as usize;
+        pos += 1;
+        if label_len == 0 {
+            break;
+        }
+        pos += label_len;
+    }
+    pos + 2 + 2 + 4
+}
+
 #[test]
 fn tsig_record_wire_roundtrip() {
     let key = TsigKey::new(
@@ -641,6 +655,56 @@ fn parse_from_wire_rejects_wrong_type() {
     bad_wire[4] = 0x01; // TYPE = 1 (A) instead of 250 (TSIG)
     let result = TsigRecord::parse_from_wire(&bad_wire);
     assert!(result.is_err());
+}
+
+#[test]
+fn parse_from_wire_rejects_fields_beyond_declared_rdata() {
+    let key = TsigKey::new(
+        DomainName::new("k.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let mut bad_wire = record.wire_bytes.to_vec();
+    let rdlength_offset = tsig_rdlength_offset(&bad_wire);
+    let rdlength = u16::from_be_bytes([bad_wire[rdlength_offset], bad_wire[rdlength_offset + 1]]);
+    bad_wire[rdlength_offset..rdlength_offset + 2].copy_from_slice(&(rdlength - 1).to_be_bytes());
+
+    assert!(TsigRecord::parse_from_wire(&bad_wire).is_err());
+}
+
+#[test]
+fn parse_from_wire_rejects_unconsumed_declared_rdata() {
+    let key = TsigKey::new(
+        DomainName::new("k.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let mut bad_wire = record.wire_bytes.to_vec();
+    let rdlength_offset = tsig_rdlength_offset(&bad_wire);
+    let rdlength = u16::from_be_bytes([bad_wire[rdlength_offset], bad_wire[rdlength_offset + 1]]);
+    bad_wire[rdlength_offset..rdlength_offset + 2].copy_from_slice(&(rdlength + 1).to_be_bytes());
+    bad_wire.push(0);
+
+    assert!(TsigRecord::parse_from_wire(&bad_wire).is_err());
+}
+
+#[test]
+fn parse_from_wire_rejects_bytes_after_complete_record() {
+    let key = TsigKey::new(
+        DomainName::new("k.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let mut bad_wire = record.wire_bytes.to_vec();
+    bad_wire.push(0);
+
+    assert!(TsigRecord::parse_from_wire(&bad_wire).is_err());
 }
 
 // --- verify_time tests ---
@@ -774,6 +838,89 @@ fn tsig_verify_response_expired_fudge_rejected() {
     assert!(result.is_err());
 }
 
+#[test]
+fn tsig_verify_response_rejects_mismatched_key_name() {
+    let key = TsigKey::new(
+        DomainName::new("resp-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let ts = 1710000000u64;
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    response_tsig.key_name = DomainName::new("other-key.").unwrap();
+
+    assert!(
+        TsigRecord::verify_response(&key, &response_msg, &response_tsig, &request_tsig.mac, ts,)
+            .is_err()
+    );
+}
+
+#[test]
+fn tsig_verify_response_rejects_mismatched_algorithm() {
+    let key = TsigKey::new(
+        DomainName::new("resp-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let ts = 1710000000u64;
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    response_tsig.algorithm = TsigAlgorithm::HmacSha512;
+
+    assert!(
+        TsigRecord::verify_response(&key, &response_msg, &response_tsig, &request_tsig.mac, ts,)
+            .is_err()
+    );
+}
+
+#[test]
+fn tsig_verify_response_rejects_original_id_mismatch() {
+    let key = TsigKey::new(
+        DomainName::new("resp-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let ts = 1710000000u64;
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    response_tsig.original_id = 2;
+
+    assert!(
+        TsigRecord::verify_response(&key, &response_msg, &response_tsig, &request_tsig.mac, ts,)
+            .is_err()
+    );
+}
+
+#[test]
+fn tsig_verify_response_rejects_truncated_dns_header() {
+    let key = TsigKey::new(
+        DomainName::new("resp-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let response_msg = alloc::vec![0x00];
+    let ts = 1710000000u64;
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+
+    assert!(
+        TsigRecord::verify_response(&key, &response_msg, &response_tsig, &request_tsig.mac, ts,)
+            .is_err()
+    );
+}
+
 // --- parse_from_wire error/other_data tests ---
 
 #[test]
@@ -821,9 +968,10 @@ fn parse_from_wire_rejects_nonzero_ttl() {
 // --- Proptests ---
 
 mod proptests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::domain::DomainName;
-    use proptest::prelude::*;
 
     proptest! {
         #[test]

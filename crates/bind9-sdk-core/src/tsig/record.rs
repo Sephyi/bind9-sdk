@@ -241,12 +241,20 @@ impl TsigRecord {
         let rdlength = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
         pos += 2;
 
-        if pos + rdlength > wire.len() {
+        let rdata_end = pos
+            .checked_add(rdlength)
+            .ok_or_else(|| CoreError::Tsig("TSIG RDLENGTH overflow".into()))?;
+        if rdata_end > wire.len() {
             return Err(CoreError::Tsig("TSIG RDATA truncated".into()));
+        }
+        if rdata_end != wire.len() {
+            return Err(CoreError::Tsig(
+                "unexpected bytes after complete TSIG record".into(),
+            ));
         }
 
         // RDATA: Algorithm name
-        let alg_name_str = read_wire_name(wire, &mut pos)?;
+        let alg_name_str = read_wire_name(&wire[..rdata_end], &mut pos)?;
         let algorithm = match alg_name_str.to_lowercase().as_str() {
             "hmac-sha256." => TsigAlgorithm::HmacSha256,
             "hmac-sha512." => TsigAlgorithm::HmacSha512,
@@ -260,7 +268,7 @@ impl TsigRecord {
         };
 
         // RDATA: Time signed (48-bit, 6 bytes)
-        if pos + 6 > wire.len() {
+        if pos + 6 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG time_signed".into()));
         }
         let mut time_bytes = [0u8; 8];
@@ -269,52 +277,58 @@ impl TsigRecord {
         pos += 6;
 
         // RDATA: Fudge (16-bit)
-        if pos + 2 > wire.len() {
+        if pos + 2 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG fudge".into()));
         }
         let fudge = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
         pos += 2;
 
         // RDATA: MAC size (16-bit)
-        if pos + 2 > wire.len() {
+        if pos + 2 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG MAC size".into()));
         }
         let mac_size = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
         pos += 2;
 
         // RDATA: MAC
-        if pos + mac_size > wire.len() {
+        if pos + mac_size > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG MAC".into()));
         }
         let mac = wire[pos..pos + mac_size].to_vec();
         pos += mac_size;
 
         // RDATA: Original ID (16-bit)
-        if pos + 2 > wire.len() {
+        if pos + 2 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG original ID".into()));
         }
         let original_id = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
         pos += 2;
 
         // RDATA: Error (16-bit)
-        if pos + 2 > wire.len() {
+        if pos + 2 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG error".into()));
         }
         let error = u16::from_be_bytes([wire[pos], wire[pos + 1]]);
         pos += 2;
 
         // RDATA: Other length (16-bit)
-        if pos + 2 > wire.len() {
+        if pos + 2 > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG other_len".into()));
         }
         let other_len = u16::from_be_bytes([wire[pos], wire[pos + 1]]) as usize;
         pos += 2;
 
         // RDATA: Other data
-        if pos + other_len > wire.len() {
+        if pos + other_len > rdata_end {
             return Err(CoreError::Tsig("truncated TSIG other_data".into()));
         }
         let other_data = wire[pos..pos + other_len].to_vec();
+        pos += other_len;
+        if pos != rdata_end {
+            return Err(CoreError::Tsig(
+                "TSIG RDATA contains unconsumed bytes".into(),
+            ));
+        }
 
         Ok(TsigRecord {
             key_name,
@@ -359,6 +373,29 @@ impl TsigRecord {
         request_mac: &[u8],
         now: u64,
     ) -> Result<(), CoreError> {
+        if response_tsig.key_name != *key.name() {
+            return Err(CoreError::Tsig(
+                "TSIG response key name does not match configured key".into(),
+            ));
+        }
+        if response_tsig.algorithm != key.algorithm() {
+            return Err(CoreError::Tsig(
+                "TSIG response algorithm does not match configured key".into(),
+            ));
+        }
+        if response_message.len() < 12 {
+            return Err(CoreError::Tsig(
+                "TSIG response contains a truncated DNS header".into(),
+            ));
+        }
+        let response_id = u16::from_be_bytes([response_message[0], response_message[1]]);
+        if response_tsig.original_id != response_id {
+            return Err(CoreError::Tsig(alloc::format!(
+                "TSIG original ID {} does not match DNS response ID {response_id}",
+                response_tsig.original_id
+            )));
+        }
+
         // Check fudge window
         response_tsig.verify_time(now)?;
 
