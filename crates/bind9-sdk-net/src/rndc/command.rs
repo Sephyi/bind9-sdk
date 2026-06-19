@@ -524,10 +524,23 @@ mod tests {
 
     #[test]
     fn command_dnssec_checkds() {
-        let cmd = RndcCommand::DnssecCheckDs {
+        let published = RndcCommand::DnssecCheckDs {
             zone: "example.com".into(),
+            state: DsState::Published,
         };
-        assert_eq!(cmd.to_command_string(), "dnssec -checkds example.com");
+        assert_eq!(
+            published.to_command_string(),
+            "dnssec -checkds published example.com"
+        );
+
+        let withdrawn = RndcCommand::DnssecCheckDs {
+            zone: "example.com".into(),
+            state: DsState::Withdrawn,
+        };
+        assert_eq!(
+            withdrawn.to_command_string(),
+            "dnssec -checkds withdrawn example.com"
+        );
     }
 
     #[test]
