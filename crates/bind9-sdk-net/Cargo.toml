@@ -34,3 +34,4 @@ async-stream = { workspace = true }
 trybuild = "1"
 tokio = { workspace = true }
 insta = { workspace = true }
+rcgen = "0.14"
