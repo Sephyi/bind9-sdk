@@ -7,9 +7,9 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 # bind9-sdk — Product Requirements Document
 
 
-**Version**: v1.2
-**Date**: 2026-03-17
-**Status**: In Progress — Phases 1–5 complete; preparing Phase 6 (hardening)
+**Version**: v1.3
+**Date**: 2026-06-19
+**Status**: In Progress — Phase 6 production-readiness hardening active
 **Author**: [Sephyi](https://github.com/Sephyi) + [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6)
 
 ## Changelog
@@ -19,6 +19,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| 1.3 | 2026-06-19 | Production-readiness remediation in progress, driven by `docs/audit-codex.md` and TDD. Verified changes in this milestone: remote plaintext rndc rejected unless the caller explicitly selects the insecure escape hatch; rndc response HMAC verification now validates framing and uses constant-time MAC verification; remote plaintext statistics URLs rejected; AXFR/IXFR query IDs and request MACs retained; RFC 8945 transfer response TSIG verification implemented for first, intermediary, and final messages with the 99-unsigned-message limit; transfer response ID/opcode/AA/TC/question validation enforced; RFC 1995 IXFR now returns typed no-change, delete/add delta, final-SOA, and AXFR-fallback events with serial-chain validation; XoT implemented with verified server names, public or explicit private trust roots, TLS 1.3 only, and AES-256-GCM/ChaCha20-Poly1305 only. Verification: `cargo fmt --all --check`, workspace clippy with warnings denied, full workspace tests, local certificate-validated XoT handshake, and all 22 ignored/live tests against the BIND9 Podman fixture pass, including signed AXFR and signed no-change IXFR. Remaining audit findings are still open and this entry does not declare v1.0 production readiness. |
 | 1.2 | 2026-03-17 | Phases 2–5 all COMPLETE. Phase 3: napi-rs v2→v3 migration, core surface bindings (JsDomainName, JsZoneFile, JsResourceRecord, JsTsigKey, JsUpdateBuilder). Phase 4: full SDK surface bindings (JsRndcClient 18 async commands, JsNsUpdateSender, JsStatsClient, JsTransferClient, JsRndcPool), Node.js smoke test. Phase 5: zone diff engine (DiffEntry/ZoneDiff/Zone::diff/apply_diff/to_updates), RndcPool semaphore concurrency, CLI tool (`bind9-sdk-cli` crate, binary `bind9`, clap subcommands, TOML config, JSON output, shell completions), release binary 7.2MB. 574 tests passing (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc). |
 | 1.1 | 2026-03-17 | Phase 1 completion plan merged (`feat/phase1-completion` → `development`, commit `0d419b9`): `tsig.rs`/`update.rs`/`zone/parser.rs` split into submodules, 8 proptest invariants, 3 insta snapshot tests for zone serializer, 0 `missing_docs` errors on `bind9-sdk-core`, `keywords`/`categories` in Cargo.toml. 441 tests passing (265 core + 174 net lib + 1 trybuild + 1 doc). |
 | 1.0 | 2026-03-16 | Audit/remediation branch merged (`audit/remediation` → `development`): rndc response HMAC verification (`verify_authenticated_response`), replay-relevant `_ctrl` field validation (`_ser`, `_tim`, `_exp`, `_rpl`, `_nonce`), nested `_data` map rendering, typed `NetError::PrerequisiteFailed` and `NetError::TsigRejected`, `classify_update_result()` at `Bind9Client` boundary, TLS dead-config warning in `Bind9Client::new()`, dead nonce guard removal. 9 new net tests. 426 tests passing (254 core + 170 net lib + 1 trybuild + 1 doc). Findings closed: F-001/GPT-RNDC-AUTH, F-030, F-002 (partial), GPT-ERR-TYPED, F-012 (partial mitigated), EXT-001, EXT-002, EXT-003, EXT-004. |
@@ -33,6 +34,10 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 | 0.1 | 2026-03-14 | Initial draft — architecture, phased roadmap v0.1.0 → v1.0.0, full FR set |
 
 </details>
+
+### Active Hardening Log
+
+- **2026-06-19, data integrity and update safety**: added lossless master-file parsing and serialization for modeled TLSA, SSHFP, CSYNC, and RP records; removed the zero-length generic fallback that could silently discard modeled RDATA. RFC 2136 construction is now fallible and rejects section counts above 65,535, RDATA above 65,535 bytes, TXT character-strings above 255 bytes, oversized CAA/NSEC3/NSEC3PARAM length-prefixed fields, total DNS messages above 65,535 bytes, and post-TSIG size overflow. Rust, CLI, and Node binding callers now propagate construction errors. A live integration run also identified and corrected an overly strict rndc response timestamp equality check; authenticated server time may advance within the 60-second isccc window, with expiry bound to the response timestamp. Full workspace tests, clippy with warnings denied, and all live BIND9 tests pass after these changes.
 
 ## 1. Vision
 
@@ -405,6 +410,8 @@ RFC 2136 dynamic update message construction. Pure construction — no I/O in `b
 ### 4.2 Phase 2 — v0.2.0: Zone Transfers + DNSSEC Utilities
 
 > **Phase 2 complete (2026-03-17)**: IXFR/AXFR zone transfer client with streaming API, SOA serial strategies (DateCounter/UnixTimestamp/Monotonic/Custom), DNSSEC record types (DNSKEY/RRSIG/DS/NSEC/NSEC3/NSEC3PARAM/CDS/CDNSKEY/DLV), KASP response parsing, CDS generation from DNSKEY (SHA-256/SHA-384 + DELETE sentinel), XoT enforcement for non-localhost transfers. 535 tests passing, 21 integration tests against live BIND9 9.20 (Podman). Stats-channel kebab-case deserialization fixed.
+>
+> **Production-readiness correction (2026-06-19)**: the original Phase 2 completion statement overstated transfer readiness. The transfer implementation has now been corrected to verify RFC 8945 response TSIG chains, enforce response metadata, expose typed RFC 1995 IXFR semantics instead of AXFR-shaped records, and perform real certificate-validated XoT. Signed AXFR and signed no-change IXFR are verified against the live BIND9 fixture. Live multi-delta IXFR and a live BIND9 XoT fixture remain desirable coverage enhancements, but the protocol state machines and local XoT handshake are covered by deterministic tests.
 >
 > **Remaining audit items deferred to later phases**: F-002 full nonce/replay auth (server-generated nonce counter), F-005 doc alignment (`_data.type` naming).
 
