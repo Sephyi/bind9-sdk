@@ -43,6 +43,28 @@ pub enum TransferRecord {
     EndSoa(ResourceRecord),
 }
 
+/// A typed event from an RFC 1995 incremental zone transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IxfrEvent {
+    /// The server is not newer than the requested serial.
+    NoChange(ResourceRecord),
+    /// The server's current SOA that brackets an incremental response.
+    CurrentSoa(ResourceRecord),
+    /// The older SOA that begins a delete sequence.
+    DeleteSoa(ResourceRecord),
+    /// A record to remove from the caller's current zone.
+    Deleted(ResourceRecord),
+    /// The newer SOA that begins an add sequence.
+    AddSoa(ResourceRecord),
+    /// A record to add to the caller's current zone.
+    Added(ResourceRecord),
+    /// The final copy of the server's current SOA.
+    EndSoa(ResourceRecord),
+    /// The server returned the complete zone instead of incremental differences.
+    AxfrFallback(TransferRecord),
+}
+
 /// A zone transfer session tracking transfer state.
 ///
 /// Uses the typestate pattern: `TransferSession<Pending>` is created via
@@ -201,5 +223,37 @@ mod tests {
         };
         let record = TransferRecord::Record(rr.clone());
         assert!(matches!(record, TransferRecord::Record(ref r) if r == &rr));
+    }
+
+    #[test]
+    fn ixfr_events_distinguish_deleted_and_added_records() {
+        let rr = ResourceRecord {
+            name: DomainName::new("host.example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 1)),
+        };
+
+        let deleted = IxfrEvent::Deleted(rr.clone());
+        let added = IxfrEvent::Added(rr.clone());
+
+        assert!(matches!(deleted, IxfrEvent::Deleted(ref record) if record == &rr));
+        assert!(matches!(added, IxfrEvent::Added(ref record) if record == &rr));
+    }
+
+    #[test]
+    fn ixfr_event_can_report_axfr_fallback() {
+        let rr = ResourceRecord {
+            name: DomainName::new("host.example.com.").unwrap(),
+            class: RecordClass::IN,
+            ttl: Ttl::new(300).unwrap(),
+            rdata: RecordData::A(core::net::Ipv4Addr::new(192, 0, 2, 1)),
+        };
+
+        let event = IxfrEvent::AxfrFallback(TransferRecord::Record(rr.clone()));
+
+        assert!(
+            matches!(event, IxfrEvent::AxfrFallback(TransferRecord::Record(ref record)) if record == &rr)
+        );
     }
 }
