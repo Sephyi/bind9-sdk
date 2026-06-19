@@ -42,6 +42,10 @@ pub(crate) fn parse_rdata(
         "NSEC" => super::rdata_dnssec::parse_nsec(tokens, origin),
         "NSEC3" => super::rdata_dnssec::parse_nsec3(tokens),
         "NSEC3PARAM" => super::rdata_dnssec::parse_nsec3param(tokens),
+        "TLSA" => parse_tlsa(tokens),
+        "SSHFP" => parse_sshfp(tokens),
+        "CSYNC" => parse_csync(tokens),
+        "RP" => parse_rp(tokens, origin),
         _ => parse_unknown(rtype, tokens),
     }
 }
@@ -151,9 +155,34 @@ pub(crate) fn serialize_rdata(rdata: &RecordData) -> String {
             iterations,
             salt,
         } => super::rdata_dnssec::serialize_nsec3param(*hash_algorithm, *flags, *iterations, salt),
+        RecordData::Tlsa {
+            usage,
+            selector,
+            matching_type,
+            certificate_data,
+        } => format!(
+            "{usage} {selector} {matching_type} {}",
+            encode_hex(certificate_data)
+        ),
+        RecordData::Sshfp {
+            algorithm,
+            fp_type,
+            fingerprint,
+        } => format!("{algorithm} {fp_type} {}", encode_hex(fingerprint)),
+        RecordData::Csync {
+            soa_serial,
+            flags,
+            type_bitmaps,
+        } => {
+            let types = super::rdata_dnssec::decode_type_bitmap(type_bitmaps);
+            if types.is_empty() {
+                format!("{soa_serial} {flags}")
+            } else {
+                format!("{soa_serial} {flags} {types}")
+            }
+        }
+        RecordData::Rp { mbox, txt } => format!("{mbox} {txt}"),
         RecordData::Unknown { rtype, rdata } => serialize_unknown(*rtype, rdata),
-        // Remaining types not yet supported for text format — use generic format
-        other => serialize_as_generic(other),
     }
 }
 
@@ -388,6 +417,105 @@ fn parse_caa(tokens: &[&str]) -> Result<RecordData, CoreError> {
     Ok(RecordData::Caa { flags, tag, value })
 }
 
+fn parse_tlsa(tokens: &[&str]) -> Result<RecordData, CoreError> {
+    if tokens.len() != 4 {
+        return Err(zone_parse_error(format!(
+            "TLSA record expects 4 tokens, got {}",
+            tokens.len()
+        )));
+    }
+    let usage = parse_u8_field("TLSA usage", tokens[0])?;
+    let selector = parse_u8_field("TLSA selector", tokens[1])?;
+    let matching_type = parse_u8_field("TLSA matching type", tokens[2])?;
+    if usage > 3 {
+        return Err(zone_parse_error(format!(
+            "TLSA usage must be in 0..=3, got {usage}"
+        )));
+    }
+    if selector > 1 {
+        return Err(zone_parse_error(format!(
+            "TLSA selector must be in 0..=1, got {selector}"
+        )));
+    }
+    if matching_type > 2 {
+        return Err(zone_parse_error(format!(
+            "TLSA matching type must be in 0..=2, got {matching_type}"
+        )));
+    }
+    let certificate_data = decode_hex(tokens[3]).map_err(zone_parse_error)?;
+    Ok(RecordData::Tlsa {
+        usage,
+        selector,
+        matching_type,
+        certificate_data,
+    })
+}
+
+fn parse_sshfp(tokens: &[&str]) -> Result<RecordData, CoreError> {
+    if tokens.len() != 3 {
+        return Err(zone_parse_error(format!(
+            "SSHFP record expects 3 tokens, got {}",
+            tokens.len()
+        )));
+    }
+    let algorithm = parse_u8_field("SSHFP algorithm", tokens[0])?;
+    let fp_type = parse_u8_field("SSHFP fingerprint type", tokens[1])?;
+    let fingerprint = decode_hex(tokens[2]).map_err(zone_parse_error)?;
+    Ok(RecordData::Sshfp {
+        algorithm,
+        fp_type,
+        fingerprint,
+    })
+}
+
+fn parse_csync(tokens: &[&str]) -> Result<RecordData, CoreError> {
+    if tokens.len() < 2 {
+        return Err(zone_parse_error(format!(
+            "CSYNC record expects at least 2 tokens, got {}",
+            tokens.len()
+        )));
+    }
+    let soa_serial = tokens[0].parse::<u32>().map_err(|error| {
+        zone_parse_error(format!("invalid CSYNC SOA serial `{}`: {error}", tokens[0]))
+    })?;
+    let flags = tokens[1].parse::<u16>().map_err(|error| {
+        zone_parse_error(format!("invalid CSYNC flags `{}`: {error}", tokens[1]))
+    })?;
+    let type_bitmaps = super::rdata_dnssec::encode_type_bitmap(&tokens[2..])?;
+    Ok(RecordData::Csync {
+        soa_serial,
+        flags,
+        type_bitmaps,
+    })
+}
+
+fn parse_rp(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreError> {
+    if tokens.len() != 2 {
+        return Err(zone_parse_error(format!(
+            "RP record expects 2 tokens, got {}",
+            tokens.len()
+        )));
+    }
+    Ok(RecordData::Rp {
+        mbox: resolve_name(tokens[0], origin)?,
+        txt: resolve_name(tokens[1], origin)?,
+    })
+}
+
+fn parse_u8_field(field: &str, token: &str) -> Result<u8, CoreError> {
+    token
+        .parse::<u8>()
+        .map_err(|error| zone_parse_error(format!("invalid {field} `{token}`: {error}")))
+}
+
+fn zone_parse_error(reason: String) -> CoreError {
+    CoreError::ZoneParse {
+        line: 0,
+        column: None,
+        reason,
+    }
+}
+
 fn parse_unknown(rtype: &str, tokens: &[&str]) -> Result<RecordData, CoreError> {
     // Extract numeric type from "TYPE<n>" format
     let type_num = if let Some(stripped) = rtype.strip_prefix("TYPE") {
@@ -526,16 +654,11 @@ fn serialize_unknown(_rtype: u16, rdata: &[u8]) -> String {
     }
 }
 
-fn serialize_as_generic(_rdata: &RecordData) -> String {
-    // For record types we don't have text format support yet,
-    // fall back to zero-length generic format.
-    String::from("\\# 0")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     extern crate alloc;
+    use alloc::vec;
 
     fn origin() -> DomainName {
         DomainName::new("example.com.").unwrap()
@@ -892,6 +1015,70 @@ mod tests {
     fn parse_caa_wrong_token_count() {
         let result = parse_rdata("CAA", &["0", "issue"], &origin());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tlsa_text_roundtrip_preserves_certificate_data() {
+        let parsed = parse_rdata("TLSA", &["3", "1", "1", "0123456789abcdef"], &origin()).unwrap();
+
+        assert_eq!(
+            parsed,
+            RecordData::Tlsa {
+                usage: 3,
+                selector: 1,
+                matching_type: 1,
+                certificate_data: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
+            }
+        );
+        assert_eq!(serialize_rdata(&parsed), "3 1 1 0123456789abcdef");
+    }
+
+    #[test]
+    fn sshfp_text_roundtrip_preserves_fingerprint() {
+        let parsed = parse_rdata("SSHFP", &["4", "2", "aabbccddeeff0011"], &origin()).unwrap();
+
+        assert_eq!(
+            parsed,
+            RecordData::Sshfp {
+                algorithm: 4,
+                fp_type: 2,
+                fingerprint: vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11],
+            }
+        );
+        assert_eq!(serialize_rdata(&parsed), "4 2 aabbccddeeff0011");
+    }
+
+    #[test]
+    fn csync_text_roundtrip_preserves_type_bitmap() {
+        let parsed =
+            parse_rdata("CSYNC", &["2026061901", "3", "A", "AAAA", "NS"], &origin()).unwrap();
+
+        assert!(matches!(
+            &parsed,
+            RecordData::Csync {
+                soa_serial: 2026061901,
+                flags: 3,
+                type_bitmaps,
+            } if super::super::rdata_dnssec::decode_type_bitmap(type_bitmaps) == "A NS AAAA"
+        ));
+        assert_eq!(serialize_rdata(&parsed), "2026061901 3 A NS AAAA");
+    }
+
+    #[test]
+    fn rp_text_roundtrip_resolves_relative_names() {
+        let parsed = parse_rdata("RP", &["hostmaster", "contact"], &origin()).unwrap();
+
+        assert_eq!(
+            parsed,
+            RecordData::Rp {
+                mbox: DomainName::new("hostmaster.example.com.").unwrap(),
+                txt: DomainName::new("contact.example.com.").unwrap(),
+            }
+        );
+        assert_eq!(
+            serialize_rdata(&parsed),
+            "hostmaster.example.com. contact.example.com."
+        );
     }
 
     #[test]

@@ -52,6 +52,7 @@ use tokio::net::TcpStream;
 use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 
 use crate::error::NetError;
+use crate::tls::is_localhost;
 
 use self::command::{RndcCommand, RndcResponse};
 use self::protocol::{IscMessage, IscValue, extract_hmac_input, frame_message, read_frame_length};
@@ -118,9 +119,30 @@ pub struct RndcConnection<State = Unauthenticated> {
 impl RndcConnection<Unauthenticated> {
     /// Connect to a BIND9 rndc control channel.
     ///
-    /// Establishes a TCP connection to the given address (typically port 953).
+    /// Establishes a TCP connection to a localhost address (typically port 953).
     /// The connection is unauthenticated until [`authenticate()`](RndcConnection::authenticate) is called.
+    ///
+    /// rndc authenticates messages but does not encrypt them. Non-localhost
+    /// addresses are therefore rejected by default. Use a local tunnel, or call
+    /// [`connect_insecure()`](Self::connect_insecure) only when a separately
+    /// authenticated and encrypted transport such as WireGuard protects the
+    /// complete path.
     pub async fn connect(addr: SocketAddr) -> Result<Self, NetError> {
+        if !is_localhost(&addr) {
+            return Err(NetError::TlsRequired {
+                remote: addr.to_string(),
+            });
+        }
+        Self::connect_insecure(addr).await
+    }
+
+    /// Connect over plaintext TCP without enforcing localhost.
+    ///
+    /// This method is an explicit escape hatch for deployments where another
+    /// layer provides confidentiality and peer authentication, such as a
+    /// WireGuard tunnel. Calling it over an untrusted network exposes rndc
+    /// command names, zone names, and operational metadata.
+    pub async fn connect_insecure(addr: SocketAddr) -> Result<Self, NetError> {
         tracing::debug!("connecting to rndc at {addr}");
         let stream = TcpStream::connect(addr).await.map_err(|e| {
             NetError::Connection(format!("failed to connect to rndc at {addr}: {e}"))
@@ -476,15 +498,6 @@ fn verify_authenticated_response(
             reason: "server response missing _data table".to_string(),
         })?;
 
-    // Compute HMAC over the raw wire bytes (server's alist order), not BTreeMap re-encoding
-    let digest = key.sign(hmac_raw_input);
-    let algo_byte = isccc_algorithm_byte(key.algorithm());
-    let b64 = base64_encode(&digest);
-    let mut expected_hmac = Vec::with_capacity(ISCCC_HMAC_BUF_SIZE);
-    expected_hmac.push(algo_byte);
-    expected_hmac.extend_from_slice(b64.as_bytes());
-    expected_hmac.resize(ISCCC_HMAC_BUF_SIZE, 0);
-
     let received_hmac = match auth.get("hsha") {
         Some(IscValue::Binary(bytes)) => bytes,
         _ => {
@@ -493,11 +506,7 @@ fn verify_authenticated_response(
             });
         }
     };
-    if expected_hmac.as_slice() != received_hmac.as_slice() {
-        return Err(NetError::AuthFailed {
-            reason: "server response HMAC verification failed".to_string(),
-        });
-    }
+    verify_isccc_hmac(key, hmac_raw_input, received_hmac)?;
 
     validate_response_ctrl(ctrl, expected_serial, expected_time, expected_nonce)?;
 
@@ -515,6 +524,60 @@ fn verify_authenticated_response(
     Ok(())
 }
 
+/// Verify an isccc `_auth.hsha` value using the HMAC crate's constant-time
+/// verifier through [`TsigKey::verify`].
+fn verify_isccc_hmac(key: &TsigKey, hmac_input: &[u8], received: &[u8]) -> Result<(), NetError> {
+    if received.len() != ISCCC_HMAC_BUF_SIZE {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response _auth.hsha has invalid length: expected {ISCCC_HMAC_BUF_SIZE}, got {}",
+                received.len()
+            ),
+        });
+    }
+
+    let expected_algorithm = isccc_algorithm_byte(key.algorithm());
+    if received[0] != expected_algorithm {
+        return Err(NetError::AuthFailed {
+            reason: format!(
+                "server response HMAC algorithm mismatch: expected 0x{expected_algorithm:02x}, got 0x{:02x}",
+                received[0]
+            ),
+        });
+    }
+
+    let encoded_and_padding = &received[1..];
+    let encoded_len = encoded_and_padding
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(encoded_and_padding.len());
+    if encoded_len == 0
+        || encoded_and_padding[encoded_len..]
+            .iter()
+            .any(|byte| *byte != 0)
+    {
+        return Err(NetError::AuthFailed {
+            reason: "server response _auth.hsha has invalid padding".to_string(),
+        });
+    }
+
+    let encoded = std::str::from_utf8(&encoded_and_padding[..encoded_len]).map_err(|_| {
+        NetError::AuthFailed {
+            reason: "server response _auth.hsha is not valid base64 text".to_string(),
+        }
+    })?;
+    let mac = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| NetError::AuthFailed {
+            reason: "server response _auth.hsha contains invalid base64".to_string(),
+        })?;
+
+    key.verify(hmac_input, &mac)
+        .map_err(|_| NetError::AuthFailed {
+            reason: "server response HMAC verification failed".to_string(),
+        })
+}
+
 /// Validate replay-relevant `_ctrl` fields on a server response.
 fn validate_response_ctrl(
     ctrl: &BTreeMap<String, IscValue>,
@@ -522,7 +585,6 @@ fn validate_response_ctrl(
     expected_time: u64,
     expected_nonce: Option<&str>,
 ) -> Result<(), NetError> {
-    let expected_expiry = expected_time + ISCCC_EXPIRY_SECS;
     let serial = map_string(ctrl, "_ser").ok_or_else(|| NetError::AuthFailed {
         reason: "server response missing _ctrl._ser".to_string(),
     })?;
@@ -537,10 +599,15 @@ fn validate_response_ctrl(
     let timestamp = map_string(ctrl, "_tim").ok_or_else(|| NetError::AuthFailed {
         reason: "server response missing _ctrl._tim".to_string(),
     })?;
-    if timestamp != expected_time.to_string() {
+    let timestamp = timestamp.parse::<u64>().map_err(|_| NetError::AuthFailed {
+        reason: format!("server response has invalid _ctrl._tim `{timestamp}`"),
+    })?;
+    let latest_allowed = expected_time.saturating_add(ISCCC_EXPIRY_SECS);
+    if !(expected_time..=latest_allowed).contains(&timestamp) {
         return Err(NetError::AuthFailed {
             reason: format!(
-                "server response timestamp mismatch: expected `{expected_time}`, got `{timestamp}`"
+                "server response timestamp outside accepted window: expected \
+                 {expected_time}..={latest_allowed}, got {timestamp}"
             ),
         });
     }
@@ -548,7 +615,11 @@ fn validate_response_ctrl(
     let expiry = map_string(ctrl, "_exp").ok_or_else(|| NetError::AuthFailed {
         reason: "server response missing _ctrl._exp".to_string(),
     })?;
-    if expiry != expected_expiry.to_string() {
+    let expiry = expiry.parse::<u64>().map_err(|_| NetError::AuthFailed {
+        reason: format!("server response has invalid _ctrl._exp `{expiry}`"),
+    })?;
+    let expected_expiry = timestamp.saturating_add(ISCCC_EXPIRY_SECS);
+    if expiry != expected_expiry {
         return Err(NetError::AuthFailed {
             reason: format!(
                 "server response expiry mismatch: expected `{expected_expiry}`, got `{expiry}`"
@@ -677,8 +748,16 @@ async fn read_isc_message(stream: &mut TcpStream) -> Result<(IscMessage, Vec<u8>
     // Extract the HMAC input bytes (bytes after _auth in wire order) before decoding.
     // These preserve the server's alist insertion order, which BTreeMap re-encoding
     // would not — the HMAC must be verified against the original wire representation.
-    let hmac_input = extract_hmac_input(&payload).unwrap_or_default();
-    let message = IscMessage::decode(&payload)?;
+    decode_authenticated_payload(&payload)
+}
+
+/// Decode an authenticated rndc payload and retain the exact bytes covered by
+/// the response HMAC.
+fn decode_authenticated_payload(payload: &[u8]) -> Result<(IscMessage, Vec<u8>), NetError> {
+    let hmac_input = extract_hmac_input(payload).ok_or_else(|| NetError::AuthFailed {
+        reason: "server response does not begin with a valid _auth entry".to_string(),
+    })?;
+    let message = IscMessage::decode(payload)?;
     Ok((message, hmac_input))
 }
 
@@ -899,6 +978,91 @@ mod tests {
         assert!(now < 1_893_456_000, "timestamp {now} should be before 2030");
     }
 
+    #[tokio::test]
+    async fn connect_rejects_remote_plaintext_before_network_io() {
+        let addr = "192.0.2.1:953".parse().unwrap();
+        let err = match RndcConnection::connect(addr).await {
+            Ok(_) => panic!("remote plaintext rndc connection must be rejected"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, NetError::TlsRequired { .. }));
+        assert!(err.to_string().contains("192.0.2.1:953"));
+    }
+
+    #[test]
+    fn verify_isccc_hmac_rejects_wrong_algorithm_tag() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xA5; 32],
+        )
+        .unwrap();
+        let mut received = {
+            let ctrl = build_ctrl_table(1, 1000, None);
+            let mut data = BTreeMap::new();
+            data.insert("type".to_string(), IscValue::String("status".to_string()));
+            sign_rndc_body(&key, &ctrl, &data).unwrap()
+        };
+        received[0] = 0xA5;
+
+        let err = verify_isccc_hmac(&key, b"input", &received).unwrap_err();
+        assert!(matches!(err, NetError::AuthFailed { .. }));
+        assert!(err.to_string().contains("algorithm mismatch"));
+    }
+
+    #[test]
+    fn verify_isccc_hmac_rejects_invalid_base64() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xA6; 32],
+        )
+        .unwrap();
+        let mut received = vec![0; ISCCC_HMAC_BUF_SIZE];
+        received[0] = isccc_algorithm_byte(key.algorithm());
+        received[1..5].copy_from_slice(b"!!!!");
+
+        let err = verify_isccc_hmac(&key, b"input", &received).unwrap_err();
+        assert!(matches!(err, NetError::AuthFailed { .. }));
+        assert!(err.to_string().contains("invalid base64"));
+    }
+
+    #[test]
+    fn verify_isccc_hmac_rejects_tampered_input() {
+        use bind9_sdk_core::domain::DomainName;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xA7; 32],
+        )
+        .unwrap();
+        let digest = key.sign(b"original");
+        let encoded = base64_encode(&digest);
+        let mut received = vec![0; ISCCC_HMAC_BUF_SIZE];
+        received[0] = isccc_algorithm_byte(key.algorithm());
+        received[1..1 + encoded.len()].copy_from_slice(encoded.as_bytes());
+
+        let err = verify_isccc_hmac(&key, b"tampered", &received).unwrap_err();
+        assert!(matches!(err, NetError::AuthFailed { .. }));
+        assert!(err.to_string().contains("verification failed"));
+    }
+
+    #[test]
+    fn decode_authenticated_payload_rejects_missing_auth_prefix() {
+        let mut msg = IscMessage::new();
+        msg.insert_string("_ctrl", "not-authenticated");
+        let payload = msg.encode().unwrap();
+
+        let err = decode_authenticated_payload(&payload).unwrap_err();
+        assert!(matches!(err, NetError::AuthFailed { .. }));
+        assert!(err.to_string().contains("does not begin"));
+    }
+
     #[test]
     fn verify_authenticated_response_accepts_valid_reply() {
         use bind9_sdk_core::domain::DomainName;
@@ -951,6 +1115,14 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn validate_response_ctrl_accepts_bounded_server_time_progression() {
+        let mut ctrl = build_ctrl_table(42, 1_710_000_001, Some("abc123"));
+        ctrl.insert("_rpl".to_string(), IscValue::String("1".to_string()));
+
+        validate_response_ctrl(&ctrl, 42, 1_710_000_000, Some("abc123")).unwrap();
     }
 
     #[test]

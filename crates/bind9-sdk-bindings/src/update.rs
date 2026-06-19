@@ -80,7 +80,7 @@ impl JsUpdateBuilder {
     #[napi]
     pub fn build_unsigned(&mut self) -> napi::Result<Buffer> {
         let builder = self.take_builder()?;
-        let message = builder.build_unsigned();
+        let message = builder.build_unsigned().map_err(BindSdkError::from_core)?;
         Ok(Buffer::from(message.as_bytes().to_vec()))
     }
 
@@ -91,7 +91,9 @@ impl JsUpdateBuilder {
     #[napi]
     pub fn sign(&mut self, key: &JsTsigKey) -> napi::Result<Buffer> {
         let builder = self.take_builder()?;
-        let signed = builder.sign_now(key.inner_ref());
+        let signed = builder
+            .sign_now(key.inner_ref())
+            .map_err(BindSdkError::from_core)?;
         let message = signed.build();
         Ok(Buffer::from(message.as_bytes().to_vec()))
     }
@@ -102,7 +104,7 @@ impl JsUpdateBuilder {
     #[napi]
     pub fn build_message_unsigned(&mut self) -> napi::Result<JsUpdateMessage> {
         let builder = self.take_builder()?;
-        let message = builder.build_unsigned();
+        let message = builder.build_unsigned().map_err(BindSdkError::from_core)?;
         Ok(JsUpdateMessage {
             inner: Arc::new(message),
         })
@@ -114,7 +116,9 @@ impl JsUpdateBuilder {
     #[napi]
     pub fn sign_message(&mut self, key: &JsTsigKey) -> napi::Result<JsUpdateMessage> {
         let builder = self.take_builder()?;
-        let signed = builder.sign_now(key.inner_ref());
+        let signed = builder
+            .sign_now(key.inner_ref())
+            .map_err(BindSdkError::from_core)?;
         let message = signed.build();
         Ok(JsUpdateMessage {
             inner: Arc::new(message),
