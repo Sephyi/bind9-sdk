@@ -30,7 +30,32 @@ impl TlsConfig {
         let root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        Self::from_root_store(root_store)
+    }
+
+    /// Create a TLS 1.3 configuration from explicit trust-anchor certificates.
+    ///
+    /// This supports private PKI deployments while retaining normal rustls
+    /// certificate-chain and server-name verification.
+    pub fn with_root_certificates(
+        certificates: impl IntoIterator<Item = rustls::pki_types::CertificateDer<'static>>,
+    ) -> Result<Self, NetError> {
+        let mut root_store = rustls::RootCertStore::empty();
+        for certificate in certificates {
+            root_store
+                .add(certificate)
+                .map_err(|error| NetError::Tls(format!("invalid root certificate: {error}")))?;
+        }
+        Self::from_root_store(root_store)
+    }
+
+    fn from_root_store(root_store: rustls::RootCertStore) -> Result<Self, NetError> {
+        let mut provider = rustls::crypto::ring::default_provider();
+        provider.cipher_suites = vec![
+            rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+            rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+        ];
+        let provider = Arc::new(provider);
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|e| NetError::Tls(format!("protocol version error: {e}")))?
@@ -105,6 +130,20 @@ mod tests {
         assert!(
             inner.alpn_protocols.is_empty(),
             "Default config should have no ALPN protocols"
+        );
+    }
+
+    #[test]
+    fn tls_config_only_enables_approved_cipher_suites() {
+        let config = TlsConfig::new().unwrap();
+        let suites = &config.client_config().crypto_provider().cipher_suites;
+
+        assert_eq!(
+            suites,
+            &[
+                rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+                rustls::crypto::ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+            ]
         );
     }
 

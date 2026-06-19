@@ -4,6 +4,8 @@
 
 use super::*;
 
+use alloc::string::ToString;
+
 use crate::domain::DomainName;
 use crate::protocol::RecordType;
 use crate::rdata::RecordData;
@@ -84,14 +86,14 @@ fn update_entry_delete_name() {
 fn builder_new_creates_unsigned() {
     let zone = DomainName::new("example.com.").unwrap();
     let builder = UpdateBuilder::new(zone, RecordClass::IN);
-    let _msg = builder.build_unsigned();
+    let _msg = builder.build_unsigned().unwrap();
 }
 
 #[test]
 fn builder_with_id() {
     let zone = DomainName::new("example.com.").unwrap();
     let builder = UpdateBuilder::with_id(0x1234, zone, RecordClass::IN);
-    let msg = builder.build_unsigned();
+    let msg = builder.build_unsigned().unwrap();
     assert_eq!(msg.id(), 0x1234);
 }
 
@@ -101,7 +103,7 @@ fn builder_add_prerequisite() {
     let builder = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .require_rrset_exists(&DomainName::new("www.example.com.").unwrap(), RecordType::A)
         .require_name_not_exists(&DomainName::new("new.example.com.").unwrap());
-    let _msg = builder.build_unsigned();
+    let _msg = builder.build_unsigned().unwrap();
 }
 
 #[test]
@@ -114,7 +116,7 @@ fn builder_add_records() {
         rdata: RecordData::A(core::net::Ipv4Addr::new(10, 0, 0, 1)),
     };
     let builder = UpdateBuilder::with_id(1, zone, RecordClass::IN).add_record(rr);
-    let _msg = builder.build_unsigned();
+    let _msg = builder.build_unsigned().unwrap();
 }
 
 #[test]
@@ -133,7 +135,7 @@ fn builder_delete_operations() {
         )
         .delete_record(rr)
         .delete_name(&DomainName::new("gone.example.com.").unwrap());
-    let _msg = builder.build_unsigned();
+    let _msg = builder.build_unsigned().unwrap();
 }
 
 #[test]
@@ -149,7 +151,8 @@ fn builder_chaining() {
         .require_name_exists(&DomainName::new("www.example.com.").unwrap())
         .add_record(rr)
         .delete_rrset(&DomainName::new("old.example.com.").unwrap(), RecordType::A)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     assert_eq!(msg.id(), 42);
     assert!(!msg.as_bytes().is_empty());
 }
@@ -170,7 +173,9 @@ fn prerequisite_rejects_empty_rrset_exists_with_data() {
 #[test]
 fn wire_header_opcode_is_update() {
     let zone = DomainName::new("example.com.").unwrap();
-    let msg = UpdateBuilder::with_id(0xABCD, zone, RecordClass::IN).build_unsigned();
+    let msg = UpdateBuilder::with_id(0xABCD, zone, RecordClass::IN)
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // Bytes 0-1: ID
@@ -196,7 +201,8 @@ fn wire_section_counts() {
     let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .require_rrset_exists(&DomainName::new("www.example.com.").unwrap(), RecordType::A)
         .add_record(rr)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // ZOCOUNT (bytes 4-5): 1
@@ -231,7 +237,8 @@ fn wire_rrset_exists_with_data_prcount() {
     let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
         .unwrap()
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // PRCOUNT should be 2 (one RR per record in the RRset)
@@ -251,7 +258,8 @@ fn wire_rrset_exists_with_data_encoding() {
     let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr])
         .unwrap()
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // After header (12) + zone section (13 name + 2 type + 2 class = 17), prerequisite starts at 29
@@ -311,7 +319,8 @@ fn wire_rrset_exists_with_data_mixed_prerequisites() {
         .require_rrset_exists_with_data(&name, RecordType::A, alloc::vec![rr1, rr2])
         .unwrap()
         .require_rrset_exists(&name, RecordType::Aaaa)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // PRCOUNT: 2 (from RrsetExistsWithData) + 1 (from RrsetExists) = 3
@@ -321,7 +330,9 @@ fn wire_rrset_exists_with_data_mixed_prerequisites() {
 #[test]
 fn wire_zone_section_present() {
     let zone = DomainName::new("example.com.").unwrap();
-    let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN).build_unsigned();
+    let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // After 12-byte header, zone section:
@@ -342,7 +353,9 @@ fn wire_zone_section_present() {
 #[test]
 fn wire_empty_update_just_header_and_zone() {
     let zone = DomainName::new("t.").unwrap();
-    let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN).build_unsigned();
+    let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
     // Header (12) + zone name (3: \x01t\x00) + type (2) + class (2) = 19
     assert_eq!(bytes.len(), 19);
@@ -359,6 +372,7 @@ fn wire_signed_message_has_tsig_in_additional() {
     .unwrap();
     let msg = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .sign(&key, 0)
+        .unwrap()
         .build();
     let bytes = msg.as_bytes();
 
@@ -391,6 +405,7 @@ fn signed_build_produces_valid_message() {
         .require_name_not_exists(&DomainName::new("new.example.com.").unwrap())
         .add_record(rr)
         .sign(&key, 1710000000)
+        .unwrap()
         .build();
 
     let bytes = msg.as_bytes();
@@ -420,7 +435,8 @@ fn wire_multiple_prerequisites_counted() {
         .require_rrset_exists(&name, RecordType::A)
         .require_rrset_not_exists(&name, RecordType::Aaaa)
         .require_name_exists(&name)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
     assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 3);
     assert_eq!(u16::from_be_bytes([bytes[8], bytes[9]]), 0);
@@ -445,7 +461,8 @@ fn wire_multiple_updates_counted() {
         .add_record(rr1)
         .add_record(rr2)
         .delete_name(&DomainName::new("c.example.com.").unwrap())
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
     assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 0); // no prereqs
     assert_eq!(u16::from_be_bytes([bytes[8], bytes[9]]), 3); // 3 updates
@@ -462,7 +479,8 @@ fn wire_delete_record_has_rdata() {
     };
     let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
         .delete_record(rr)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // After header (12) + zone (t. = 3 bytes name + 2 type + 2 class = 7), update starts at 19
@@ -504,7 +522,8 @@ fn wire_delete_rrset_has_no_rdata() {
     let zone = DomainName::new("t.").unwrap();
     let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
         .delete_rrset(&DomainName::new("t.").unwrap(), RecordType::Aaaa)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // After header (12) + zone (7), update at 19
@@ -551,7 +570,8 @@ fn wire_add_record_has_class_and_ttl() {
     };
     let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
         .add_record(rr)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     let upd_start = 19;
@@ -591,7 +611,8 @@ fn wire_prerequisite_rrset_not_exists_class_none() {
     let zone = DomainName::new("t.").unwrap();
     let msg = UpdateBuilder::with_id(0, zone, RecordClass::IN)
         .require_rrset_not_exists(&DomainName::new("t.").unwrap(), RecordType::Mx)
-        .build_unsigned();
+        .build_unsigned()
+        .unwrap();
     let bytes = msg.as_bytes();
 
     // After header (12) + zone (7), prereq at 19
@@ -619,13 +640,146 @@ fn unsigned_and_signed_produce_different_bytes() {
     )
     .unwrap();
 
-    let unsigned = UpdateBuilder::with_id(1, zone.clone(), RecordClass::IN).build_unsigned();
+    let unsigned = UpdateBuilder::with_id(1, zone.clone(), RecordClass::IN)
+        .build_unsigned()
+        .unwrap();
     let signed = UpdateBuilder::with_id(1, zone, RecordClass::IN)
         .sign(&key, 0)
+        .unwrap()
         .build();
 
     assert_ne!(unsigned.as_bytes(), signed.as_bytes());
     assert!(signed.as_bytes().len() > unsigned.as_bytes().len());
+}
+
+#[test]
+fn build_rejects_rdata_larger_than_u16() {
+    let record = ResourceRecord {
+        name: DomainName::new("large.example.com.").unwrap(),
+        class: RecordClass::IN,
+        ttl: Ttl::new(60).unwrap(),
+        rdata: RecordData::Unknown {
+            rtype: 65280,
+            rdata: alloc::vec![0xAA; usize::from(u16::MAX) + 1],
+        },
+    };
+
+    let error =
+        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
+            .add_record(record)
+            .build_unsigned()
+            .unwrap_err();
+
+    assert!(error.to_string().contains("RDATA") && error.to_string().contains("65535"));
+}
+
+#[test]
+fn build_rejects_txt_character_string_larger_than_u8() {
+    let record = ResourceRecord {
+        name: DomainName::new("txt.example.com.").unwrap(),
+        class: RecordClass::IN,
+        ttl: Ttl::new(60).unwrap(),
+        rdata: RecordData::Txt(alloc::vec!["x".repeat(256)]),
+    };
+
+    let error =
+        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
+            .add_record(record)
+            .build_unsigned()
+            .unwrap_err();
+
+    assert!(error.to_string().contains("TXT") && error.to_string().contains("255"));
+}
+
+#[test]
+fn build_rejects_caa_tag_larger_than_u8() {
+    let record = ResourceRecord {
+        name: DomainName::new("caa.example.com.").unwrap(),
+        class: RecordClass::IN,
+        ttl: Ttl::new(60).unwrap(),
+        rdata: RecordData::Caa {
+            flags: 0,
+            tag: "x".repeat(256),
+            value: "ca.example".into(),
+        },
+    };
+
+    let error =
+        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
+            .add_record(record)
+            .build_unsigned()
+            .unwrap_err();
+
+    assert!(error.to_string().contains("CAA tag") && error.to_string().contains("255"));
+}
+
+#[test]
+fn build_rejects_nsec3_salt_larger_than_u8() {
+    let record = ResourceRecord {
+        name: DomainName::new("hash.example.com.").unwrap(),
+        class: RecordClass::IN,
+        ttl: Ttl::new(60).unwrap(),
+        rdata: RecordData::Nsec3 {
+            hash_algorithm: 1,
+            flags: 0,
+            iterations: 0,
+            salt: alloc::vec![0xBB; 256],
+            next_hashed_owner: alloc::vec![0xCC; 20],
+            type_bitmaps: alloc::vec![0, 1, 0x40],
+        },
+    };
+
+    let error =
+        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
+            .add_record(record)
+            .build_unsigned()
+            .unwrap_err();
+
+    assert!(error.to_string().contains("NSEC3 salt") && error.to_string().contains("255"));
+}
+
+#[test]
+fn build_rejects_more_than_u16_update_records() {
+    let zone = DomainName::new("example.com.").unwrap();
+    let name = DomainName::new("bulk.example.com.").unwrap();
+    let mut builder = UpdateBuilder::with_id(1, zone, RecordClass::IN);
+    for _ in 0..=u16::MAX {
+        builder = builder.delete_name(&name);
+    }
+
+    let error = builder.build_unsigned().unwrap_err();
+
+    assert!(error.to_string().contains("update count") && error.to_string().contains("65535"));
+}
+
+#[test]
+fn signing_rejects_message_that_exceeds_dns_limit_after_tsig() {
+    let key = crate::tsig::TsigKey::new(
+        DomainName::new("update-key.").unwrap(),
+        crate::tsig::TsigAlgorithm::HmacSha256,
+        alloc::vec![0x11; 32],
+    )
+    .unwrap();
+    let record = ResourceRecord {
+        name: DomainName::new("large.example.com.").unwrap(),
+        class: RecordClass::IN,
+        ttl: Ttl::new(60).unwrap(),
+        rdata: RecordData::Unknown {
+            rtype: 65280,
+            rdata: alloc::vec![0xAA; 65_430],
+        },
+    };
+
+    let result =
+        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
+            .add_record(record)
+            .sign(&key, 1_710_000_000);
+    let error = match result {
+        Ok(_) => panic!("TSIG must not make the DNS message exceed 65535 bytes"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("TSIG") && error.to_string().contains("65535"));
 }
 
 mod proptests {
@@ -640,7 +794,7 @@ mod proptests {
         fn wire_length_at_least_dns_header(id in 0u16..=u16::MAX) {
             let zone = DomainName::new("example.com.").unwrap();
             let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
-                .build_unsigned();
+                .build_unsigned().unwrap();
             prop_assert!(
                 msg.as_bytes().len() >= 12,
                 "wire message too short: {} bytes", msg.as_bytes().len()
@@ -654,7 +808,7 @@ mod proptests {
         fn zocount_is_always_one(id in 0u16..=u16::MAX) {
             let zone = DomainName::new("example.com.").unwrap();
             let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
-                .build_unsigned();
+                .build_unsigned().unwrap();
             let bytes = msg.as_bytes();
             let zocount = u16::from_be_bytes([bytes[4], bytes[5]]);
             prop_assert_eq!(zocount, 1, "ZOCOUNT must be 1, got {}", zocount);
@@ -665,7 +819,7 @@ mod proptests {
         fn opcode_is_update(id in 0u16..=u16::MAX) {
             let zone = DomainName::new("example.com.").unwrap();
             let msg = UpdateBuilder::with_id(id, zone, RecordClass::IN)
-                .build_unsigned();
+                .build_unsigned().unwrap();
             let bytes = msg.as_bytes();
             let flags = u16::from_be_bytes([bytes[2], bytes[3]]);
             let opcode = (flags >> 11) & 0x0F;

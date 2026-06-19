@@ -95,15 +95,15 @@ impl StatsHttpClient {
     /// The URL should point to the JSON endpoint, e.g., `http://localhost:8053/json/v1`.
     /// The `timeout` controls how long each HTTP request waits before giving up.
     pub fn new(url: &str, timeout: std::time::Duration) -> Result<Self, NetError> {
-        if url.is_empty() {
-            return Err(NetError::Connection("stats URL is empty".into()));
-        }
-        let url = url.strip_suffix('/').unwrap_or(url).to_string();
+        let url = validate_stats_url(url)?;
         let http = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .map_err(|e| NetError::Connection(format!("failed to build HTTP client: {e}")))?;
-        Ok(Self { url, http })
+        Ok(Self {
+            url: url.to_string(),
+            http,
+        })
     }
 
     /// Create a stats client with a custom authorization header.
@@ -114,10 +114,7 @@ impl StatsHttpClient {
         timeout: std::time::Duration,
         auth_header: &str,
     ) -> Result<Self, NetError> {
-        if url.is_empty() {
-            return Err(NetError::Connection("stats URL is empty".into()));
-        }
-        let url = url.strip_suffix('/').unwrap_or(url).to_string();
+        let url = validate_stats_url(url)?;
         let mut headers = reqwest::header::HeaderMap::new();
         let header_value = reqwest::header::HeaderValue::from_str(auth_header)
             .map_err(|e| NetError::Connection(format!("invalid auth header: {e}")))?;
@@ -127,7 +124,10 @@ impl StatsHttpClient {
             .default_headers(headers)
             .build()
             .map_err(|e| NetError::Connection(format!("failed to build HTTP client: {e}")))?;
-        Ok(Self { url, http })
+        Ok(Self {
+            url: url.to_string(),
+            http,
+        })
     }
 
     /// Fetch server-level statistics from the BIND9 statistics-channel.
@@ -220,6 +220,47 @@ impl StatsHttpClient {
             "zone '{zone_name_no_dot}' not found in statistics-channel response"
         )))
     }
+}
+
+/// Parse and enforce the statistics-channel transport policy.
+///
+/// Plain HTTP is permitted only for loopback hosts. Remote endpoints must use
+/// HTTPS because the statistics channel exposes operational metadata.
+fn validate_stats_url(url: &str) -> Result<reqwest::Url, NetError> {
+    if url.is_empty() {
+        return Err(NetError::Connection("stats URL is empty".into()));
+    }
+
+    let normalized = url.strip_suffix('/').unwrap_or(url);
+    let parsed = reqwest::Url::parse(normalized)
+        .map_err(|e| NetError::Connection(format!("invalid stats URL: {e}")))?;
+
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(NetError::Connection(format!(
+            "unsupported stats URL scheme `{}`",
+            parsed.scheme()
+        )));
+    }
+
+    let is_loopback = parsed.host_str().is_some_and(|host| {
+        let host = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
+        host.eq_ignore_ascii_case("localhost")
+            || host.eq_ignore_ascii_case("localhost.")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+
+    if parsed.scheme() == "http" && !is_loopback {
+        return Err(NetError::TlsRequired {
+            remote: parsed.to_string(),
+        });
+    }
+
+    Ok(parsed)
 }
 
 #[cfg(test)]
@@ -336,6 +377,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_zones_response_returns_all_views() {
+        let json = serde_json::json!({
+            "views": {
+                "_default": {
+                    "zones": [
+                        {
+                            "name": "example.com",
+                            "class": "IN",
+                            "serial": 2026031401,
+                            "type": "primary"
+                        }
+                    ]
+                },
+                "internal": {
+                    "zones": [
+                        {
+                            "name": "corp.example",
+                            "class": "IN",
+                            "serial": 42,
+                            "type": "secondary"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let zones = parse_zones_response(&json).unwrap();
+        assert_eq!(zones.len(), 2);
+        assert_eq!(zones[0].name, DomainName::new("example.com.").unwrap());
+        assert_eq!(zones[1].name, DomainName::new("corp.example.").unwrap());
+        assert_eq!(zones[1].zone_type, "secondary");
+    }
+
+    #[test]
+    fn parse_zones_response_rejects_malformed_zone_entry() {
+        let json = serde_json::json!({
+            "views": {
+                "_default": {
+                    "zones": [
+                        {
+                            "name": 42,
+                            "class": "IN"
+                        }
+                    ]
+                }
+            }
+        });
+
+        assert!(parse_zones_response(&json).is_err());
+    }
+
+    #[test]
     fn stats_http_client_new() {
         let client = StatsHttpClient::new(
             "http://127.0.0.1:8053/json/v1",
@@ -358,6 +451,58 @@ mod tests {
             "Bearer test-token-123",
         );
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn stats_http_client_allows_localhost_domain_over_http() {
+        let client = StatsHttpClient::new(
+            "http://localhost:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn stats_http_client_allows_ipv6_loopback_over_http() {
+        let client = StatsHttpClient::new(
+            "http://[::1]:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn stats_http_client_rejects_remote_plaintext() {
+        let err = match StatsHttpClient::new(
+            "http://192.0.2.10:8053/json/v1",
+            std::time::Duration::from_secs(10),
+        ) {
+            Ok(_) => panic!("remote plaintext stats URL must be rejected"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, NetError::TlsRequired { .. }));
+    }
+
+    #[test]
+    fn stats_http_client_allows_remote_https() {
+        let client = StatsHttpClient::new(
+            "https://stats.example.com/json/v1",
+            std::time::Duration::from_secs(10),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn stats_http_client_rejects_non_http_scheme() {
+        let err = match StatsHttpClient::new(
+            "file:///var/run/named.stats",
+            std::time::Duration::from_secs(10),
+        ) {
+            Ok(_) => panic!("non-HTTP stats URL must be rejected"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, NetError::Connection(_)));
+        assert!(err.to_string().contains("unsupported stats URL scheme"));
     }
 
     #[tokio::test]

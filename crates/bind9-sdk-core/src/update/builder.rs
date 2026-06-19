@@ -133,7 +133,7 @@ impl UpdateBuilder<Unsigned> {
     /// Build the update message without TSIG signing.
     ///
     /// Use for testing or on trusted networks.
-    pub fn build_unsigned(self) -> UpdateMessage {
+    pub fn build_unsigned(self) -> Result<UpdateMessage, crate::error::CoreError> {
         encode_update_message(
             self.id,
             &self.zone,
@@ -151,7 +151,11 @@ impl UpdateBuilder<Unsigned> {
     ///
     /// Use `sign_now` (requires `std` feature) for automatic timestamping,
     /// or provide a timestamp from an external clock in `no_std`.
-    pub fn sign(self, key: &crate::tsig::TsigKey, timestamp: u64) -> UpdateBuilder<Signed> {
+    pub fn sign(
+        self,
+        key: &crate::tsig::TsigKey,
+        timestamp: u64,
+    ) -> Result<UpdateBuilder<Signed>, crate::error::CoreError> {
         self.sign_inner(key, timestamp)
     }
 
@@ -160,22 +164,33 @@ impl UpdateBuilder<Unsigned> {
     /// Convenience wrapper around [`sign`](Self::sign) that reads
     /// `SystemTime::now()` for the TSIG timestamp.
     #[cfg(feature = "std")]
-    pub fn sign_now(self, key: &crate::tsig::TsigKey) -> UpdateBuilder<Signed> {
+    pub fn sign_now(
+        self,
+        key: &crate::tsig::TsigKey,
+    ) -> Result<UpdateBuilder<Signed>, crate::error::CoreError> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock is before Unix epoch")
+            .map_err(|error| {
+                crate::error::CoreError::Tsig(alloc::format!(
+                    "system clock is before Unix epoch: {error}"
+                ))
+            })?
             .as_secs();
         self.sign_inner(key, timestamp)
     }
 
-    fn sign_inner(self, key: &crate::tsig::TsigKey, timestamp: u64) -> UpdateBuilder<Signed> {
+    fn sign_inner(
+        self,
+        key: &crate::tsig::TsigKey,
+        timestamp: u64,
+    ) -> Result<UpdateBuilder<Signed>, crate::error::CoreError> {
         let unsigned = encode_update_message(
             self.id,
             &self.zone,
             self.class,
             &self.prerequisites,
             &self.updates,
-        );
+        )?;
 
         let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp, None);
 
@@ -190,8 +205,13 @@ impl UpdateBuilder<Unsigned> {
 
         // Append TSIG record
         wire.extend_from_slice(&tsig.wire_bytes);
+        if wire.len() > usize::from(u16::MAX) {
+            return Err(crate::error::CoreError::InvalidRecord(
+                "TSIG-signed DNS update exceeds 65535 bytes".into(),
+            ));
+        }
 
-        UpdateBuilder {
+        Ok(UpdateBuilder {
             id: self.id,
             zone: self.zone,
             class: self.class,
@@ -205,7 +225,7 @@ impl UpdateBuilder<Unsigned> {
                     pre_tsig_len: Some(pre_tsig_len),
                 },
             },
-        }
+        })
     }
 }
 

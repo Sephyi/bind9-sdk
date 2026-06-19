@@ -11,7 +11,8 @@
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::rdata::RecordData;
-use bind9_sdk_core::transfer::TransferRecord;
+use bind9_sdk_core::record::Serial;
+use bind9_sdk_core::transfer::{IxfrEvent, TransferRecord};
 use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 use bind9_sdk_net::TransferClient;
 use tokio_stream::StreamExt;
@@ -95,4 +96,33 @@ async fn axfr_transfer_unsigned() {
     // Even without TSIG, we should get records (if the zone allows unsigned transfers)
     let first = stream.next().await;
     assert!(first.is_some(), "should receive at least one record");
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:15353"]
+async fn ixfr_no_change_returns_current_soa() {
+    let key = TsigKey::from_base64(
+        DomainName::new("rndc-test-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        "dGVzdGtleWZvcmJpbmQ5c2RrdGVzdGluZzEyMzQ1Ng==",
+    )
+    .expect("test key must be valid");
+    let tcp_stream = tokio::net::TcpStream::connect("127.0.0.1:15353")
+        .await
+        .expect("failed to connect to BIND9 on localhost:15353");
+    let zone = DomainName::new("transfer.example.com.").unwrap();
+    let client = TransferClient::new(tcp_stream);
+    let stream = client
+        .ixfr(zone, Serial::new(2026031701), Some(&key))
+        .await
+        .expect("IXFR query should succeed");
+    tokio::pin!(stream);
+
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+        .await
+        .expect("single-SOA IXFR response should complete without waiting for TCP close")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(first, IxfrEvent::NoChange(_)));
+    assert!(stream.next().await.is_none());
 }

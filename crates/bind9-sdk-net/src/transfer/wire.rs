@@ -14,7 +14,7 @@ use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::protocol::RecordType;
 use bind9_sdk_core::rdata::RecordData;
 use bind9_sdk_core::record::{RecordClass, ResourceRecord, Serial, Ttl};
-use bind9_sdk_core::tsig::TsigKey;
+use bind9_sdk_core::tsig::{TsigKey, TsigRecord};
 
 use crate::error::NetError;
 
@@ -29,6 +29,19 @@ const QTYPE_AXFR: u16 = 252;
 
 /// IXFR query type (251).
 const QTYPE_IXFR: u16 = 251;
+
+/// Encoded transfer query plus the state needed to authenticate responses.
+pub(super) struct EncodedXfrQuery {
+    pub(super) message: Vec<u8>,
+    pub(super) id: u16,
+    pub(super) request_mac: Option<Vec<u8>>,
+}
+
+/// DNS message with its final TSIG pseudo-record removed, when present.
+pub(super) struct SplitTsigMessage {
+    pub(super) unsigned_message: Vec<u8>,
+    pub(super) tsig: Option<TsigRecord>,
+}
 
 /// Parsed DNS message header (RFC 1035 §4.1.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,6 +422,104 @@ pub fn parse_resource_record(
     Ok((rr, total))
 }
 
+/// Remove and parse a TSIG record from the final additional-section position.
+pub(super) fn split_final_tsig(message: &[u8]) -> Result<SplitTsigMessage, NetError> {
+    let header = DnsHeader::parse(message)?;
+    let mut offset = DNS_HEADER_SIZE;
+
+    for _ in 0..header.question_count {
+        let (_, name_len) = parse_name(message, offset)?;
+        offset = offset
+            .checked_add(name_len + 4)
+            .filter(|end| *end <= message.len())
+            .ok_or_else(|| NetError::XfrProtocolError("truncated DNS question".into()))?;
+    }
+
+    let non_additional_count = usize::from(header.answer_count)
+        .checked_add(usize::from(header.authority_count))
+        .ok_or_else(|| NetError::XfrProtocolError("DNS section count overflow".into()))?;
+    for _ in 0..non_additional_count {
+        let (rtype, consumed) = resource_record_type_and_len(message, offset)?;
+        if rtype == 250 {
+            return Err(NetError::XfrProtocolError(
+                "TSIG is only valid in the additional section".into(),
+            ));
+        }
+        offset += consumed;
+    }
+
+    let mut tsig_offset = None;
+    for index in 0..header.additional_count {
+        let record_offset = offset;
+        let (rtype, consumed) = resource_record_type_and_len(message, offset)?;
+        offset += consumed;
+        if rtype == 250 {
+            if index + 1 != header.additional_count {
+                return Err(NetError::XfrProtocolError(
+                    "TSIG must be the final additional record".into(),
+                ));
+            }
+            tsig_offset = Some(record_offset);
+        }
+    }
+
+    if offset != message.len() {
+        return Err(NetError::XfrProtocolError(format!(
+            "trailing bytes after DNS sections: {}",
+            message.len() - offset
+        )));
+    }
+
+    let Some(tsig_offset) = tsig_offset else {
+        return Ok(SplitTsigMessage {
+            unsigned_message: message.to_vec(),
+            tsig: None,
+        });
+    };
+
+    let tsig = TsigRecord::parse_from_wire(&message[tsig_offset..])?;
+    let mut unsigned_message = message[..tsig_offset].to_vec();
+    let unsigned_additional_count = header.additional_count.checked_sub(1).ok_or_else(|| {
+        NetError::XfrProtocolError("TSIG present with zero additional count".into())
+    })?;
+    unsigned_message[10..12].copy_from_slice(&unsigned_additional_count.to_be_bytes());
+
+    Ok(SplitTsigMessage {
+        unsigned_message,
+        tsig: Some(tsig),
+    })
+}
+
+fn resource_record_type_and_len(message: &[u8], offset: usize) -> Result<(u16, usize), NetError> {
+    let (_, name_len) = parse_name(message, offset)?;
+    let fixed_offset = offset
+        .checked_add(name_len)
+        .ok_or_else(|| NetError::XfrProtocolError("resource record offset overflow".into()))?;
+    if fixed_offset + 10 > message.len() {
+        return Err(NetError::XfrProtocolError(
+            "truncated resource record header".into(),
+        ));
+    }
+
+    let rtype = u16::from_be_bytes([message[fixed_offset], message[fixed_offset + 1]]);
+    let rdlength =
+        u16::from_be_bytes([message[fixed_offset + 8], message[fixed_offset + 9]]) as usize;
+    let consumed = name_len
+        .checked_add(10)
+        .and_then(|length| length.checked_add(rdlength))
+        .ok_or_else(|| NetError::XfrProtocolError("resource record length overflow".into()))?;
+    if offset
+        .checked_add(consumed)
+        .is_none_or(|end| end > message.len())
+    {
+        return Err(NetError::XfrProtocolError(
+            "truncated resource record data".into(),
+        ));
+    }
+
+    Ok((rtype, consumed))
+}
+
 /// Encode an AXFR query message for the given zone.
 ///
 /// If `tsig_key` is provided, the query is signed with TSIG (appended as
@@ -416,6 +527,14 @@ pub fn parse_resource_record(
 ///
 /// Returns the complete DNS message bytes (without TCP length prefix).
 pub fn encode_axfr_query(zone: &DomainName, tsig_key: Option<&TsigKey>) -> Vec<u8> {
+    encode_axfr_query_with_metadata(zone, tsig_key).message
+}
+
+/// Encode an AXFR query while retaining response-authentication state.
+pub(super) fn encode_axfr_query_with_metadata(
+    zone: &DomainName,
+    tsig_key: Option<&TsigKey>,
+) -> EncodedXfrQuery {
     encode_xfr_query(zone, QTYPE_AXFR, None, tsig_key)
 }
 
@@ -430,6 +549,15 @@ pub fn encode_ixfr_query(
     current_serial: Serial,
     tsig_key: Option<&TsigKey>,
 ) -> Vec<u8> {
+    encode_ixfr_query_with_metadata(zone, current_serial, tsig_key).message
+}
+
+/// Encode an IXFR query while retaining response-authentication state.
+pub(super) fn encode_ixfr_query_with_metadata(
+    zone: &DomainName,
+    current_serial: Serial,
+    tsig_key: Option<&TsigKey>,
+) -> EncodedXfrQuery {
     encode_xfr_query(zone, QTYPE_IXFR, Some(current_serial), tsig_key)
 }
 
@@ -439,7 +567,7 @@ fn encode_xfr_query(
     qtype: u16,
     current_serial: Option<Serial>,
     tsig_key: Option<&TsigKey>,
-) -> Vec<u8> {
+) -> EncodedXfrQuery {
     let mut buf = Vec::with_capacity(128);
 
     // Generate a cryptographically random query ID (RFC 5452 §3)
@@ -493,6 +621,7 @@ fn encode_xfr_query(
 
     // TSIG signing
     let mut arcount: u16 = 0;
+    let mut request_mac = None;
     if let Some(key) = tsig_key {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -500,6 +629,7 @@ fn encode_xfr_query(
             .unwrap_or(0);
 
         let tsig = bind9_sdk_core::tsig::TsigRecord::new(key, &buf, now, None);
+        request_mac = Some(tsig.mac.to_vec());
         buf.extend_from_slice(&tsig.wire_bytes);
         arcount = 1;
     }
@@ -507,7 +637,11 @@ fn encode_xfr_query(
     // Patch ARCOUNT
     buf[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
 
-    buf
+    EncodedXfrQuery {
+        message: buf,
+        id,
+        request_mac,
+    }
 }
 
 /// Read a DNS TCP message: 2-byte big-endian length prefix + message bytes.
@@ -767,6 +901,30 @@ mod tests {
 
         let header = DnsHeader::parse(&query).unwrap();
         assert_eq!(header.additional_count, 1);
+    }
+
+    #[test]
+    fn signed_axfr_query_retains_id_and_request_mac() {
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            bind9_sdk_core::tsig::TsigAlgorithm::HmacSha256,
+            vec![0xA5; 32],
+        )
+        .unwrap();
+        let zone = DomainName::new("example.com.").unwrap();
+
+        let encoded = encode_axfr_query_with_metadata(&zone, Some(&key));
+        let header = DnsHeader::parse(&encoded.message).unwrap();
+        let tsig_offset = DNS_HEADER_SIZE + zone.wire_len() + 4;
+        let parsed_tsig =
+            bind9_sdk_core::tsig::TsigRecord::parse_from_wire(&encoded.message[tsig_offset..])
+                .unwrap();
+
+        assert_eq!(encoded.id, header.id);
+        assert_eq!(
+            encoded.request_mac.as_deref(),
+            Some(parsed_tsig.mac.as_slice())
+        );
     }
 
     #[test]

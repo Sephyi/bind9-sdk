@@ -689,6 +689,7 @@ mod tests {
 
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
             .sign(&key, 1710000000)
+            .unwrap()
             .build();
 
         assert!(msg.is_signed());
@@ -703,7 +704,9 @@ mod tests {
         use bind9_sdk_core::update::UpdateBuilder;
 
         let zone = DomainName::new("example.com.").unwrap();
-        let msg = UpdateBuilder::new(zone, RecordClass::IN).build_unsigned();
+        let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .build_unsigned()
+            .unwrap();
 
         assert!(!msg.is_signed());
         assert!(msg.request_mac().is_none());
@@ -739,6 +742,7 @@ mod tests {
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
             .add_record(record)
             .sign_now(&key)
+            .unwrap()
             .build();
 
         let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
@@ -776,7 +780,7 @@ mod tests {
             builder = builder.add_record(record);
         }
 
-        let msg = builder.sign_now(&key).build();
+        let msg = builder.sign_now(&key).unwrap().build();
         let sender = NsUpdateSender::new("127.0.0.1:15353".parse().unwrap());
         let result = sender.send(&msg, Some(&key)).await;
         assert!(

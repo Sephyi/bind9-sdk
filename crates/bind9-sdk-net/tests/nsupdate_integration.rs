@@ -88,6 +88,7 @@ async fn add_a_record_noerror() {
     let msg = UpdateBuilder::with_id(1, zone.clone(), RecordClass::IN)
         .add_record(record)
         .sign_now(&key)
+        .unwrap()
         .build();
 
     let result = send_update(&msg, Some(&key))
@@ -105,6 +106,7 @@ async fn add_a_record_noerror() {
     let cleanup = UpdateBuilder::with_id(99, zone, RecordClass::IN)
         .delete_rrset(&name, RecordType::A)
         .sign_now(&key)
+        .unwrap()
         .build();
     let _ = send_update(&cleanup, Some(&key)).await;
 }
@@ -129,6 +131,7 @@ async fn delete_a_record_noerror() {
     let setup = UpdateBuilder::with_id(10, zone.clone(), RecordClass::IN)
         .add_record(record)
         .sign_now(&key)
+        .unwrap()
         .build();
     send_update(&setup, Some(&key))
         .await
@@ -139,6 +142,7 @@ async fn delete_a_record_noerror() {
     let msg = UpdateBuilder::with_id(11, zone, RecordClass::IN)
         .delete_rrset(&name, RecordType::A)
         .sign_now(&key)
+        .unwrap()
         .build();
 
     let result = send_update(&msg, Some(&key))
@@ -178,6 +182,7 @@ async fn wrong_key_returns_tsig_rejected() {
     let msg = UpdateBuilder::with_id(3, zone, RecordClass::IN)
         .add_record(record)
         .sign_now(&wrong_key)
+        .unwrap()
         .build();
 
     let err = send_update(&msg, Some(&wrong_key))
@@ -205,6 +210,7 @@ async fn unsatisfied_prerequisite_returns_nxdomain() {
     let msg = UpdateBuilder::with_id(4, zone, RecordClass::IN)
         .require_name_exists(&DomainName::new("nonexistent.example.com.").unwrap())
         .sign_now(&key)
+        .unwrap()
         .build();
 
     let result = send_update(&msg, Some(&key))
