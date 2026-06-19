@@ -53,7 +53,7 @@ pub use traits::{
     DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneManager,
     ZoneStats,
 };
-pub use transfer::{Active, Pending, TransferKind, TransferRecord, TransferSession};
+pub use transfer::{Active, IxfrEvent, Pending, TransferKind, TransferRecord, TransferSession};
 pub use tsig::{TsigAlgorithm, TsigKey, TsigRecord};
 pub use update::{
     Prerequisite, Signed, Unsigned, UpdateBuilder, UpdateEntry, UpdateMessage, UpdateResult,
