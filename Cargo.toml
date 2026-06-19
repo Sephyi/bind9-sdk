@@ -67,7 +67,9 @@ zeroize = { version = "1", default-features = false, features = [
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
 # Base32hex encoding for NSEC3 — no_std compatible
-data-encoding = { version = "2", default-features = false, features = ["alloc"] }
+data-encoding = { version = "2", default-features = false, features = [
+    "alloc",
+] }
 
 # Random bytes for key generation — std only (not compiled for WASM)
 getrandom = { version = "0.3", default-features = false }
@@ -76,9 +78,7 @@ getrandom = { version = "0.3", default-features = false }
 sha1 = { version = "0.10", default-features = false }
 
 # TLS 1.3 client
-rustls = { version = "0.23", default-features = false, features = [
-    "ring",
-] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 # Mozilla CA root certificates
 webpki-roots = { version = "1" }
