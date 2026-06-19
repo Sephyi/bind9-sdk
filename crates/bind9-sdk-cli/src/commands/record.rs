@@ -108,6 +108,7 @@ async fn execute_add(
     let update = UpdateBuilder::new(zone_name.clone(), RecordClass::IN)
         .add_record(record.clone())
         .sign_now(&config.rndc_key)
+        .map_err(CliError::Core)?
         .build();
 
     // Send the update via DNS.
@@ -178,7 +179,10 @@ async fn execute_delete(
         builder.delete_rrset(&record_name, record_type)
     };
 
-    let update = builder.sign_now(&config.rndc_key).build();
+    let update = builder
+        .sign_now(&config.rndc_key)
+        .map_err(CliError::Core)?
+        .build();
 
     let sender = NsUpdateSender::new(dns_addr);
     let result = sender

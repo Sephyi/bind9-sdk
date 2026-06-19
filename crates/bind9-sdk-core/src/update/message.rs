@@ -5,6 +5,7 @@
 use alloc::vec::Vec;
 
 use crate::domain::DomainName;
+use crate::error::CoreError;
 use crate::record::RecordClass;
 
 use super::{Prerequisite, UpdateEntry, UpdateMessage};
@@ -41,7 +42,7 @@ pub(super) fn encode_update_message(
     class: RecordClass,
     prerequisites: &[Prerequisite],
     updates: &[UpdateEntry],
-) -> UpdateMessage {
+) -> Result<UpdateMessage, CoreError> {
     let mut wire = Vec::new();
 
     // --- Header (12 bytes) ---
@@ -59,11 +60,25 @@ pub(super) fn encode_update_message(
     wire.extend_from_slice(&1u16.to_be_bytes());
 
     // PRCOUNT: number of prerequisite RRs (RrsetExistsWithData expands to N RRs)
-    let prcount: usize = prerequisites.iter().map(Prerequisite::wire_rr_count).sum();
-    wire.extend_from_slice(&(prcount as u16).to_be_bytes());
+    let prcount = prerequisites
+        .iter()
+        .try_fold(0usize, |count, prerequisite| {
+            count
+                .checked_add(prerequisite.wire_rr_count())
+                .ok_or_else(|| invalid_record("prerequisite count overflow"))
+        })?;
+    wire.extend_from_slice(
+        &u16::try_from(prcount)
+            .map_err(|_| invalid_record("prerequisite count exceeds 65535"))?
+            .to_be_bytes(),
+    );
 
     // UPCOUNT: number of updates
-    wire.extend_from_slice(&(updates.len() as u16).to_be_bytes());
+    wire.extend_from_slice(
+        &u16::try_from(updates.len())
+            .map_err(|_| invalid_record("update count exceeds 65535"))?
+            .to_be_bytes(),
+    );
 
     // ADCOUNT: 0 (TSIG added separately by sign())
     wire.extend_from_slice(&0u16.to_be_bytes());
@@ -76,27 +91,35 @@ pub(super) fn encode_update_message(
 
     // --- Prerequisite Section ---
     for prereq in prerequisites {
-        encode_prerequisite(prereq, class, &mut wire);
+        encode_prerequisite(prereq, class, &mut wire)?;
     }
 
     // --- Update Section ---
     for update in updates {
-        encode_update_entry(update, &mut wire);
+        encode_update_entry(update, &mut wire)?;
     }
 
-    UpdateMessage {
+    if wire.len() > usize::from(u16::MAX) {
+        return Err(invalid_record("DNS update message exceeds 65535 bytes"));
+    }
+
+    Ok(UpdateMessage {
         wire_bytes: wire,
         id,
         request_mac: None,
         pre_tsig_len: None,
-    }
+    })
 }
 
 /// Encode a prerequisite as a DNS RR in wire format (RFC 2136 §2.4).
 ///
 /// `zone_class` is needed for `RrsetExistsWithData` (§2.4.2) which uses the
 /// zone's class rather than ANY or NONE.
-fn encode_prerequisite(prereq: &Prerequisite, zone_class: RecordClass, wire: &mut Vec<u8>) {
+fn encode_prerequisite(
+    prereq: &Prerequisite,
+    zone_class: RecordClass,
+    wire: &mut Vec<u8>,
+) -> Result<(), CoreError> {
     match prereq {
         Prerequisite::RrsetExists { name, rtype } => {
             // NAME + TYPE + CLASS=ANY(255) + TTL=0 + RDLENGTH=0
@@ -142,18 +165,15 @@ fn encode_prerequisite(prereq: &Prerequisite, zone_class: RecordClass, wire: &mu
                 wire.extend_from_slice(&rtype.value().to_be_bytes());
                 wire.extend_from_slice(&zone_class.value().to_be_bytes());
                 wire.extend_from_slice(&0u32.to_be_bytes()); // TTL 0
-                let rdata_start = wire.len();
-                wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH placeholder
-                encode_rdata(&rr.rdata, wire);
-                let rdata_len = (wire.len() - rdata_start - 2) as u16;
-                wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
+                encode_rdata_with_length(&rr.rdata, wire)?;
             }
         }
     }
+    Ok(())
 }
 
 /// Encode an update entry as a DNS RR in wire format (RFC 2136 §2.5).
-fn encode_update_entry(entry: &UpdateEntry, wire: &mut Vec<u8>) {
+fn encode_update_entry(entry: &UpdateEntry, wire: &mut Vec<u8>) -> Result<(), CoreError> {
     match entry {
         UpdateEntry::AddRecord(rr) => {
             // NAME + TYPE + CLASS + TTL + RDLENGTH + RDATA
@@ -161,11 +181,7 @@ fn encode_update_entry(entry: &UpdateEntry, wire: &mut Vec<u8>) {
             wire.extend_from_slice(&rdata_type_value(&rr.rdata).to_be_bytes());
             wire.extend_from_slice(&rr.class.value().to_be_bytes());
             wire.extend_from_slice(&rr.ttl.value().to_be_bytes());
-            let rdata_start = wire.len();
-            wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH placeholder
-            encode_rdata(&rr.rdata, wire);
-            let rdata_len = (wire.len() - rdata_start - 2) as u16;
-            wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
+            encode_rdata_with_length(&rr.rdata, wire)?;
         }
         UpdateEntry::DeleteRrset { name, rtype } => {
             // NAME + TYPE + CLASS=ANY(255) + TTL=0 + RDLENGTH=0
@@ -181,11 +197,7 @@ fn encode_update_entry(entry: &UpdateEntry, wire: &mut Vec<u8>) {
             wire.extend_from_slice(&rdata_type_value(&rr.rdata).to_be_bytes());
             wire.extend_from_slice(&254u16.to_be_bytes()); // CLASS NONE
             wire.extend_from_slice(&0u32.to_be_bytes()); // TTL 0
-            let rdata_start = wire.len();
-            wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH placeholder
-            encode_rdata(&rr.rdata, wire);
-            let rdata_len = (wire.len() - rdata_start - 2) as u16;
-            wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
+            encode_rdata_with_length(&rr.rdata, wire)?;
         }
         UpdateEntry::DeleteName { name } => {
             // NAME + TYPE=ANY(255) + CLASS=ANY(255) + TTL=0 + RDLENGTH=0
@@ -196,6 +208,7 @@ fn encode_update_entry(entry: &UpdateEntry, wire: &mut Vec<u8>) {
             wire.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH 0
         }
     }
+    Ok(())
 }
 
 /// Get the DNS type code for a `RecordData` variant.
@@ -230,7 +243,21 @@ fn rdata_type_value(rdata: &crate::rdata::RecordData) -> u16 {
 }
 
 /// Encode `RecordData` in DNS wire format.
-fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
+fn encode_rdata_with_length(
+    rdata: &crate::rdata::RecordData,
+    wire: &mut Vec<u8>,
+) -> Result<(), CoreError> {
+    let rdata_start = wire.len();
+    wire.extend_from_slice(&0u16.to_be_bytes());
+    encode_rdata(rdata, wire)?;
+    let rdata_len = wire.len() - rdata_start - 2;
+    let rdata_len =
+        u16::try_from(rdata_len).map_err(|_| invalid_record("RDATA length exceeds 65535 bytes"))?;
+    wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
+    Ok(())
+}
+
+fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) -> Result<(), CoreError> {
     use crate::rdata::RecordData;
     match rdata {
         RecordData::A(addr) => {
@@ -269,8 +296,10 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
         RecordData::Txt(strings) => {
             for s in strings {
                 let bytes = s.as_bytes();
-                wire.push(bytes.len().min(255) as u8);
-                wire.extend_from_slice(&bytes[..bytes.len().min(255)]);
+                let length = u8::try_from(bytes.len())
+                    .map_err(|_| invalid_record("TXT character-string exceeds 255 bytes"))?;
+                wire.push(length);
+                wire.extend_from_slice(bytes);
             }
         }
         RecordData::Srv {
@@ -287,7 +316,10 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
         RecordData::Caa { flags, tag, value } => {
             wire.push(*flags);
             let tag_bytes = tag.as_bytes();
-            wire.push(tag_bytes.len() as u8);
+            wire.push(
+                u8::try_from(tag_bytes.len())
+                    .map_err(|_| invalid_record("CAA tag exceeds 255 bytes"))?,
+            );
             wire.extend_from_slice(tag_bytes);
             wire.extend_from_slice(value.as_bytes());
         }
@@ -361,9 +393,15 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
             wire.push(*hash_algorithm);
             wire.push(*flags);
             wire.extend_from_slice(&iterations.to_be_bytes());
-            wire.push(salt.len() as u8);
+            wire.push(
+                u8::try_from(salt.len())
+                    .map_err(|_| invalid_record("NSEC3 salt exceeds 255 bytes"))?,
+            );
             wire.extend_from_slice(salt);
-            wire.push(next_hashed_owner.len() as u8);
+            wire.push(
+                u8::try_from(next_hashed_owner.len())
+                    .map_err(|_| invalid_record("NSEC3 next hashed owner exceeds 255 bytes"))?,
+            );
             wire.extend_from_slice(next_hashed_owner);
             wire.extend_from_slice(type_bitmaps);
         }
@@ -420,7 +458,10 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
             wire.push(*hash_algorithm);
             wire.push(*flags);
             wire.extend_from_slice(&iterations.to_be_bytes());
-            wire.push(salt.len() as u8);
+            wire.push(
+                u8::try_from(salt.len())
+                    .map_err(|_| invalid_record("NSEC3PARAM salt exceeds 255 bytes"))?,
+            );
             wire.extend_from_slice(salt);
         }
         RecordData::Dlv {
@@ -435,4 +476,9 @@ fn encode_rdata(rdata: &crate::rdata::RecordData, wire: &mut Vec<u8>) {
             wire.extend_from_slice(digest);
         }
     }
+    Ok(())
+}
+
+fn invalid_record(message: impl Into<alloc::string::String>) -> CoreError {
+    CoreError::InvalidRecord(message.into())
 }
