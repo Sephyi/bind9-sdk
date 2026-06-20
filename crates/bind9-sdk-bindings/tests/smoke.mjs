@@ -36,7 +36,7 @@ for (const exported of [
 
 const d = new JsDomainName('example.com.');
 assert.equal(d.toString(), 'example.com.');
-assert.equal(d.labelCount(), 3);
+assert.equal(d.labelCount(), 2);
 
 const zone = JsZoneFile.parse('$ORIGIN example.com.\nexample.com. 3600 IN A 192.0.2.1\n');
 assert.equal(zone.recordCount(), 1);
