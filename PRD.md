@@ -40,6 +40,29 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 </details>
 
+### Current Implementation State (authoritative)
+
+> This section and the **Active Hardening Log** below are the authoritative
+> record of *current* state. The phased "COMPLETE" tables and per-phase notes in
+> §4 and §12 are preserved as **historical snapshots** (true at the dated
+> milestone) and are not maintained as current state. Where they disagree with
+> this section, this section wins.
+>
+> - **Tests:** 719 deterministic workspace tests pass (the older "574 tests"
+>   figures in §4/§12 are Phase-5 historical snapshots). Plus 28 live BIND 9.20
+>   tests (CI-gated) and a `fuzz/` cargo-fuzz workspace.
+> - **napi bindings:** `JsRndcPool` was **removed** (commit `a156099`); the
+>   binding surface no longer exposes a JS pool. The Rust net layer split
+>   concurrency control into `RndcLimiter` (fresh-cycle permits) and a separate
+>   connection-reusing `RndcPool` (commit `7dd6d0a`). References to `JsRndcPool`
+>   in §4.4/§12 Phase 4 notes are historical.
+> - **Phase 6/7:** named.conf parser, fuzzing, cargo-deny/SBOM/release workflow,
+>   typed `SecurityWarning` model, post-update SOA verification, multi-view
+>   scoping, DNSSEC rollover helpers, and Prometheus export are implemented (see
+>   the Active Hardening Log). Remaining before v1.0 are the FR-061 24-hour fuzz
+>   run, the npm/Node/Bun/WASM runtime matrix, full `bind9-sdk-net` `missing_docs`
+>   coverage, and the OQ-005 license decision.
+
 ### Active Hardening Log
 
 - **2026-06-20, Phase 7 features complete (CX-14: FR-070/071/072)**: FR-072 added `core::prometheus::server_stats_to_prometheus` (no_std, escaped labels, `bind_`-prefixed) plus `Bind9Client::prometheus_metrics()`. FR-070 added `Bind9Client::for_view(name)`, scoping every zone-targeted rndc operation to a BIND view through a `zone_target` helper. FR-071 added `rndc::rollover::RolloverWorkflow` with a pure, unit-tested `derive_state` over KASP key states and `check`/`advance` methods that drive a CDS/CDNSKEY KSK rollover via `rndc dnssec -checkds -published`. Deviation logged: the rollover workflow omits the PRD's `deadline: DateTime<Utc>` field because `rndc dnssec -status` does not expose KASP transition timestamps and the crate avoids a `chrono` dependency. Evidence: 719 deterministic tests pass; all-feature and production-panic clippy and the no-default-feature WASM checks pass.

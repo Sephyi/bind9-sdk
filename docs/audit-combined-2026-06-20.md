@@ -59,7 +59,7 @@ current state is suitable for controlled staging and continued development.
 
 | ID | Finding | Status |
 | --- | --- | --- |
-| CX-20 | PRD roadmap and historical sections still claim 574 tests, old `JsRndcPool` behavior, and completed Phase 4 runtime support that CI does not prove. | Open. |
+| CX-20 | PRD roadmap and historical sections still claim 574 tests, old `JsRndcPool` behavior, and completed Phase 4 runtime support that CI does not prove. | Fixed in current worktree. PRD gained a "Current Implementation State (authoritative)" section declaring the Active Hardening Log authoritative, recording 719 tests, the `JsRndcPool` removal (a156099) and the `RndcLimiter`/`RndcPool` split, and explicitly framing the §4/§12 "COMPLETE" tables as dated historical snapshots. README test count updated to 719 and the "rollover planned" claim corrected to implemented. Historical changelog rows preserved as historical facts. |
 | CX-21 | README transport text says XoT is planned although certificate-validated XoT is implemented. | Fixed in current worktree. |
 | CX-22 | Two rndc response-format TODOs remain despite live BIND 9.20 evidence. | Fixed in current worktree; comments now describe the verified compatibility contract. |
 | CX-23 | OQ-005 license selection remains a release-policy decision and cannot be resolved technically. | Owner decision required before publication. |
