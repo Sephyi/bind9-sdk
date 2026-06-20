@@ -160,6 +160,53 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  fuzz-smoke:
+    name: Fuzz Smoke (FR-061)
+    needs: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> target"
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      # The in-crate `--features fuzzing` regression tests pin past crashes and
+      # seed inputs deterministically; this job adds a short live libFuzzer run
+      # over each target's committed corpus. A real 24h clean run remains a
+      # pre-v1.0 release gate (see PRD FR-061), not something CI claims.
+      - name: Run fuzzing-feature regression tests
+        run: |
+          cargo test -p bind9-sdk-core --features fuzzing fuzz::
+          cargo test -p bind9-sdk-net --features fuzzing fuzz::
+      - name: Bounded smoke fuzz over each target
+        working-directory: fuzz
+        run: |
+          set -uo pipefail
+          status=0
+          for target in \
+            fuzz_zone_parser fuzz_rndc_response fuzz_stats_json \
+            fuzz_named_conf fuzz_zone_roundtrip fuzz_tsig_wire \
+            fuzz_transfer_wire fuzz_update_response; do
+            echo "::group::$target"
+            # Backstop `timeout`: some libFuzzer builds ignore -max_total_time.
+            # A clean SIGTERM (124) is acceptable; a crash writes an artifact,
+            # which is checked below and fails the job.
+            timeout --signal=TERM 90s \
+              cargo fuzz run "$target" -- -max_total_time=30 -rss_limit_mb=2048 || true
+            if compgen -G "artifacts/$target/*" > /dev/null; then
+              echo "::error::fuzz target $target produced a crash artifact"
+              ls -la "artifacts/$target/"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+
   deny:
     name: Supply Chain (cargo-deny)
     runs-on: ubuntu-24.04

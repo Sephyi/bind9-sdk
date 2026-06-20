@@ -24,7 +24,7 @@ use crate::error::NetError;
 ///
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct RawServerStats {
+pub(crate) struct RawServerStats {
     json_stats_version: Option<String>,
     boot_time: Option<String>,
     config_time: Option<String>,
@@ -100,7 +100,7 @@ struct RawZoneEntry {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct RawZonesResponse {
+pub(crate) struct RawZonesResponse {
     #[serde(default)]
     views: BTreeMap<String, RawView>,
 }

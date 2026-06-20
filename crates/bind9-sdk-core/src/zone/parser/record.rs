@@ -15,6 +15,18 @@ use super::tokenizer::Token;
 
 const MAX_INCLUDE_DEPTH: usize = 16;
 
+/// Maximum accepted size of a single zone-file text (or `$INCLUDE` body), in
+/// bytes. Enforced before tokenizing so a hostile input cannot drive unbounded
+/// work or allocation (PRD SR-005). 256 MiB is far above any zone managed via
+/// rndc in practice (~8M minimal records) while keeping worst-case parse time
+/// bounded — the parser itself is linear in input length.
+const MAX_ZONE_INPUT_BYTES: usize = 256 * 1024 * 1024;
+
+/// Maximum number of resource records produced from one parse. Enforced while
+/// records accumulate so a pathological input cannot exhaust memory through
+/// record count alone (PRD SR-005).
+const MAX_ZONE_RECORDS: usize = 16 * 1024 * 1024;
+
 /// Check if a word token is a record class keyword.
 fn is_class(word: &str) -> Option<RecordClass> {
     match word {
@@ -128,6 +140,18 @@ fn parse_into(
         });
     }
 
+    // SR-005: reject oversized input before doing any tokenization or allocation.
+    if input.len() > MAX_ZONE_INPUT_BYTES {
+        return Err(CoreError::ZoneParse {
+            line: 1,
+            column: None,
+            reason: alloc::format!(
+                "zone input of {} bytes exceeds the maximum of {MAX_ZONE_INPUT_BYTES} bytes",
+                input.len()
+            ),
+        });
+    }
+
     use super::tokenizer::Tokenizer;
 
     let mut tok = Tokenizer::new(input);
@@ -148,6 +172,15 @@ fn parse_into(
                 if !current_tokens.is_empty() {
                     process_line(&current_tokens, record_line, state, resolver, include_depth)?;
                     current_tokens.clear();
+                }
+                if state.records.len() > MAX_ZONE_RECORDS {
+                    return Err(CoreError::ZoneParse {
+                        line: record_line,
+                        column: None,
+                        reason: alloc::format!(
+                            "zone exceeds the maximum of {MAX_ZONE_RECORDS} records"
+                        ),
+                    });
                 }
                 record_line = tok.line();
             }

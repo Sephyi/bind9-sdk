@@ -15,6 +15,7 @@ path = [
     ".github/**",
     ".claude/**",
     "npm/**",
+    "fuzz/corpus/**",
 ]
 SPDX-FileCopyrightText = "2026 Sephyi <me@sephy.io>"
 SPDX-License-Identifier = "AGPL-3.0-only OR LicenseRef-Commercial"

@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+# cargo-fuzz build output and coverage data; corpus/ and artifacts/ are kept.
+/target
+/coverage
+Cargo.lock

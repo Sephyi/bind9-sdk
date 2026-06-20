@@ -7,6 +7,9 @@
 pub mod config;
 pub mod error;
 mod freeze;
+/// Unstable fuzzing entry points (feature `fuzzing`); not semver-stable.
+#[cfg(feature = "fuzzing")]
+pub mod fuzz;
 pub mod limiter;
 pub mod nsupdate;
 pub mod pool;

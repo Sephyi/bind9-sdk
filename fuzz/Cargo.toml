@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+[package]
+name = "bind9-sdk-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only OR LicenseRef-Commercial"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detached from the parent workspace so default `cargo` commands and the stable
+# MSRV build never try to compile libFuzzer targets (which require nightly).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bind9-sdk-core = { path = "../crates/bind9-sdk-core", features = [
+    "std",
+    "fuzzing",
+] }
+bind9-sdk-net = { path = "../crates/bind9-sdk-net", features = ["fuzzing"] }
+
+[profile.release]
+debug = 1
+
+# --- Required by FR-061 -----------------------------------------------------
+
+[[bin]]
+name = "fuzz_zone_parser"
+path = "fuzz_targets/fuzz_zone_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rndc_response"
+path = "fuzz_targets/fuzz_rndc_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_stats_json"
+path = "fuzz_targets/fuzz_stats_json.rs"
+test = false
+doc = false
+bench = false
+
+# --- Additional risk-justified targets --------------------------------------
+
+[[bin]]
+name = "fuzz_named_conf"
+path = "fuzz_targets/fuzz_named_conf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_zone_roundtrip"
+path = "fuzz_targets/fuzz_zone_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tsig_wire"
+path = "fuzz_targets/fuzz_tsig_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_transfer_wire"
+path = "fuzz_targets/fuzz_transfer_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_update_response"
+path = "fuzz_targets/fuzz_update_response.rs"
+test = false
+doc = false
+bench = false

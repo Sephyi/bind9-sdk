@@ -49,140 +49,145 @@ impl<'a> Tokenizer<'a> {
 
     /// Consume and return the next token, or None at EOF.
     pub(crate) fn next_token(&mut self) -> Option<Token> {
+        // Iterative scan. Parenthesized newlines and comment lines restart the
+        // scan via `continue` rather than recursing into `next_token`, so an
+        // input with many newlines-in-parens or comment lines cannot overflow
+        // the stack (regression: zone parser stack-overflow DoS).
         let bytes = self.input.as_bytes();
-        if self.pos >= bytes.len() {
-            return None;
-        }
-
-        // Check if we are at the start of a line and the first char is whitespace.
-        // This signals owner name inheritance.
-        let at_line_start = self.pos == 0 || (self.pos > 0 && bytes[self.pos - 1] == b'\n');
-
-        // Skip whitespace (but NOT newlines — those are significant tokens)
-        let had_leading_space =
-            self.pos < bytes.len() && (bytes[self.pos] == b' ' || bytes[self.pos] == b'\t');
-        while self.pos < bytes.len() && (bytes[self.pos] == b' ' || bytes[self.pos] == b'\t') {
-            self.pos += 1;
-        }
-
-        if self.pos >= bytes.len() {
-            return None;
-        }
-
-        // If at line start and had leading whitespace, emit empty owner token
-        if at_line_start && had_leading_space && bytes[self.pos] != b'\n' && !self.in_parens {
-            return Some(Token::Word(String::new()));
-        }
-
-        let ch = bytes[self.pos];
-
-        // Newline
-        if ch == b'\n' {
-            self.pos += 1;
-            self.line += 1;
-            if self.in_parens {
-                // Inside parens, skip newlines and continue tokenizing
-                return self.next_token();
+        loop {
+            if self.pos >= bytes.len() {
+                return None;
             }
-            return Some(Token::Newline);
-        }
 
-        // Comment — skip to end of line
-        if ch == b';' {
-            while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
+            // Check if we are at the start of a line and the first char is whitespace.
+            // This signals owner name inheritance.
+            let at_line_start = self.pos == 0 || (self.pos > 0 && bytes[self.pos - 1] == b'\n');
+
+            // Skip whitespace (but NOT newlines — those are significant tokens)
+            let had_leading_space =
+                self.pos < bytes.len() && (bytes[self.pos] == b' ' || bytes[self.pos] == b'\t');
+            while self.pos < bytes.len() && (bytes[self.pos] == b' ' || bytes[self.pos] == b'\t') {
                 self.pos += 1;
             }
-            // Don't consume the newline here — let the next call handle it
-            return self.next_token();
-        }
 
-        // Opening paren
-        if ch == b'(' {
-            self.pos += 1;
-            self.in_parens = true;
-            return Some(Token::ParenOpen);
-        }
+            if self.pos >= bytes.len() {
+                return None;
+            }
 
-        // Closing paren
-        if ch == b')' {
-            self.pos += 1;
-            self.in_parens = false;
-            return Some(Token::ParenClose);
-        }
+            // If at line start and had leading whitespace, emit empty owner token
+            if at_line_start && had_leading_space && bytes[self.pos] != b'\n' && !self.in_parens {
+                return Some(Token::Word(String::new()));
+            }
 
-        // Quoted string
-        if ch == b'"' {
-            self.pos += 1; // skip opening quote
-            let mut value = String::new();
-            while self.pos < bytes.len() && bytes[self.pos] != b'"' {
-                if bytes[self.pos] == b'\\' && self.pos + 1 < bytes.len() {
-                    self.pos += 1;
-                    let escaped = bytes[self.pos];
-                    // \DDD decimal escape
-                    if escaped.is_ascii_digit()
-                        && self.pos + 2 < bytes.len()
-                        && bytes[self.pos + 1].is_ascii_digit()
-                        && bytes[self.pos + 2].is_ascii_digit()
-                    {
-                        let d1 = (escaped - b'0') as u16;
-                        let d2 = (bytes[self.pos + 1] - b'0') as u16;
-                        let d3 = (bytes[self.pos + 2] - b'0') as u16;
-                        let byte_val = d1 * 100 + d2 * 10 + d3;
-                        if byte_val <= 255 {
-                            if byte_val <= 0x7f {
-                                value.push(byte_val as u8 as char);
-                            } else {
-                                value.push('\\');
-                                value.push(bytes[self.pos] as char);
-                                value.push(bytes[self.pos + 1] as char);
-                                value.push(bytes[self.pos + 2] as char);
-                            }
-                            self.pos += 3;
-                            continue;
-                        }
-                    }
-                    // Any other escaped character is literal
-                    value.push(escaped as char);
-                    self.pos += 1;
-                } else {
-                    value.push(bytes[self.pos] as char);
+            let ch = bytes[self.pos];
+
+            // Newline
+            if ch == b'\n' {
+                self.pos += 1;
+                self.line += 1;
+                if self.in_parens {
+                    // Inside parens, skip newlines and continue tokenizing
+                    continue;
+                }
+                return Some(Token::Newline);
+            }
+
+            // Comment — skip to end of line
+            if ch == b';' {
+                while self.pos < bytes.len() && bytes[self.pos] != b'\n' {
                     self.pos += 1;
                 }
-            }
-            if self.pos < bytes.len() {
-                self.pos += 1; // skip closing quote
-            }
-            return Some(Token::QuotedString(value));
-        }
-
-        // Word or directive — read until whitespace, newline, comment, paren, or quote
-        let start = self.pos;
-        while self.pos < bytes.len() {
-            let b = bytes[self.pos];
-            if b == b' '
-                || b == b'\t'
-                || b == b'\n'
-                || b == b';'
-                || b == b'('
-                || b == b')'
-                || b == b'"'
-            {
-                break;
-            }
-            // Handle escape sequences in unquoted words
-            if b == b'\\' && self.pos + 1 < bytes.len() {
-                self.pos += 2; // skip backslash and next char
+                // Don't consume the newline here — restart the scan iteratively.
                 continue;
             }
-            self.pos += 1;
-        }
 
-        let word = &self.input[start..self.pos];
+            // Opening paren
+            if ch == b'(' {
+                self.pos += 1;
+                self.in_parens = true;
+                return Some(Token::ParenOpen);
+            }
 
-        if word.starts_with('$') {
-            Some(Token::Directive(String::from(word)))
-        } else {
-            Some(Token::Word(String::from(word)))
+            // Closing paren
+            if ch == b')' {
+                self.pos += 1;
+                self.in_parens = false;
+                return Some(Token::ParenClose);
+            }
+
+            // Quoted string
+            if ch == b'"' {
+                self.pos += 1; // skip opening quote
+                let mut value = String::new();
+                while self.pos < bytes.len() && bytes[self.pos] != b'"' {
+                    if bytes[self.pos] == b'\\' && self.pos + 1 < bytes.len() {
+                        self.pos += 1;
+                        let escaped = bytes[self.pos];
+                        // \DDD decimal escape
+                        if escaped.is_ascii_digit()
+                            && self.pos + 2 < bytes.len()
+                            && bytes[self.pos + 1].is_ascii_digit()
+                            && bytes[self.pos + 2].is_ascii_digit()
+                        {
+                            let d1 = (escaped - b'0') as u16;
+                            let d2 = (bytes[self.pos + 1] - b'0') as u16;
+                            let d3 = (bytes[self.pos + 2] - b'0') as u16;
+                            let byte_val = d1 * 100 + d2 * 10 + d3;
+                            if byte_val <= 255 {
+                                if byte_val <= 0x7f {
+                                    value.push(byte_val as u8 as char);
+                                } else {
+                                    value.push('\\');
+                                    value.push(bytes[self.pos] as char);
+                                    value.push(bytes[self.pos + 1] as char);
+                                    value.push(bytes[self.pos + 2] as char);
+                                }
+                                self.pos += 3;
+                                continue;
+                            }
+                        }
+                        // Any other escaped character is literal
+                        value.push(escaped as char);
+                        self.pos += 1;
+                    } else {
+                        value.push(bytes[self.pos] as char);
+                        self.pos += 1;
+                    }
+                }
+                if self.pos < bytes.len() {
+                    self.pos += 1; // skip closing quote
+                }
+                return Some(Token::QuotedString(value));
+            }
+
+            // Word or directive — read until whitespace, newline, comment, paren, or quote
+            let start = self.pos;
+            while self.pos < bytes.len() {
+                let b = bytes[self.pos];
+                if b == b' '
+                    || b == b'\t'
+                    || b == b'\n'
+                    || b == b';'
+                    || b == b'('
+                    || b == b')'
+                    || b == b'"'
+                {
+                    break;
+                }
+                // Handle escape sequences in unquoted words
+                if b == b'\\' && self.pos + 1 < bytes.len() {
+                    self.pos += 2; // skip backslash and next char
+                    continue;
+                }
+                self.pos += 1;
+            }
+
+            let word = &self.input[start..self.pos];
+
+            if word.starts_with('$') {
+                return Some(Token::Directive(String::from(word)));
+            }
+            return Some(Token::Word(String::from(word)));
         }
     }
 

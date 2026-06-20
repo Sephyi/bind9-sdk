@@ -22,6 +22,9 @@ std = ["thiserror/std", "serde?/std", "dep:getrandom", "dep:tracing"]
 serde = ["dep:serde"]
 # Enables Rayon-based parallel zone parsing (implies std; incompatible with WASM)
 parallel = ["std", "dep:rayon"]
+# Exposes the unstable `fuzz` module of parser entry points for the out-of-tree
+# `fuzz/` cargo-fuzz workspace. Not semver-stable; do not enable in consumers.
+fuzzing = []
 
 [dependencies]
 hmac = { workspace = true }

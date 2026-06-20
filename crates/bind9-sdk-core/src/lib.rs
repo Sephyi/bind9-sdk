@@ -25,6 +25,9 @@ pub mod dnssec;
 pub mod domain;
 /// Error type for all `bind9-sdk-core` operations.
 pub mod error;
+/// Unstable fuzzing entry points (feature `fuzzing`); not semver-stable.
+#[cfg(feature = "fuzzing")]
+pub mod fuzz;
 /// Bounded typed parser for SDK-relevant `named.conf` statements.
 pub mod named_conf;
 /// DNS protocol primitives: `RecordType` and `Rcode`.

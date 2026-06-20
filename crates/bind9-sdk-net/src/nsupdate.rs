@@ -29,7 +29,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Parse a DNS response header to extract the message ID and RCODE.
 ///
 /// The response must be at least 12 bytes (DNS header size).
-fn parse_dns_response(response: &[u8]) -> Result<UpdateResult, NetError> {
+pub(crate) fn parse_dns_response(response: &[u8]) -> Result<UpdateResult, NetError> {
     if response.len() < DNS_HEADER_SIZE {
         return Err(NetError::Protocol(format!(
             "DNS response too short: {} bytes, need at least {DNS_HEADER_SIZE}",
