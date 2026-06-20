@@ -252,6 +252,33 @@ impl Bind9Client {
         FrozenZoneGuard::for_client(frozen, Arc::clone(self))
     }
 
+    /// Send a dynamic update and verify it was actually applied by confirming
+    /// the zone's SOA serial advanced (PRD REQ-ZONE-3).
+    ///
+    /// BIND can return `NOERROR` for an update that it silently declines to
+    /// apply (for example, an update with no effective changes, or one filtered
+    /// by `update-policy`). This method reads the zone's SOA serial through the
+    /// statistics channel before and after the update; if the serial does not
+    /// advance, it returns [`NetError::UpdateNotApplied`]. Requires a
+    /// configured `stats_url`.
+    pub async fn send_update_verified(
+        &self,
+        update: &UpdateMessage,
+        zone: &DomainName,
+    ) -> Result<UpdateResult, NetError> {
+        let before = self.stats_client()?.fetch_zone_stats(zone).await?.serial;
+        let result = DynamicUpdater::send_update(self, update).await?;
+        let after = self.stats_client()?.fetch_zone_stats(zone).await?.serial;
+        if after <= before {
+            return Err(NetError::UpdateNotApplied {
+                zone: zone.to_string(),
+                before: before.value(),
+                after: after.value(),
+            });
+        }
+        Ok(result)
+    }
+
     /// Execute a single rndc command using a fresh connection.
     ///
     /// Connects, authenticates, sends the command, reads the response,

@@ -53,6 +53,18 @@ pub enum NetError {
     #[error("DNS update rejected: {rcode}")]
     UpdateRejected { rcode: String },
 
+    /// A dynamic update returned success but the zone SOA serial did not
+    /// advance, indicating the change was not actually applied (REQ-ZONE-3).
+    #[error("update to zone {zone} not applied: SOA serial did not advance ({before} -> {after})")]
+    UpdateNotApplied {
+        /// Zone whose serial was checked.
+        zone: String,
+        /// SOA serial observed before the update.
+        before: u32,
+        /// SOA serial observed after the update.
+        after: u32,
+    },
+
     /// An error propagated from `bind9-sdk-core`.
     #[error(transparent)]
     Core(#[from] bind9_sdk_core::CoreError),
@@ -230,6 +242,19 @@ mod tests {
     fn xfr_protocol_error_display() {
         let err = NetError::XfrProtocolError("unexpected RCODE".into());
         assert_eq!(err.to_string(), "XFR protocol error: unexpected RCODE");
+    }
+
+    #[test]
+    fn update_not_applied_display() {
+        let err = NetError::UpdateNotApplied {
+            zone: "example.com.".into(),
+            before: 5,
+            after: 5,
+        };
+        assert_eq!(
+            err.to_string(),
+            "update to zone example.com. not applied: SOA serial did not advance (5 -> 5)"
+        );
     }
 
     #[test]
