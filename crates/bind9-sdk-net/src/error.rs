@@ -39,19 +39,35 @@ pub enum NetError {
 
     /// HTTP error from the statistics-channel.
     #[error("HTTP error: {status}")]
-    Http { status: u16, body: String },
+    Http {
+        /// HTTP status code returned by the statistics channel.
+        status: u16,
+        /// Response body, for diagnostics.
+        body: String,
+    },
 
     /// DNS update prerequisite failed with a typed RFC 2136 RCODE.
     #[error("DNS update prerequisite failed: {rcode}")]
-    PrerequisiteFailed { rcode: Rcode },
+    PrerequisiteFailed {
+        /// The RFC 2136 prerequisite RCODE returned by the server.
+        rcode: Rcode,
+    },
 
     /// DNS update TSIG authentication was explicitly rejected.
     #[error("DNS update TSIG rejected: {message} (code {code})")]
-    TsigRejected { code: u16, message: String },
+    TsigRejected {
+        /// TSIG error code (RFC 8945).
+        code: u16,
+        /// Human-readable TSIG error name.
+        message: String,
+    },
 
     /// DNS server rejected an RFC 2136 update.
     #[error("DNS update rejected: {rcode}")]
-    UpdateRejected { rcode: String },
+    UpdateRejected {
+        /// The rejecting RCODE rendered as a string.
+        rcode: String,
+    },
 
     /// A dynamic update returned success but the zone SOA serial did not
     /// advance, indicating the change was not actually applied (REQ-ZONE-3).

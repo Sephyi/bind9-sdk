@@ -115,7 +115,9 @@ pub struct DumpDbOptions {
 /// On/off switch used by rndc logging commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toggle {
+    /// Enable.
     On,
+    /// Disable.
     Off,
 }
 
@@ -131,8 +133,11 @@ impl fmt::Display for Toggle {
 /// DNSSEC validation control action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationAction {
+    /// Enable DNSSEC validation.
     On,
+    /// Disable DNSSEC validation.
     Off,
+    /// Report the current validation state.
     Status,
 }
 
@@ -149,8 +154,11 @@ impl fmt::Display for ValidationAction {
 /// RFC 5011 managed-key operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedKeysAction {
+    /// Force a refresh of managed trust anchors.
     Refresh,
+    /// Report managed-key status.
     Status,
+    /// Sync managed keys to disk.
     Sync,
 }
 
@@ -167,8 +175,11 @@ impl fmt::Display for ManagedKeysAction {
 /// Memory-profiler operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemProfAction {
+    /// Enable memory profiling.
     On,
+    /// Disable memory profiling.
     Off,
+    /// Dump the current memory profile.
     Dump,
 }
 
@@ -185,9 +196,13 @@ impl fmt::Display for MemProfAction {
 /// `serve-stale` control action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServeStaleAction {
+    /// Enable serving of stale answers.
     On,
+    /// Disable serving of stale answers.
     Off,
+    /// Reset the stale-answer state.
     Reset,
+    /// Report the serve-stale state.
     Status,
 }
 
@@ -206,18 +221,29 @@ impl fmt::Display for ServeStaleAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SigningAction {
+    /// Clear all signing state for the zone.
     ClearAll,
+    /// Clear signing state for a specific key.
     ClearKey {
+        /// Key identifier to clear.
         key: String,
     },
+    /// List the zone's signing keys.
     List,
+    /// Set NSEC3 parameters for the zone.
     Nsec3Param {
+        /// NSEC3 hash algorithm.
         hash: u8,
+        /// NSEC3 flags.
         flags: u8,
+        /// Hash iteration count.
         iterations: u16,
+        /// Hex-encoded salt.
         salt: String,
     },
+    /// Remove NSEC3 parameters (revert to NSEC).
     Nsec3ParamNone,
+    /// Set the zone serial used for signing.
     Serial(u32),
 }
 
@@ -225,9 +251,13 @@ pub enum SigningAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TcpTimeoutValues {
+    /// Initial TCP timeout (tenths of a second).
     pub initial: u32,
+    /// Idle TCP timeout (tenths of a second).
     pub idle: u32,
+    /// Keepalive TCP timeout (tenths of a second).
     pub keepalive: u32,
+    /// Advertised TCP timeout (tenths of a second).
     pub advertised: u32,
 }
 
@@ -278,15 +308,30 @@ pub enum RndcCommand {
     /// Query server status.
     Status,
     /// Reload configuration and either all zones or one selected zone.
-    Reload { target: Option<ZoneTarget> },
+    Reload {
+        /// Zone to reload; `None` reloads all zones.
+        target: Option<ZoneTarget>,
+    },
     /// Refresh a secondary zone from its primary.
-    Refresh { target: ZoneTarget },
+    Refresh {
+        /// Zone to refresh.
+        target: ZoneTarget,
+    },
     /// Force a zone retransfer from primary.
-    Retransfer { target: ZoneTarget },
+    Retransfer {
+        /// Zone to retransfer.
+        target: ZoneTarget,
+    },
     /// Freeze all dynamic zones or one selected zone.
-    Freeze { target: Option<ZoneTarget> },
+    Freeze {
+        /// Zone to freeze; `None` freezes all dynamic zones.
+        target: Option<ZoneTarget>,
+    },
     /// Thaw all dynamic zones or one selected zone.
-    Thaw { target: Option<ZoneTarget> },
+    Thaw {
+        /// Zone to thaw; `None` thaws all dynamic zones.
+        target: Option<ZoneTarget>,
+    },
     /// Synchronize zone journal to zone file.
     /// If `zone` is `None`, syncs all zones.
     Sync {
@@ -296,123 +341,227 @@ pub enum RndcCommand {
         target: Option<ZoneTarget>,
     },
     /// Flush all caches or one view's cache.
-    Flush { view: Option<String> },
+    Flush {
+        /// View whose cache to flush; `None` flushes all views.
+        view: Option<String>,
+    },
     /// Flush a specific name from cache.
     FlushName {
+        /// Name to flush.
         name: DomainName,
+        /// View to flush from; `None` flushes all views.
         view: Option<String>,
     },
     /// Flush a name and all names below it from cache.
     FlushTree {
+        /// Apex name of the subtree to flush.
         name: DomainName,
+        /// View to flush from; `None` flushes all views.
         view: Option<String>,
     },
     /// Dump statistics to the statistics file.
     Stats,
     /// Dump the database to the dump file.
-    DumpDb { options: DumpDbOptions },
+    DumpDb {
+        /// Categories and views to include in the dump.
+        options: DumpDbOptions,
+    },
     /// Send NOTIFY for a zone.
-    Notify { target: ZoneTarget },
+    Notify {
+        /// Zone to notify secondaries for.
+        target: ZoneTarget,
+    },
     /// Set debug trace level.
     /// If `level` is `None`, increments by 1.
-    Trace { level: Option<u32> },
+    Trace {
+        /// Explicit trace level; `None` increments by one.
+        level: Option<u32>,
+    },
     /// Disable debug tracing.
     NoTrace,
     /// Reload configuration and add/remove zones.
     Reconfig,
     /// Sign a zone with DNSSEC keys.
-    Sign { target: ZoneTarget },
+    Sign {
+        /// Zone to sign.
+        target: ZoneTarget,
+    },
     /// Maintain DNSSEC signing state.
     Signing {
+        /// Signing maintenance operation.
         action: SigningAction,
+        /// Zone to operate on.
         target: ZoneTarget,
     },
     /// Control DNSSEC validation.
     Validation {
+        /// Validation control action.
         action: ValidationAction,
+        /// View to apply to; `None` applies to all views.
         view: Option<String>,
     },
     /// Add a zone at runtime.
-    AddZone { target: ZoneTarget, config: String },
+    AddZone {
+        /// Zone to add.
+        target: ZoneTarget,
+        /// Zone configuration clause.
+        config: String,
+    },
     /// Modify a zone's configuration at runtime.
-    ModZone { target: ZoneTarget, config: String },
+    ModZone {
+        /// Zone to modify.
+        target: ZoneTarget,
+        /// New zone configuration clause.
+        config: String,
+    },
     /// Delete a zone at runtime.
-    DelZone { target: ZoneTarget, clean: bool },
+    DelZone {
+        /// Zone to delete.
+        target: ZoneTarget,
+        /// Remove the zone's files as well.
+        clean: bool,
+    },
     /// Show a zone's runtime configuration.
-    ShowZone { target: ZoneTarget },
+    ShowZone {
+        /// Zone to show.
+        target: ZoneTarget,
+    },
     /// RFC 5011 managed-key operation.
     ManagedKeys {
+        /// Managed-key operation.
         action: ManagedKeysAction,
+        /// DNS class; `None` uses the default.
         class: Option<RecordClass>,
+        /// View to apply to; `None` applies to all views.
         view: Option<String>,
     },
     /// Query zone status.
-    ZoneStatus { target: ZoneTarget },
+    ZoneStatus {
+        /// Zone to query.
+        target: ZoneTarget,
+    },
     /// List all negative trust anchors.
     NtaList,
     /// Add a negative trust anchor.
     NtaAdd {
+        /// Domain to add an NTA for.
         domain: DomainName,
+        /// NTA lifetime; `None` uses the server default.
         lifetime: Option<Duration>,
+        /// Force the NTA even if validation would normally forbid it.
         force: bool,
+        /// View to apply to; `None` applies to all views.
         view: Option<String>,
     },
     /// Remove a negative trust anchor.
     NtaRemove {
+        /// Domain to remove the NTA for.
         domain: DomainName,
+        /// View to apply to; `None` applies to all views.
         view: Option<String>,
     },
     /// Query DNSSEC status for a zone.
-    DnssecStatus { target: ZoneTarget },
+    DnssecStatus {
+        /// Zone to query.
+        target: ZoneTarget,
+    },
     /// Mark DS publication state for a zone key.
     DnssecCheckDs {
+        /// Zone to operate on.
         target: ZoneTarget,
+        /// DS publication state to record.
         state: DsState,
+        /// Specific key to mark; `None` applies to all keys.
         key: Option<DnssecKeySelector>,
+        /// Optional time specification (`when`) for the state change.
         when: Option<String>,
     },
     /// Update DNSSEC keys without signing immediately.
-    LoadKeys { target: ZoneTarget },
+    LoadKeys {
+        /// Zone to reload keys for.
+        target: ZoneTarget,
+    },
     /// Manually roll a DNSSEC policy key.
     DnssecRollover {
+        /// Zone to operate on.
         target: ZoneTarget,
+        /// Key to roll.
         key: DnssecKeySelector,
+        /// Optional time specification (`when`) for the rollover.
         when: Option<String>,
     },
     /// Reopen the DNSTAP output file.
     DnstapReopen,
     /// Roll DNSTAP output files, optionally retaining `count` files.
-    DnstapRoll { count: Option<u32> },
+    DnstapRoll {
+        /// Number of rolled files to retain; `None` uses the default.
+        count: Option<u32>,
+    },
     /// Show fetch-limit throttling state.
-    FetchLimit { view: Option<String> },
+    FetchLimit {
+        /// View to query; `None` queries all views.
+        view: Option<String>,
+    },
     /// Save pending updates and stop named.
-    Stop { report_pid: bool },
+    Stop {
+        /// Ask the server to report its PID.
+        report_pid: bool,
+    },
     /// Stop named without saving pending updates.
-    Halt { report_pid: bool },
+    Halt {
+        /// Ask the server to report its PID.
+        report_pid: bool,
+    },
     /// Import a signed-key-response file for offline KSK signing.
-    SkrImport { file: String, target: ZoneTarget },
+    SkrImport {
+        /// Path to the SKR file.
+        file: String,
+        /// Zone to import the SKR for.
+        target: ZoneTarget,
+    },
     /// Control or dump memory profiling.
-    MemProf { action: Option<MemProfAction> },
+    MemProf {
+        /// Profiling action; `None` reports current state.
+        action: Option<MemProfAction>,
+    },
     /// Toggle or explicitly set query logging.
-    QueryLog { action: Option<Toggle> },
+    QueryLog {
+        /// Explicit on/off; `None` toggles.
+        action: Option<Toggle>,
+    },
     /// Dump currently recursing queries.
     Recursing,
     /// Reset selected statistics counters.
-    ResetStats { counters: Vec<String> },
+    ResetStats {
+        /// Counter names to reset.
+        counters: Vec<String>,
+    },
     /// Toggle or explicitly set response logging.
-    ResponseLog { action: Option<Toggle> },
+    ResponseLog {
+        /// Explicit on/off; `None` toggles.
+        action: Option<Toggle>,
+    },
     /// Rescan network interfaces.
     Scan,
     /// Write security roots for the selected views.
-    SecRoots { views: Vec<String> },
+    SecRoots {
+        /// Views to write security roots for; empty means all.
+        views: Vec<String>,
+    },
     /// Control stale-answer serving.
     ServeStale {
+        /// Serve-stale action; `None` reports current state.
         action: Option<ServeStaleAction>,
+        /// DNS class; `None` uses the default.
         class: Option<RecordClass>,
+        /// View to apply to; `None` applies to all views.
         view: Option<String>,
     },
     /// Display or update TCP timeout values.
-    TcpTimeouts { values: Option<TcpTimeoutValues> },
+    TcpTimeouts {
+        /// New timeout values; `None` displays current values.
+        values: Option<TcpTimeoutValues>,
+    },
     /// Raw command string -- escape hatch for commands not yet in the enum.
     Raw(String),
 }
