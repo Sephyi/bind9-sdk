@@ -36,6 +36,9 @@ pub struct ServerConfig {
     pub stats_url: Option<String>,
     /// DNS server port for dynamic updates (default: 53).
     pub dns_port: Option<u16>,
+    /// Permit plaintext rndc over a separately protected network.
+    #[serde(default)]
+    pub protected_rndc: bool,
 }
 
 /// TSIG authentication credentials.
@@ -117,6 +120,7 @@ host = "127.0.0.1"
         let config = CliConfig::from_str(toml).unwrap();
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 953);
+        assert!(!config.server.protected_rndc);
         assert!(config.auth.is_none());
     }
 
@@ -128,6 +132,7 @@ host = "ns1.example.com"
 port = 8953
 stats_url = "http://127.0.0.1:8053"
 dns_port = 5353
+protected_rndc = true
 
 [auth]
 key_name = "rndc-key"
@@ -142,6 +147,7 @@ algorithm = "hmac-sha512"
             Some("http://127.0.0.1:8053")
         );
         assert_eq!(config.server.dns_port, Some(5353));
+        assert!(config.server.protected_rndc);
 
         let auth = config.auth.unwrap();
         assert_eq!(auth.key_name, "rndc-key");

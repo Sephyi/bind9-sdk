@@ -83,10 +83,22 @@ fn update_entry_delete_name() {
 // --- UpdateBuilder tests ---
 
 #[test]
+#[cfg(feature = "std")]
 fn builder_new_creates_unsigned() {
     let zone = DomainName::new("example.com.").unwrap();
-    let builder = UpdateBuilder::new(zone, RecordClass::IN);
+    let builder = UpdateBuilder::new(zone, RecordClass::IN).unwrap();
     let _msg = builder.build_unsigned().unwrap();
+}
+
+#[test]
+#[cfg(not(feature = "std"))]
+fn builder_new_requires_explicit_id_without_random_source() {
+    let zone = DomainName::new("example.com.").unwrap();
+    let error = match UpdateBuilder::new(zone, RecordClass::IN) {
+        Ok(_) => panic!("no_std builder creation without an explicit ID must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("use with_id"));
 }
 
 #[test]

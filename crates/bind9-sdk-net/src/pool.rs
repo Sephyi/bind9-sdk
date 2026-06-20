@@ -14,7 +14,7 @@ use tokio::time::timeout;
 
 use bind9_sdk_core::tsig::TsigKey;
 
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, RndcTransportPolicy};
 use crate::error::NetError;
 use crate::rndc::command::{RndcCommand, RndcResponse};
 use crate::rndc::{RndcConnection, SharedAuthenticated};
@@ -31,6 +31,7 @@ struct PoolConnectionConfig {
     address: SocketAddr,
     key: Arc<TsigKey>,
     operation_timeout: Duration,
+    transport_policy: RndcTransportPolicy,
 }
 
 struct PoolInner {
@@ -80,6 +81,7 @@ impl RndcPool {
             address: config.rndc_addr,
             key: Arc::new(config.rndc_key),
             operation_timeout: config.timeout,
+            transport_policy: config.rndc_transport,
         });
 
         let (available_tx, available_rx) = mpsc::channel(size);
@@ -252,10 +254,14 @@ async fn connect_authenticated(
     config: &PoolConnectionConfig,
     connections_created: &AtomicU64,
 ) -> Result<RndcConnection<SharedAuthenticated>, NetError> {
-    let connection = timeout(
-        config.operation_timeout,
-        RndcConnection::connect(config.address),
-    )
+    let connection = timeout(config.operation_timeout, async {
+        match config.transport_policy {
+            RndcTransportPolicy::LoopbackOnly => RndcConnection::connect(config.address).await,
+            RndcTransportPolicy::ProtectedNetwork => {
+                RndcConnection::connect_insecure(config.address).await
+            }
+        }
+    })
     .await
     .map_err(|_| NetError::Timeout(config.operation_timeout))??;
     let connection = timeout(

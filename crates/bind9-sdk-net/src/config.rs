@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
@@ -14,6 +15,7 @@ use bind9_sdk_core::tsig::TsigKey;
 use bind9_sdk_core::update::{UpdateMessage, UpdateResult};
 
 use crate::error::NetError;
+use crate::freeze::FrozenZoneGuard;
 use crate::nsupdate::NsUpdateSender;
 use crate::rndc::RndcConnection;
 use crate::rndc::command::{
@@ -22,6 +24,19 @@ use crate::rndc::command::{
 use crate::rndc::dnssec::DnssecStatus;
 use crate::stats::StatsHttpClient;
 use crate::tls::TlsConfig;
+
+/// Transport policy for the rndc control channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RndcTransportPolicy {
+    /// Permit plaintext rndc only on loopback addresses.
+    LoopbackOnly,
+    /// Permit plaintext rndc over a separately authenticated and encrypted network.
+    ///
+    /// Select this only when the full route is protected by a mechanism such as
+    /// WireGuard. rndc authenticates messages but does not encrypt their content.
+    ProtectedNetwork,
+}
 
 /// Configuration for connecting to a BIND9 server.
 ///
@@ -34,6 +49,9 @@ pub struct ClientConfig {
 
     /// TSIG key for rndc authentication and DNS update signing.
     pub rndc_key: TsigKey,
+
+    /// Plaintext transport policy for rndc connections.
+    pub rndc_transport: RndcTransportPolicy,
 
     /// Statistics-channel HTTP URL (e.g., "http://127.0.0.1:8053").
     pub stats_url: Option<String>,
@@ -63,6 +81,7 @@ impl std::fmt::Debug for ClientConfig {
         f.debug_struct("ClientConfig")
             .field("rndc_addr", &self.rndc_addr)
             .field("rndc_key", &"[REDACTED]")
+            .field("rndc_transport", &self.rndc_transport)
             .field("stats_url", &self.stats_url)
             .field("dns_addr", &self.dns_addr)
             .field("tls", &self.tls.as_ref().map(|_| "[configured]"))
@@ -85,12 +104,19 @@ impl ClientConfig {
         Self {
             rndc_addr,
             rndc_key,
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
             timeout: std::time::Duration::from_secs(10),
             rndc_max_concurrent: None,
         }
+    }
+
+    /// Select the plaintext transport policy used for rndc connections.
+    pub fn with_rndc_transport(mut self, policy: RndcTransportPolicy) -> Self {
+        self.rndc_transport = policy;
+        self
     }
 }
 
@@ -138,6 +164,12 @@ impl Bind9Client {
     fn zone_status_command(zone: &DomainName) -> RndcCommand {
         RndcCommand::ZoneStatus {
             target: ZoneTarget::new(zone.clone()),
+        }
+    }
+
+    fn thaw_command(zone: &DomainName) -> RndcCommand {
+        RndcCommand::Thaw {
+            target: Some(ZoneTarget::new(zone.clone())),
         }
     }
 
@@ -194,6 +226,18 @@ impl Bind9Client {
         Ok(())
     }
 
+    /// Freeze a zone and return an RAII guard that schedules thaw on drop.
+    ///
+    /// Prefer [`FrozenZoneGuard::thaw`] when normal control flow can await the
+    /// operation and handle a thaw failure explicitly.
+    pub async fn freeze_guard(
+        self: &Arc<Self>,
+        zone: &DomainName,
+    ) -> Result<FrozenZoneGuard, NetError> {
+        let frozen = NamedControl::freeze(self.as_ref(), zone).await?;
+        FrozenZoneGuard::for_client(frozen, Arc::clone(self))
+    }
+
     /// Execute a single rndc command using a fresh connection.
     ///
     /// Connects, authenticates, sends the command, reads the response,
@@ -204,7 +248,14 @@ impl Bind9Client {
     ) -> Result<crate::rndc::command::RndcResponse, NetError> {
         let timeout = self.config.timeout;
         let fut = async {
-            let conn = RndcConnection::connect(self.config.rndc_addr).await?;
+            let conn = match self.config.rndc_transport {
+                RndcTransportPolicy::LoopbackOnly => {
+                    RndcConnection::connect(self.config.rndc_addr).await?
+                }
+                RndcTransportPolicy::ProtectedNetwork => {
+                    RndcConnection::connect_insecure(self.config.rndc_addr).await?
+                }
+            };
             let mut conn = conn.authenticate(&self.config.rndc_key).await?;
             let resp = conn.command(cmd).await?;
             conn.close().await?;
@@ -287,6 +338,17 @@ impl NamedControl for Bind9Client {
         }
         Ok(make_frozen_zone(zone))
     }
+
+    async fn thaw(&self, zone: &DomainName) -> Result<(), NetError> {
+        let resp = self.rndc_command(Self::thaw_command(zone)).await?;
+        if !resp.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc thaw failed: {}",
+                resp.text
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl StatsClient for Bind9Client {
@@ -345,6 +407,7 @@ mod tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: Some("http://127.0.0.1:8053".into()),
             dns_addr: Some("127.0.0.1:53".parse().unwrap()),
             tls: None,
@@ -363,6 +426,17 @@ mod tests {
             Bind9Client::zone_status_command(&zone),
             RndcCommand::ZoneStatus {
                 target: ZoneTarget::new(zone.clone())
+            }
+        );
+    }
+
+    #[test]
+    fn thaw_command_targets_requested_zone() {
+        let zone = DomainName::new("example.com.").unwrap();
+        assert_eq!(
+            Bind9Client::thaw_command(&zone),
+            RndcCommand::Thaw {
+                target: Some(ZoneTarget::new(zone.clone()))
             }
         );
     }
@@ -397,6 +471,7 @@ mod tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
@@ -413,6 +488,7 @@ mod tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
@@ -425,10 +501,26 @@ mod tests {
     }
 
     #[test]
+    fn client_config_defaults_to_loopback_only_rndc() {
+        let config = ClientConfig::new("127.0.0.1:953".parse().unwrap(), test_key());
+        assert_eq!(config.rndc_transport, RndcTransportPolicy::LoopbackOnly);
+    }
+
+    #[test]
+    fn client_config_can_explicitly_allow_protected_network_rndc() {
+        let config = ClientConfig::new("10.23.0.1:953".parse().unwrap(), test_key())
+            .with_rndc_transport(RndcTransportPolicy::ProtectedNetwork);
+
+        assert_eq!(config.rndc_transport, RndcTransportPolicy::ProtectedNetwork);
+        assert!(format!("{config:?}").contains("ProtectedNetwork"));
+    }
+
+    #[test]
     fn bind9_client_new() {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
@@ -451,6 +543,7 @@ mod tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: Some(tls),
@@ -508,6 +601,7 @@ mod stats_tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
@@ -527,6 +621,7 @@ mod stats_tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,
@@ -563,6 +658,7 @@ mod dynamic_updater_tests {
         let config = ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: test_key(),
+            rndc_transport: RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,

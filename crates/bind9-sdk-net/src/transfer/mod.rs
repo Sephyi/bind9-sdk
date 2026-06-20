@@ -114,10 +114,19 @@ impl IxfrState {
                                 actual: base_serial.value(),
                             });
                         }
-                        if current_serial <= base_serial {
-                            return Err(NetError::XfrProtocolError(format!(
-                                "IXFR current serial {current_serial} is not newer than base serial {base_serial}"
-                            )));
+                        match current_serial.partial_cmp(&base_serial) {
+                            Some(std::cmp::Ordering::Greater) => {}
+                            Some(_) => {
+                                return Err(NetError::XfrProtocolError(format!(
+                                    "IXFR current serial {current_serial} is not newer than base serial {base_serial}"
+                                )));
+                            }
+                            None => {
+                                return Err(NetError::XfrProtocolError(format!(
+                                    "IXFR serial ordering is undefined by RFC 1982: \
+                                     current serial {current_serial}, base serial {base_serial}"
+                                )));
+                            }
                         }
                         events.push(IxfrEvent::CurrentSoa(current_soa));
                         events.push(IxfrEvent::DeleteSoa(record));
@@ -154,7 +163,17 @@ impl IxfrState {
                 from_serial,
             } => {
                 if let Some(to_serial) = apex_soa_serial(&record, &self.zone) {
-                    if to_serial <= from_serial || to_serial > current_serial {
+                    let after_from = to_serial.partial_cmp(&from_serial);
+                    let at_or_before_current = to_serial.partial_cmp(&current_serial);
+                    if after_from.is_none() || at_or_before_current.is_none() {
+                        return Err(NetError::XfrProtocolError(format!(
+                            "IXFR serial ordering is undefined by RFC 1982: \
+                             {from_serial} -> {to_serial} with current serial {current_serial}"
+                        )));
+                    }
+                    if after_from != Some(std::cmp::Ordering::Greater)
+                        || at_or_before_current == Some(std::cmp::Ordering::Greater)
+                    {
                         return Err(NetError::XfrProtocolError(format!(
                             "invalid IXFR serial transition {from_serial} -> {to_serial} \
                              with current serial {current_serial}"
@@ -513,7 +532,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
     where
         S: 'a,
     {
-        let query = encode_axfr_query_with_metadata(&zone, tsig_key);
+        let query = encode_axfr_query_with_metadata(&zone, tsig_key)?;
         write_tcp_dns_message(&mut self.stream, &query.message).await?;
 
         tracing::debug!("AXFR query sent");
@@ -547,7 +566,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TransferClient<S> {
     where
         S: 'a,
     {
-        let query = encode_ixfr_query_with_metadata(&zone, current_serial, tsig_key);
+        let query = encode_ixfr_query_with_metadata(&zone, current_serial, tsig_key)?;
         write_tcp_dns_message(&mut self.stream, &query.message).await?;
 
         tracing::debug!("IXFR query sent");
@@ -608,7 +627,7 @@ fn ixfr_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
                 context.expected_qtype,
             )?;
 
-            for _ in 0..header.answer_count {
+            for answer_index in 0..header.answer_count {
                 let (record, consumed) = parse_resource_record(&message, offset)?;
                 offset += consumed;
                 record_count += 1;
@@ -621,7 +640,13 @@ fn ixfr_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
                     })?;
                 }
 
-                for event in state.push(record)? {
+                let events = state.push(record)?;
+                if state.is_complete() && answer_index + 1 != header.answer_count {
+                    Err(NetError::XfrProtocolError(
+                        "zone transfer response contains answers after IXFR completion".into(),
+                    ))?;
+                }
+                for event in events {
                     yield event;
                 }
                 if state.is_complete() {
@@ -659,6 +684,7 @@ fn transfer_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
 ) -> impl Stream<Item = Result<TransferRecord, NetError>> + 'a {
     async_stream::try_stream! {
         let mut awaiting_first_soa = true;
+        let mut opening_serial: Option<Serial> = None;
         let mut soa_count: u32 = 0;
         let mut record_count: usize = 0;
         'outer: loop {
@@ -685,7 +711,7 @@ fn transfer_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
                 )?;
 
             // Parse answer section records
-            for _ in 0..header.answer_count {
+            for answer_index in 0..header.answer_count {
                 let (rr, consumed) = parse_resource_record(&msg, offset)?;
                 offset += consumed;
 
@@ -705,6 +731,7 @@ fn transfer_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
 
                 if awaiting_first_soa {
                     if is_soa {
+                        opening_serial = apex_soa_serial(&rr, &context.zone);
                         soa_count += 1;
                         awaiting_first_soa = false;
                         yield TransferRecord::BeginSoa(rr);
@@ -714,8 +741,26 @@ fn transfer_record_stream<'a, S: AsyncRead + AsyncWrite + Unpin + 'a>(
                         ))?;
                     }
                 } else if is_soa {
+                    let closing_serial = apex_soa_serial(&rr, &context.zone).ok_or_else(|| {
+                        NetError::XfrProtocolError(
+                            "closing AXFR SOA did not contain a serial".into(),
+                        )
+                    })?;
+                    if Some(closing_serial) != opening_serial {
+                        let opening_serial =
+                            opening_serial.map_or(0, |serial| serial.value());
+                        Err(NetError::XfrProtocolError(format!(
+                            "closing SOA serial {closing_serial} does not match opening SOA serial \
+                             {opening_serial}"
+                        )))?;
+                    }
                     soa_count += 1;
                     if soa_count >= 2 {
+                        if answer_index + 1 != header.answer_count {
+                            Err(NetError::XfrProtocolError(
+                                "zone transfer response contains answers after closing SOA".into(),
+                            ))?;
+                        }
                         context.verifier.finish()?;
                         yield TransferRecord::EndSoa(rr);
                         break 'outer;

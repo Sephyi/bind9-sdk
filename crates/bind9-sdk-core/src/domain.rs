@@ -19,6 +19,7 @@ use crate::error::CoreError;
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Label {
     inner: String,
+    wire: Vec<u8>,
 }
 
 impl Label {
@@ -34,7 +35,10 @@ impl Label {
                 decoded.len()
             )));
         }
-        Ok(Label { inner: s.into() })
+        Ok(Label {
+            inner: s.into(),
+            wire: decoded,
+        })
     }
 
     /// The label text.
@@ -52,8 +56,8 @@ impl Label {
         self.inner.is_empty()
     }
 
-    fn wire_bytes(&self) -> Vec<u8> {
-        decode_label(&self.inner).expect("Label is validated during construction")
+    fn wire_bytes(&self) -> &[u8] {
+        &self.wire
     }
 }
 
@@ -244,7 +248,7 @@ impl DomainName {
         for label in &self.labels {
             let bytes = label.wire_bytes();
             buf.push(bytes.len() as u8);
-            buf.extend_from_slice(&bytes);
+            buf.extend_from_slice(bytes);
         }
         buf.push(0); // root label
     }

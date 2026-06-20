@@ -33,7 +33,7 @@ Ships as three coordinated artifacts from one codebase:
 - 🔐 **TSIG authentication** — HMAC-SHA256/SHA512, secrets zeroized on drop, never in logs
 - 🧱 **`no_std` core** — core crate compiles without std, works in WASM and embedded contexts
 - 🔗 **Connection management** — persistent authenticated `RndcPool` plus `RndcLimiter` for fresh command cycles
-- 🧪 **664 tests** — unit, property (proptest), snapshot (insta), compile-fail, and integration tests
+- 🧪 **689 tests** — unit, property (proptest), snapshot (insta), compile-fail, and integration tests
 - 🦀 **Single workspace** — one repo, one `cargo build`, all three artifacts
 
 ## 📋 Prerequisites
@@ -250,9 +250,9 @@ let record = ResourceRecord::new(
     Ttl::new(3600),
 );
 
-let update = UpdateBuilder::new(zone, RecordClass::IN)
+let update = UpdateBuilder::new(zone, RecordClass::IN)?
     .add_record(record)
-    .sign_now(&key)
+    .sign_now(&key)?
     .build();
 
 let sender = NsUpdateSender::new("127.0.0.1:53".parse()?);
@@ -305,6 +305,7 @@ All commands accept these flags (CLI flags override config file values):
 --server <HOST>       Server hostname or IP address
 --port <PORT>         rndc control port (default: 953)
 --dns-port <PORT>     DNS port for updates and transfers (default: 53)
+--protected-rndc      Allow plaintext RNDC over a trusted protected network
 --key-name <NAME>     TSIG key name
 --key-secret <SECRET> Base64-encoded TSIG key secret
 --output <FORMAT>     Output format: text (default) or json
@@ -324,6 +325,7 @@ host = "127.0.0.1"
 port = 953
 dns_port = 53
 stats_url = "http://127.0.0.1:8053"
+protected_rndc = false
 
 [auth]
 key_name = "rndc-key"
@@ -333,6 +335,10 @@ algorithm = "hmac-sha256"  # or hmac-sha512
 
 > [!WARNING]
 > Do not store `key_secret` in the config file — it is plaintext on disk. Use `bind9 auth set-key` to store the secret in your OS credential store (macOS Keychain, Linux Secret Service, Windows Credential Manager). The config file `key_secret` field is supported as a last-resort fallback and emits a warning when used.
+
+`protected_rndc = true` is only for addresses carried inside WireGuard or an
+equivalent authenticated, encrypted management network. The default remains
+loopback-only because RNDC itself does not encrypt its transport.
 
 ### 🔑 Secret resolution order
 
@@ -476,7 +482,7 @@ bind9-sdk/
 Targeting GDPR, NIS2, NIST SP 800-53/800-81/800-57, ISO 27001:2022, and SOC 2 Type II compliance for DNS infrastructure.
 
 - 🔒 **Authentication** — No anonymous rndc. TSIG secrets zeroized on drop (`Zeroizing<Vec<u8>>`), never in logs or errors. Compile-time typestate prevents unauthenticated commands.
-- 🔐 **Transport** — Non-localhost zone transfers rejected without TLS config. TLS 1.3 pinned (rustls). rndc TLS and XoT transport planned for v0.2.
+- 🔐 **Transport** — Non-localhost zone transfers require certificate-validated XoT with TLS 1.3. Plaintext RNDC is loopback-only by default and requires an explicit protected-network opt-in for WireGuard or an equivalent trusted overlay.
 - 🛡️ **DNSSEC** — DNSKEY, DS, CDS, CDNSKEY, RRSIG, NSEC/NSEC3 record types. CDS generation with SHA-256/SHA-384. DNSSEC rndc commands (sign, validation, checkds). Key rollover helpers planned for v1.0.
 - 📦 **Supply Chain** — `cargo audit` in CI. `#![forbid(unsafe_code)]` in core and net. SBOM generation planned.
 - ⚙️ **Defaults** — HMAC-MD5 rejected. HMAC-SHA1 warns at compile time and runtime. HMAC-SHA256/SHA512 default. Key material stored in OS credential store (macOS Keychain, Linux Secret Service).

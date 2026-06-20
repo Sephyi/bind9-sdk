@@ -90,6 +90,10 @@ impl AsyncWrite for MockTcpStream {
 ///
 /// Structure: one message containing SOA, A record, closing SOA.
 fn build_mock_axfr_response() -> Vec<u8> {
+    build_mock_axfr_response_with_serials(2024010101, 2024010101)
+}
+
+fn build_mock_axfr_response_with_serials(opening_serial: u32, closing_serial: u32) -> Vec<u8> {
     let mut msg = Vec::new();
 
     // DNS Header: QR=1, RCODE=0, QDCOUNT=0, ANCOUNT=3
@@ -106,7 +110,15 @@ fn build_mock_axfr_response() -> Vec<u8> {
 
     // Record 1: SOA (opening)
     append_soa_record(
-        &mut msg, &zone, &ns1, &admin, 2024010101, 3600, 900, 604800, 86400,
+        &mut msg,
+        &zone,
+        &ns1,
+        &admin,
+        opening_serial,
+        3600,
+        900,
+        604800,
+        86400,
     );
 
     // Record 2: A record for "host.example.com."
@@ -115,7 +127,15 @@ fn build_mock_axfr_response() -> Vec<u8> {
 
     // Record 3: SOA (closing — same serial)
     append_soa_record(
-        &mut msg, &zone, &ns1, &admin, 2024010101, 3600, 900, 604800, 86400,
+        &mut msg,
+        &zone,
+        &ns1,
+        &admin,
+        closing_serial,
+        3600,
+        900,
+        604800,
+        86400,
     );
 
     // Wrap in TCP framing: 2-byte length prefix
@@ -150,6 +170,20 @@ fn build_mock_ixfr_response() -> Vec<u8> {
     tcp_msg.extend_from_slice(&(msg.len() as u16).to_be_bytes());
     tcp_msg.extend_from_slice(&msg);
     tcp_msg
+}
+
+fn append_trailing_answer(mut tcp_message: Vec<u8>) -> Vec<u8> {
+    let answer_count = u16::from_be_bytes([tcp_message[8], tcp_message[9]]);
+    tcp_message[8..10].copy_from_slice(&(answer_count + 1).to_be_bytes());
+    append_a_record(
+        &mut tcp_message,
+        &DomainName::new("trailing.example.com.").unwrap(),
+        300,
+        [192, 0, 2, 200],
+    );
+    let dns_length = u16::try_from(tcp_message.len() - 2).unwrap();
+    tcp_message[..2].copy_from_slice(&dns_length.to_be_bytes());
+    tcp_message
 }
 
 /// Append a SOA resource record in wire format to `buf`.
@@ -287,6 +321,52 @@ async fn transfer_client_mock_axfr_multi_message() {
 }
 
 #[tokio::test]
+async fn transfer_client_rejects_mismatched_closing_soa() {
+    let response_data = build_mock_axfr_response_with_serials(2024010101, 2024010102);
+    let client = TransferClient::new(MockTcpStream::new(response_data));
+    let zone = DomainName::new("example.com.").unwrap();
+    let stream = client.axfr(zone, None).await.unwrap();
+    tokio::pin!(stream);
+
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TransferRecord::BeginSoa(_)
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TransferRecord::Record(_)
+    ));
+    let error = stream.next().await.unwrap().unwrap_err();
+
+    assert!(
+        error.to_string().contains("closing SOA")
+            && error.to_string().contains("2024010101")
+            && error.to_string().contains("2024010102")
+    );
+}
+
+#[tokio::test]
+async fn transfer_client_rejects_answers_after_closing_soa() {
+    let response_data = append_trailing_answer(build_mock_axfr_response());
+    let client = TransferClient::new(MockTcpStream::new(response_data));
+    let zone = DomainName::new("example.com.").unwrap();
+    let stream = client.axfr(zone, None).await.unwrap();
+    tokio::pin!(stream);
+
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TransferRecord::BeginSoa(_)
+    ));
+    assert!(matches!(
+        stream.next().await.unwrap().unwrap(),
+        TransferRecord::Record(_)
+    ));
+    let error = stream.next().await.unwrap().unwrap_err();
+
+    assert!(error.to_string().contains("after closing SOA"));
+}
+
+#[tokio::test]
 async fn transfer_client_mock_ixfr_emits_typed_delta_events() {
     let client = TransferClient::new(MockTcpStream::new(build_mock_ixfr_response()));
     let zone = DomainName::new("example.com.").unwrap();
@@ -304,6 +384,26 @@ async fn transfer_client_mock_ixfr_emits_typed_delta_events() {
     assert!(matches!(events[3], IxfrEvent::AddSoa(_)));
     assert!(matches!(events[4], IxfrEvent::Added(_)));
     assert!(matches!(events[5], IxfrEvent::EndSoa(_)));
+}
+
+#[tokio::test]
+async fn transfer_client_rejects_answers_after_ixfr_completion() {
+    let response_data = append_trailing_answer(build_mock_ixfr_response());
+    let client = TransferClient::new(MockTcpStream::new(response_data));
+    let zone = DomainName::new("example.com.").unwrap();
+    let stream = client.ixfr(zone, Serial::new(1), None).await.unwrap();
+    tokio::pin!(stream);
+
+    let mut terminal_error = None;
+    while let Some(event) = stream.next().await {
+        if let Err(error) = event {
+            terminal_error = Some(error);
+            break;
+        }
+    }
+
+    let error = terminal_error.expect("trailing IXFR answer must be rejected");
+    assert!(error.to_string().contains("after IXFR completion"));
 }
 
 #[tokio::test]
@@ -504,7 +604,7 @@ fn sign_first_transfer_response(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let tsig = TsigRecord::new(key, &unsigned, now, Some(request_mac));
+    let tsig = TsigRecord::new(key, &unsigned, now, Some(request_mac)).unwrap();
     unsigned[10..12].copy_from_slice(&1u16.to_be_bytes());
     unsigned.extend_from_slice(&tsig.wire_bytes);
     unsigned
@@ -581,7 +681,7 @@ fn sign_continuation_response(
     }
     mac_input.extend_from_slice(&now.to_be_bytes()[2..]);
     mac_input.extend_from_slice(&fudge.to_be_bytes());
-    let mac = key.sign(&mac_input);
+    let mac = key.sign(&mac_input).unwrap();
 
     let mut tsig = Vec::new();
     key.name().write_wire_canonical(&mut tsig);
@@ -794,4 +894,16 @@ fn ixfr_state_rejects_unexpected_base_serial() {
     let error = state.push(soa_resource_record(2)).unwrap_err();
 
     assert!(error.to_string().contains("expected 1") && error.to_string().contains("got 2"));
+}
+
+#[test]
+fn ixfr_state_rejects_undefined_rfc1982_serial_ordering() {
+    let mut state = IxfrState::new(DomainName::new("example.com.").unwrap(), Serial::new(1));
+    state
+        .push(soa_resource_record(1u32.wrapping_add(1 << 31)))
+        .unwrap();
+
+    let error = state.push(soa_resource_record(1)).unwrap_err();
+
+    assert!(error.to_string().contains("undefined") && error.to_string().contains("RFC 1982"));
 }

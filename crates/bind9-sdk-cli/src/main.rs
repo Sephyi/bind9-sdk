@@ -33,10 +33,13 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to create tokio runtime");
+    let rt = match build_runtime() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("error: failed to create Tokio runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     match rt.block_on(run(cli)) {
         Ok(()) => ExitCode::SUCCESS,
@@ -72,6 +75,23 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Record(record_cmd) => commands::record::execute(record_cmd, format, config).await,
         Command::Dnssec(dnssec_cmd) => commands::dnssec::execute(dnssec_cmd, format, config).await,
         Command::Stats => commands::stats::execute(format, config).await,
-        Command::Auth(_) | Command::Completions { .. } => unreachable!(),
+        Command::Auth(_) | Command::Completions { .. } => Ok(()),
+    }
+}
+
+fn build_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_construction_is_fallible_and_succeeds() {
+        let runtime = build_runtime().unwrap();
+        drop(runtime);
     }
 }

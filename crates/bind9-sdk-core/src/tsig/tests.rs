@@ -226,7 +226,7 @@ fn sign_produces_correct_length_sha256() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let mac = key.sign(b"test message");
+    let mac = key.sign(b"test message").expect("valid HMAC key must sign");
     assert_eq!(mac.len(), 32, "HMAC-SHA256 must produce 32-byte MAC");
 }
 
@@ -238,7 +238,7 @@ fn sign_produces_correct_length_sha512() {
         alloc::vec![0xBB; 64],
     )
     .unwrap();
-    let mac = key.sign(b"test message");
+    let mac = key.sign(b"test message").unwrap();
     assert_eq!(mac.len(), 64, "HMAC-SHA512 must produce 64-byte MAC");
 }
 
@@ -251,7 +251,7 @@ fn sign_produces_correct_length_sha1() {
         alloc::vec![0xCC; 20],
     )
     .unwrap();
-    let mac = key.sign(b"test message");
+    let mac = key.sign(b"test message").unwrap();
     assert_eq!(mac.len(), 20, "HMAC-SHA1 must produce 20-byte MAC");
 }
 
@@ -264,7 +264,7 @@ fn verify_valid_signature() {
     )
     .unwrap();
     let message = b"authenticate this message";
-    let mac = key.sign(message);
+    let mac = key.sign(message).unwrap();
     assert!(key.verify(message, &mac).is_ok());
 }
 
@@ -289,7 +289,7 @@ fn verify_wrong_message_rejected() {
         alloc::vec![0x42; 32],
     )
     .unwrap();
-    let mac = key.sign(b"original message");
+    let mac = key.sign(b"original message").unwrap();
     assert!(key.verify(b"tampered message", &mac).is_err());
 }
 
@@ -301,7 +301,7 @@ fn verify_truncated_mac_rejected() {
         alloc::vec![0x42; 32],
     )
     .unwrap();
-    let mac = key.sign(b"some message");
+    let mac = key.sign(b"some message").unwrap();
     let truncated = &mac[..16];
     assert!(key.verify(b"some message", truncated).is_err());
 }
@@ -314,8 +314,8 @@ fn sign_deterministic_same_key_same_message() {
         alloc::vec![0x01; 32],
     )
     .unwrap();
-    let mac1 = key.sign(b"deterministic");
-    let mac2 = key.sign(b"deterministic");
+    let mac1 = key.sign(b"deterministic").unwrap();
+    let mac2 = key.sign(b"deterministic").unwrap();
     assert_eq!(mac1, mac2, "Same key + same message must produce same MAC");
 }
 
@@ -333,8 +333,8 @@ fn sign_different_keys_different_macs() {
         alloc::vec![0x02; 32],
     )
     .unwrap();
-    let mac1 = key1.sign(b"same message");
-    let mac2 = key2.sign(b"same message");
+    let mac1 = key1.sign(b"same message").unwrap();
+    let mac2 = key2.sign(b"same message").unwrap();
     assert_ne!(mac1, mac2);
 }
 
@@ -347,7 +347,7 @@ fn sign_rfc_test_vector_sha256() {
         alloc::vec![0x0b; 20],
     )
     .unwrap();
-    let mac = key.sign(b"Hi There");
+    let mac = key.sign(b"Hi There").unwrap();
     let expected = [
         0xb0, 0x34, 0x4c, 0x61, 0xd8, 0xdb, 0x38, 0x53, 0x5c, 0xa8, 0xaf, 0xce, 0xaf, 0x0b, 0xf1,
         0x2b, 0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7, 0x26, 0xe9, 0x37, 0x6c, 0x2e, 0x32,
@@ -369,7 +369,7 @@ fn verify_roundtrip_sha512() {
     )
     .unwrap();
     let message = b"sha512 roundtrip test";
-    let mac = key.sign(message);
+    let mac = key.sign(message).unwrap();
     assert_eq!(mac.len(), 64);
     assert!(key.verify(message, &mac).is_ok());
 }
@@ -396,7 +396,7 @@ fn verify_roundtrip_sha1() {
     )
     .unwrap();
     let message = b"sha1 roundtrip test";
-    let mac = key.sign(message);
+    let mac = key.sign(message).unwrap();
     assert_eq!(mac.len(), 20);
     assert!(key.verify(message, &mac).is_ok());
 }
@@ -423,7 +423,7 @@ fn sign_rfc_test_vector_sha512() {
         alloc::vec![0x0b; 20],
     )
     .unwrap();
-    let mac = key.sign(b"Hi There");
+    let mac = key.sign(b"Hi There").unwrap();
     let expected = [
         0x87, 0xaa, 0x7c, 0xde, 0xa5, 0xef, 0x61, 0x9d, 0x4f, 0xf0, 0xb4, 0x24, 0x1a, 0x1d, 0x6c,
         0xb0, 0x23, 0x79, 0xf4, 0xe2, 0xce, 0x4e, 0xc2, 0x78, 0x7a, 0xd0, 0xb3, 0x05, 0x45, 0xe1,
@@ -448,7 +448,7 @@ fn sign_rfc_test_vector_sha1() {
         alloc::vec![0x0b; 20],
     )
     .unwrap();
-    let mac = key.sign(b"Hi There");
+    let mac = key.sign(b"Hi There").unwrap();
     let expected = [
         0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37, 0x8c,
         0x8e, 0xf1, 0x46, 0xbe, 0x00,
@@ -473,7 +473,8 @@ fn tsig_record_new_produces_valid_wire() {
     let message = alloc::vec![0x00; 12];
     let timestamp = 1710000000u64;
 
-    let record = TsigRecord::new(&key, &message, timestamp, None);
+    let record = TsigRecord::new(&key, &message, timestamp, None)
+        .expect("valid TSIG inputs must construct a record");
 
     assert!(!record.wire_bytes.is_empty());
     assert!(record.key_name == DomainName::new("test-key.").unwrap());
@@ -481,6 +482,37 @@ fn tsig_record_new_produces_valid_wire() {
     assert_eq!(record.mac.len(), 32);
     assert_eq!(record.time_signed, timestamp);
     assert_eq!(record.fudge, 300);
+}
+
+#[test]
+fn tsig_record_rejects_timestamp_outside_48_bit_wire_range() {
+    let key = TsigKey::new(
+        DomainName::new("test-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+
+    let error = TsigRecord::new(&key, &[0; 12], 1u64 << 48, None)
+        .expect_err("TSIG timestamp must fit its 48-bit wire field");
+
+    assert!(alloc::format!("{error}").contains("48-bit"));
+}
+
+#[test]
+fn tsig_record_rejects_oversized_prior_mac() {
+    let key = TsigKey::new(
+        DomainName::new("test-key.").unwrap(),
+        TsigAlgorithm::HmacSha256,
+        alloc::vec![0xAA; 32],
+    )
+    .unwrap();
+    let prior_mac = alloc::vec![0; usize::from(u16::MAX) + 1];
+
+    let error = TsigRecord::new(&key, &[0; 12], 1_710_000_000, Some(&prior_mac))
+        .expect_err("prior MAC length must fit its 16-bit wire field");
+
+    assert!(alloc::format!("{error}").contains("prior MAC"));
 }
 
 #[test]
@@ -493,8 +525,8 @@ fn tsig_record_different_timestamps_different_macs() {
     .unwrap();
     let message = alloc::vec![0x00; 12];
 
-    let r1 = TsigRecord::new(&key, &message, 1000, None);
-    let r2 = TsigRecord::new(&key, &message, 2000, None);
+    let r1 = TsigRecord::new(&key, &message, 1000, None).unwrap();
+    let r2 = TsigRecord::new(&key, &message, 2000, None).unwrap();
 
     assert_ne!(
         r1.mac, r2.mac,
@@ -514,7 +546,7 @@ fn tsig_record_wire_bytes_contains_all_fields() {
         0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
 
-    let record = TsigRecord::new(&key, &message, 1710000000, None);
+    let record = TsigRecord::new(&key, &message, 1710000000, None).unwrap();
 
     let wire = &record.wire_bytes;
     assert!(
@@ -545,8 +577,8 @@ fn tsig_record_canonical_key_name_produces_same_mac() {
     let message = alloc::vec![0x00; 12];
     let ts = 1710000000u64;
 
-    let r1 = TsigRecord::new(&key_upper, &message, ts, None);
-    let r2 = TsigRecord::new(&key_lower, &message, ts, None);
+    let r1 = TsigRecord::new(&key_upper, &message, ts, None).unwrap();
+    let r2 = TsigRecord::new(&key_lower, &message, ts, None).unwrap();
 
     assert_eq!(
         r1.mac, r2.mac,
@@ -562,7 +594,7 @@ fn tsig_record_debug_redacts_mac() {
         alloc::vec![0xEE; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let debug = format!("{:?}", record);
     assert!(
         debug.contains("[REDACTED]"),
@@ -585,9 +617,9 @@ fn tsig_record_with_request_mac_differs() {
     let msg = alloc::vec![0u8; 12];
     let ts = 1710000000u64;
 
-    let r1 = TsigRecord::new(&key, &msg, ts, None);
+    let r1 = TsigRecord::new(&key, &msg, ts, None).unwrap();
     let prior_mac = alloc::vec![0xCC; 32];
-    let r2 = TsigRecord::new(&key, &msg, ts, Some(&prior_mac));
+    let r2 = TsigRecord::new(&key, &msg, ts, Some(&prior_mac)).unwrap();
 
     assert_ne!(
         &*r1.mac, &*r2.mac,
@@ -622,7 +654,7 @@ fn tsig_record_wire_roundtrip() {
         0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
     let ts = 1710000000u64;
-    let original = TsigRecord::new(&key, &message, ts, None);
+    let original = TsigRecord::new(&key, &message, ts, None).unwrap();
 
     let parsed = TsigRecord::parse_from_wire(&original.wire_bytes).unwrap();
     assert_eq!(parsed.key_name, original.key_name);
@@ -647,7 +679,7 @@ fn parse_from_wire_rejects_wrong_type() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let mut bad_wire = record.wire_bytes.to_vec();
     // Corrupt the TYPE field (right after the owner name)
     // Owner name for "k." is [1, b'k', 0] = 3 bytes
@@ -665,7 +697,7 @@ fn parse_from_wire_rejects_fields_beyond_declared_rdata() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let mut bad_wire = record.wire_bytes.to_vec();
     let rdlength_offset = tsig_rdlength_offset(&bad_wire);
     let rdlength = u16::from_be_bytes([bad_wire[rdlength_offset], bad_wire[rdlength_offset + 1]]);
@@ -682,7 +714,7 @@ fn parse_from_wire_rejects_unconsumed_declared_rdata() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let mut bad_wire = record.wire_bytes.to_vec();
     let rdlength_offset = tsig_rdlength_offset(&bad_wire);
     let rdlength = u16::from_be_bytes([bad_wire[rdlength_offset], bad_wire[rdlength_offset + 1]]);
@@ -700,7 +732,7 @@ fn parse_from_wire_rejects_bytes_after_complete_record() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let mut bad_wire = record.wire_bytes.to_vec();
     bad_wire.push(0);
 
@@ -717,7 +749,7 @@ fn tsig_verify_time_rejects_expired_fudge() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let now = 1710000000 + 600; // 10 minutes later, outside 300s fudge
     assert!(record.verify_time(now).is_err());
 }
@@ -730,7 +762,7 @@ fn tsig_verify_time_accepts_within_fudge() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let now = 1710000000 + 100; // within 300s fudge
     assert!(record.verify_time(now).is_ok());
 }
@@ -743,7 +775,7 @@ fn tsig_verify_time_accepts_exact_boundary() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let record = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     // Exactly at fudge boundary
     assert!(record.verify_time(1710000000 + 300).is_ok());
     assert!(record.verify_time(1710000000 - 300).is_ok());
@@ -765,13 +797,13 @@ fn tsig_verify_response_valid() {
         0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
 
     // Simulate a response signed with request_mac chaining
     let response_msg = alloc::vec![
         0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
-    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
 
     let result = TsigRecord::verify_response(
         &key,
@@ -793,14 +825,14 @@ fn tsig_verify_response_wrong_mac_rejected() {
     .unwrap();
     let request_msg = alloc::vec![0u8; 12];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
 
     let response_msg = alloc::vec![
         0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
     // Sign with wrong request_mac
     let wrong_mac = alloc::vec![0xFF; 32];
-    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&wrong_mac));
+    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&wrong_mac)).unwrap();
 
     let result = TsigRecord::verify_response(
         &key,
@@ -822,10 +854,10 @@ fn tsig_verify_response_expired_fudge_rejected() {
     .unwrap();
     let request_msg = alloc::vec![0u8; 12];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
 
     let response_msg = alloc::vec![0u8; 12];
-    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
 
     // now is far outside fudge window
     let result = TsigRecord::verify_response(
@@ -849,8 +881,9 @@ fn tsig_verify_response_rejects_mismatched_key_name() {
     let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
-    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
+    let mut response_tsig =
+        TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
     response_tsig.key_name = DomainName::new("other-key.").unwrap();
 
     assert!(
@@ -870,8 +903,9 @@ fn tsig_verify_response_rejects_mismatched_algorithm() {
     let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
-    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
+    let mut response_tsig =
+        TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
     response_tsig.algorithm = TsigAlgorithm::HmacSha512;
 
     assert!(
@@ -891,8 +925,9 @@ fn tsig_verify_response_rejects_original_id_mismatch() {
     let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let response_msg = alloc::vec![0x00, 0x01, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
-    let mut response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
+    let mut response_tsig =
+        TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
     response_tsig.original_id = 2;
 
     assert!(
@@ -912,8 +947,8 @@ fn tsig_verify_response_rejects_truncated_dns_header() {
     let request_msg = alloc::vec![0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let response_msg = alloc::vec![0x00];
     let ts = 1710000000u64;
-    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None);
-    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac));
+    let request_tsig = TsigRecord::new(&key, &request_msg, ts, None).unwrap();
+    let response_tsig = TsigRecord::new(&key, &response_msg, ts, Some(&request_tsig.mac)).unwrap();
 
     assert!(
         TsigRecord::verify_response(&key, &response_msg, &response_tsig, &request_tsig.mac, ts,)
@@ -933,7 +968,7 @@ fn parse_from_wire_extracts_error_and_other_fields() {
     .unwrap();
     let msg = alloc::vec![0u8; 12];
     let timestamp = 1710000000u64;
-    let tsig = TsigRecord::new(&key, &msg, timestamp, None);
+    let tsig = TsigRecord::new(&key, &msg, timestamp, None).unwrap();
     let parsed = TsigRecord::parse_from_wire(&tsig.wire_bytes).unwrap();
     assert_eq!(parsed.error, 0);
     assert!(parsed.other_data.is_empty());
@@ -947,7 +982,7 @@ fn parse_from_wire_rejects_nonzero_ttl() {
         alloc::vec![0xAA; 32],
     )
     .unwrap();
-    let tsig = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None);
+    let tsig = TsigRecord::new(&key, &alloc::vec![0u8; 12], 1710000000, None).unwrap();
     let mut bad_wire = tsig.wire_bytes.to_vec();
     // Find TTL field: skip owner name, then TYPE(2) + CLASS(2)
     let mut pos = 0;
@@ -984,7 +1019,7 @@ mod proptests {
                 TsigAlgorithm::HmacSha256,
                 key_bytes,
             ).unwrap();
-            let mac = key.sign(&message);
+            let mac = key.sign(&message).unwrap();
             prop_assert!(key.verify(&message, &mac).is_ok());
         }
 
@@ -1000,7 +1035,7 @@ mod proptests {
                 TsigAlgorithm::HmacSha256,
                 key_bytes,
             ).unwrap();
-            let mac = key.sign(&msg1);
+            let mac = key.sign(&msg1).unwrap();
             prop_assert!(key.verify(&msg2, &mac).is_err());
         }
 
@@ -1022,7 +1057,7 @@ mod proptests {
                 TsigAlgorithm::HmacSha256,
                 key_b_bytes,
             ).unwrap();
-            let mac = key_a.sign(&message);
+            let mac = key_a.sign(&message).unwrap();
             prop_assert!(
                 key_b.verify(&message, &mac).is_err(),
                 "different keys should not produce the same MAC"
@@ -1040,7 +1075,7 @@ mod proptests {
                 TsigAlgorithm::HmacSha256,
                 key_bytes,
             ).unwrap();
-            let mac = key.sign(&message);
+            let mac = key.sign(&message).unwrap();
             prop_assert_eq!(
                 mac.len(),
                 TsigAlgorithm::HmacSha256.mac_length(),

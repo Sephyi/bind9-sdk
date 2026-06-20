@@ -40,6 +40,17 @@ pub enum CoreError {
         reason: String,
     },
 
+    /// `named.conf` parsing failed at a specific source path and line.
+    #[error("named.conf parse error in `{path}` at line {line}: {reason}")]
+    NamedConfParse {
+        /// Source path supplied by the caller.
+        path: String,
+        /// 1-based line number where parsing failed.
+        line: u32,
+        /// Human-readable description of the failure.
+        reason: String,
+    },
+
     /// DNS wire format encoding or decoding failed.
     #[error("wire format error: {0}")]
     WireFormat(String),
@@ -102,6 +113,7 @@ mod tests {
             CoreError::InvalidLabel(_) => {}
             CoreError::InvalidRecord(_) => {}
             CoreError::ZoneParse { .. } => {}
+            CoreError::NamedConfParse { .. } => {}
             CoreError::WireFormat(_) => {}
             CoreError::Tsig(_) => {}
             _ => {} // required by #[non_exhaustive]

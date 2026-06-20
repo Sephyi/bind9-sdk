@@ -761,7 +761,8 @@ impl RndcResponse {
     /// BIND9 rndc responses typically start with "rndc: " for errors,
     /// or contain the result text directly for successful commands.
     ///
-    /// TODO: Verify response format against BIND9 source / wire captures.
+    /// The success/error forms are covered by deterministic tests and the live
+    /// BIND 9.20 fixture; unrecognized success text is preserved verbatim.
     pub(crate) fn from_text(text: &str) -> Self {
         let is_error = text.starts_with("rndc: ")
             || text.starts_with("unknown command")
@@ -801,8 +802,9 @@ impl RndcResponse {
 /// server is up and running
 /// ```
 ///
-/// TODO: Verify format against BIND9 9.20 output. The format may vary
-/// slightly between BIND9 minor versions.
+/// Fields are parsed defensively and the raw text is retained so minor-version
+/// additions do not discard information. Current BIND 9.20 output is covered
+/// by the live integration suite.
 pub(crate) fn parse_server_status(text: &str) -> ServerStatus {
     let version = extract_field(text, "version:").unwrap_or_else(|| "unknown".to_string());
 

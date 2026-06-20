@@ -40,15 +40,17 @@ pub use bind9_sdk_net as net;
 
 // Curated top-level re-exports (covered by semver)
 pub use bind9_sdk_core::{
-    CoreError, CounterSet, DiffEntry, DomainName, DynamicUpdater, Label, MemoryContextStats,
-    MemoryStats, NamedControl, NamedCounter, Rcode, RecordClass, RecordData, RecordType,
-    ResourceRecord, Serial, SerialStrategy, ServerStats, ServerStatsRates, StatsClient,
-    TrafficHistogram, TransferRecord, TsigAlgorithm, TsigKey, Ttl, TxtString, UpdateBuilder,
-    UpdateMessage, ViewStats, Zone, ZoneDiff, ZoneFile, ZoneManager, ZoneStats,
+    Acl, AclElement, ControlEndpoint, CoreError, CounterSet, DiffEntry, DomainName, DynamicUpdater,
+    Label, ListenAddress, MemoryContextStats, MemoryStats, NamedAcl, NamedConf, NamedControl,
+    NamedCounter, NamedOptions, NamedZone, NamedZoneType, Rcode, RecordClass, RecordData,
+    RecordType, ResourceRecord, Serial, SerialStrategy, ServerStats, ServerStatsRates,
+    StatisticsChannel, StatsClient, TrafficHistogram, TransferRecord, TsigAlgorithm, TsigKey, Ttl,
+    TxtString, UpdateBuilder, UpdateMessage, ViewStats, Zone, ZoneDiff, ZoneFile, ZoneManager,
+    ZoneStats,
 };
 
 #[cfg(feature = "net")]
 pub use bind9_sdk_net::{
-    Bind9Client, ClientConfig, NetError, NsUpdateSender, RndcLimiter, RndcPool, StatsHttpClient,
-    TlsConfig, TransferClient,
+    Bind9Client, ClientConfig, FrozenZoneGuard, NetError, NsUpdateSender, RndcLimiter, RndcPool,
+    RndcTransportPolicy, StatsHttpClient, TlsConfig, TransferClient,
 };

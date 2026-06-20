@@ -13,7 +13,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 use bind9_sdk::DomainName;
 use bind9_sdk::core::tsig::{TsigAlgorithm, TsigKey};
-use bind9_sdk::net::ClientConfig;
+use bind9_sdk::net::{ClientConfig, RndcTransportPolicy};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
 
@@ -111,6 +111,17 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
         .ok_or_else(|| CliError::Config(format!("no addresses found for '{host}:{port}'")))?;
 
     let mut config = ClientConfig::new(addr, tsig_key);
+    let protected_rndc = cli.protected_rndc
+        || file_config
+            .as_ref()
+            .is_some_and(|config| config.server.protected_rndc);
+    if protected_rndc {
+        warn!(
+            "protected-network rndc enabled; ensure the complete route is encrypted and \
+             peer-authenticated (for example, by WireGuard)"
+        );
+        config.rndc_transport = RndcTransportPolicy::ProtectedNetwork;
+    }
 
     // Set optional fields — CLI --dns-port takes precedence over config file
     let dns_port = cli

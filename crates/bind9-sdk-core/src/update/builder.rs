@@ -17,19 +17,28 @@ impl UpdateBuilder<Unsigned> {
     /// Create a new update builder for the given zone.
     ///
     /// When the `std` feature is enabled, the message ID is randomly generated.
-    /// In `no_std`/WASM, the ID defaults to 0; use [`with_id`](Self::with_id) instead.
+    /// Randomness failures are returned rather than silently using a predictable ID.
     #[cfg(feature = "std")]
-    pub fn new(zone: DomainName, class: RecordClass) -> Self {
+    pub fn new(zone: DomainName, class: RecordClass) -> Result<Self, crate::error::CoreError> {
         let mut id_bytes = [0u8; 2];
-        let _ = getrandom::fill(&mut id_bytes);
+        getrandom::fill(&mut id_bytes).map_err(|error| {
+            crate::error::CoreError::InvalidRecord(alloc::format!(
+                "failed to generate a random DNS update ID: {error}"
+            ))
+        })?;
         let id = u16::from_be_bytes(id_bytes);
-        Self::with_id(id, zone, class)
+        Ok(Self::with_id(id, zone, class))
     }
 
     /// Create a new update builder for the given zone (`no_std` version).
+    ///
+    /// A secure random source is not available in this configuration. Use
+    /// [`with_id`](Self::with_id) with an ID supplied by the embedding runtime.
     #[cfg(not(feature = "std"))]
-    pub fn new(zone: DomainName, class: RecordClass) -> Self {
-        Self::with_id(0, zone, class)
+    pub fn new(_zone: DomainName, _class: RecordClass) -> Result<Self, crate::error::CoreError> {
+        Err(crate::error::CoreError::InvalidRecord(
+            "UpdateBuilder::new requires a random source; use with_id in no_std builds".into(),
+        ))
     }
 
     /// Create a new update builder with an explicit message ID.
@@ -192,7 +201,7 @@ impl UpdateBuilder<Unsigned> {
             &self.updates,
         )?;
 
-        let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp, None);
+        let tsig = crate::tsig::TsigRecord::new(key, unsigned.as_bytes(), timestamp, None)?;
 
         let pre_tsig_len = unsigned.wire_bytes.len();
         let request_mac = tsig.mac.to_vec();

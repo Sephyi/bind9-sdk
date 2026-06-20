@@ -33,6 +33,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dns_port: Option<u16>,
 
+    /// Permit plaintext rndc over a separately protected network such as WireGuard.
+    #[arg(long, global = true)]
+    pub protected_rndc: bool,
+
     /// TSIG key name for rndc authentication.
     #[arg(long, global = true)]
     pub key_name: Option<String>,
@@ -87,4 +91,15 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protected_rndc_flag_is_explicitly_selectable() {
+        let cli = Cli::try_parse_from(["bind9", "--protected-rndc", "stats"]).unwrap();
+        assert!(cli.protected_rndc);
+    }
 }

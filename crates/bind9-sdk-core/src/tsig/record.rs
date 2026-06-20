@@ -70,7 +70,28 @@ impl TsigRecord {
     /// For response or multi-message TSIG (RFC 8945 §4.5.3), pass the prior
     /// message's MAC as `request_mac`. This prepends the prior MAC
     /// (length-prefixed) to the MAC input for chaining.
-    pub fn new(key: &TsigKey, message: &[u8], timestamp: u64, request_mac: Option<&[u8]>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::Tsig`] when a wire field cannot represent the
+    /// supplied value or HMAC construction fails.
+    pub fn new(
+        key: &TsigKey,
+        message: &[u8],
+        timestamp: u64,
+        request_mac: Option<&[u8]>,
+    ) -> Result<Self, CoreError> {
+        if timestamp >= (1u64 << 48) {
+            return Err(CoreError::Tsig(
+                "TSIG timestamp exceeds the 48-bit wire field".into(),
+            ));
+        }
+        if request_mac.is_some_and(|mac| mac.len() > usize::from(u16::MAX)) {
+            return Err(CoreError::Tsig(
+                "TSIG prior MAC exceeds the 16-bit length field".into(),
+            ));
+        }
+
         let fudge: u16 = 300;
         let error: u16 = 0;
         let other_len: u16 = 0;
@@ -96,7 +117,11 @@ impl TsigRecord {
 
         // Algorithm name in canonical wire format
         let alg_name = key.algorithm.dns_name();
-        let alg_domain = DomainName::new(alg_name).expect("algorithm DNS name is always valid");
+        let alg_domain = DomainName::new(alg_name).map_err(|error| {
+            CoreError::Tsig(alloc::format!(
+                "invalid built-in TSIG algorithm name {alg_name}: {error}"
+            ))
+        })?;
         alg_domain.write_wire_canonical(&mut tsig_vars);
 
         // Time signed: 48-bit (6 bytes, big-endian)
@@ -122,7 +147,7 @@ impl TsigRecord {
         mac_input.extend_from_slice(message);
         mac_input.extend_from_slice(&tsig_vars);
 
-        let mac = key.sign(&mac_input);
+        let mac = key.sign(&mac_input)?;
 
         // Build the complete TSIG record in wire format
         // Names in canonical form per RFC 8945 §4.2
@@ -173,7 +198,7 @@ impl TsigRecord {
         let rdata_len = (wire.len() - rdata_start - 2) as u16;
         wire[rdata_start..rdata_start + 2].copy_from_slice(&rdata_len.to_be_bytes());
 
-        TsigRecord {
+        Ok(TsigRecord {
             key_name: key.name.clone(),
             algorithm: key.algorithm,
             time_signed: timestamp,
@@ -183,7 +208,7 @@ impl TsigRecord {
             error: 0,
             other_data: Vec::new(),
             wire_bytes: Zeroizing::new(wire),
-        }
+        })
     }
 
     /// Parse a TSIG pseudo-record from wire format bytes.
@@ -413,7 +438,11 @@ impl TsigRecord {
 
         // Algorithm name in canonical wire format
         let alg_name = key.algorithm.dns_name();
-        let alg_domain = DomainName::new(alg_name).expect("algorithm DNS name is always valid");
+        let alg_domain = DomainName::new(alg_name).map_err(|error| {
+            CoreError::Tsig(alloc::format!(
+                "invalid built-in TSIG algorithm name {alg_name}: {error}"
+            ))
+        })?;
         alg_domain.write_wire_canonical(&mut tsig_vars);
 
         // Time signed: 48-bit

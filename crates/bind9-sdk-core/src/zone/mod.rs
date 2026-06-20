@@ -42,9 +42,9 @@ pub struct Zone {
 impl Zone {
     /// Extract the SOA serial number, if the zone contains a SOA record.
     pub fn serial(&self) -> Option<Serial> {
-        self.soa().map(|rr| match &rr.rdata {
-            crate::rdata::RecordData::Soa { serial, .. } => *serial,
-            _ => unreachable!("soa() only returns SOA records"),
+        self.records.iter().find_map(|record| match &record.rdata {
+            crate::rdata::RecordData::Soa { serial, .. } => Some(*serial),
+            _ => None,
         })
     }
 

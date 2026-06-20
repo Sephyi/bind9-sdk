@@ -66,8 +66,15 @@ run = "cargo fmt --all --check"
 # Lint + Audit
 
 [tasks.clippy]
-description = "Run clippy lints on all targets"
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+description = "Run clippy lints on all targets and reject production panic paths"
+run = """
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --lib --bins -- \
+  -D clippy::unwrap_used \
+  -D clippy::expect_used \
+  -D clippy::panic \
+  -D clippy::unreachable
+"""
 
 [tasks.audit]
 description = "Run security audit on dependencies"

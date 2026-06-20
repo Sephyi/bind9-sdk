@@ -119,6 +119,7 @@ mod tests {
         ClientConfig {
             rndc_addr: "127.0.0.1:953".parse().unwrap(),
             rndc_key: key,
+            rndc_transport: crate::config::RndcTransportPolicy::LoopbackOnly,
             stats_url: None,
             dns_addr: None,
             tls: None,

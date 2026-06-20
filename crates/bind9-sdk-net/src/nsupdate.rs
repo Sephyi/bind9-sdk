@@ -38,8 +38,27 @@ fn parse_dns_response(response: &[u8]) -> Result<UpdateResult, NetError> {
     }
 
     let id = u16::from_be_bytes([response[0], response[1]]);
+    let flags1 = response[2];
+    let flags2 = response[3];
+    if flags1 & 0x80 == 0 {
+        return Err(NetError::Protocol(
+            "DNS update packet is not a response (QR=0)".into(),
+        ));
+    }
+    let opcode = (flags1 >> 3) & 0x0F;
+    if opcode != 5 {
+        return Err(NetError::Protocol(format!(
+            "DNS update response has opcode {opcode}, expected UPDATE opcode 5"
+        )));
+    }
+    if flags2 & 0xF0 != 0 {
+        return Err(NetError::Protocol(format!(
+            "DNS update response has non-zero reserved bits: 0x{:02x}",
+            flags2 & 0xF0
+        )));
+    }
     // RCODE is the low 4 bits of byte 3
-    let rcode_value = u16::from(response[3] & 0x0F);
+    let rcode_value = u16::from(flags2 & 0x0F);
     let rcode = Rcode::from_value(rcode_value);
 
     Ok(UpdateResult { rcode, id })
@@ -203,6 +222,11 @@ impl NsUpdateSender {
         update: &UpdateMessage,
         tsig_key: Option<&TsigKey>,
     ) -> Result<UpdateResult, NetError> {
+        if update.is_signed() && tsig_key.is_none() {
+            return Err(NetError::Protocol(
+                "signed DNS update requires its TSIG key for response verification".into(),
+            ));
+        }
         let wire = update.as_bytes();
 
         // Attempt UDP first
@@ -256,10 +280,7 @@ impl NsUpdateSender {
                     }
                 }
 
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let now = current_unix_time()?;
 
                 TsigRecord::verify_response(key, &msg_sans_tsig, &response_tsig, request_mac, now)
                     .map_err(|e| {
@@ -283,10 +304,10 @@ impl NsUpdateSender {
     /// Send update message bytes over UDP and return the raw response.
     async fn send_udp(&self, wire: &[u8]) -> Result<Vec<u8>, NetError> {
         // Bind to the matching address family (IPv4 vs IPv6)
-        let bind_addr: SocketAddr = if self.server.is_ipv4() {
-            "0.0.0.0:0".parse().unwrap()
+        let bind_addr = if self.server.is_ipv4() {
+            SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
         } else {
-            "[::]:0".parse().unwrap()
+            SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0)
         };
         let socket = tokio::net::UdpSocket::bind(bind_addr)
             .await
@@ -365,6 +386,13 @@ impl NsUpdateSender {
     }
 }
 
+fn current_unix_time() -> Result<u64, NetError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| NetError::Protocol(format!("system clock is before Unix epoch: {error}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,7 +423,7 @@ mod tests {
     fn parse_response_extracts_noerror_rcode() {
         let response = [
             0x12, 0x34, // ID
-            0x85, 0x00, // Flags: QR=1, AA=1, TC=0, RD=0, RA=0, RCODE=0 (NOERROR)
+            0xA8, 0x00, // Flags: QR=1, OPCODE=UPDATE, RCODE=0 (NOERROR)
             0x00, 0x00, // QDCOUNT
             0x00, 0x00, // ANCOUNT
             0x00, 0x00, // NSCOUNT
@@ -410,7 +438,7 @@ mod tests {
     fn parse_response_extracts_refused_rcode() {
         let response = [
             0x00, 0x01, // ID
-            0x80, 0x05, // Flags: QR=1, RCODE=5 (REFUSED)
+            0xA8, 0x05, // Flags: QR=1, OPCODE=UPDATE, RCODE=5 (REFUSED)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let result = parse_dns_response(&response).unwrap();
@@ -422,7 +450,7 @@ mod tests {
     fn parse_response_extracts_nxdomain() {
         let response = [
             0xAB, 0xCD, // ID
-            0x80, 0x03, // Flags: QR=1, RCODE=3 (NXDOMAIN)
+            0xA8, 0x03, // Flags: QR=1, OPCODE=UPDATE, RCODE=3 (NXDOMAIN)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let result = parse_dns_response(&response).unwrap();
@@ -462,7 +490,7 @@ mod tests {
     fn parse_response_notauth_rcode() {
         let response = [
             0x00, 0x42, // ID
-            0x80, 0x09, // Flags: QR=1, RCODE=9 (NOTAUTH)
+            0xA8, 0x09, // Flags: QR=1, OPCODE=UPDATE, RCODE=9 (NOTAUTH)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let result = parse_dns_response(&response).unwrap();
@@ -474,7 +502,7 @@ mod tests {
     fn parse_response_yxdomain_rcode() {
         let response = [
             0xFF, 0xFF, // ID
-            0x80, 0x06, // Flags: QR=1, RCODE=6 (YXDOMAIN)
+            0xA8, 0x06, // Flags: QR=1, OPCODE=UPDATE, RCODE=6 (YXDOMAIN)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let result = parse_dns_response(&response).unwrap();
@@ -483,21 +511,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_preserves_all_rcode_bits() {
+    fn parse_response_rejects_nonzero_reserved_bits() {
         let response = [
             0x00, 0x01, // ID
-            0x80, 0xF5, // Flags: QR=1, Z bits set, RCODE=5 (REFUSED)
+            0xA8, 0xF5, // Flags: QR=1, OPCODE=UPDATE, Z bits set, RCODE=5
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        let result = parse_dns_response(&response).unwrap();
-        assert_eq!(result.rcode, Rcode::Refused);
+        let error = parse_dns_response(&response).unwrap_err();
+        assert!(error.to_string().contains("reserved"));
     }
 
     #[test]
     fn parse_response_with_extra_data_succeeds() {
         let mut response = vec![
             0x00, 0x01, // ID
-            0x85, 0x00, // Flags: QR=1, AA=1, RCODE=0
+            0xA8, 0x00, // Flags: QR=1, OPCODE=UPDATE, RCODE=0
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         response.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // extra data
@@ -509,9 +537,27 @@ mod tests {
     #[test]
     fn parse_response_exactly_12_bytes() {
         let response = [
-            0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         assert!(parse_dns_response(&response).is_ok());
+    }
+
+    #[test]
+    fn parse_response_rejects_query_packet() {
+        let response = [
+            0x00, 0x01, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let error = parse_dns_response(&response).unwrap_err();
+        assert!(error.to_string().contains("response"));
+    }
+
+    #[test]
+    fn parse_response_rejects_wrong_opcode() {
+        let response = [
+            0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let error = parse_dns_response(&response).unwrap_err();
+        assert!(error.to_string().contains("UPDATE opcode"));
     }
 
     #[test]
@@ -527,7 +573,7 @@ mod tests {
         // TC=1 along with AA=1, RD=1
         let response = [
             0x00, 0x01, // ID
-            0x87, 0x00, // Flags: QR=1, AA=1, TC=1, RD=1
+            0xAF, 0x00, // Flags: QR=1, OPCODE=UPDATE, AA=1, TC=1, RD=1
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         assert!(is_truncated(&response));
@@ -538,6 +584,34 @@ mod tests {
     #[test]
     fn is_truncated_empty_buffer() {
         assert!(!is_truncated(&[]));
+    }
+
+    #[tokio::test]
+    async fn signed_update_without_verification_key_fails_before_network_io() {
+        use bind9_sdk_core::domain::DomainName;
+        use bind9_sdk_core::record::RecordClass;
+        use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
+        use bind9_sdk_core::update::UpdateBuilder;
+
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            TsigAlgorithm::HmacSha256,
+            vec![0xAA; 32],
+        )
+        .unwrap();
+        let update = UpdateBuilder::with_id(
+            0x1234,
+            DomainName::new("example.com.").unwrap(),
+            RecordClass::IN,
+        )
+        .sign(&key, 1_710_000_000)
+        .unwrap()
+        .build();
+        let sender = NsUpdateSender::new("127.0.0.1:9".parse().unwrap());
+
+        let error = sender.send(&update, None).await.unwrap_err();
+
+        assert!(error.to_string().contains("requires its TSIG key"));
     }
 
     #[test]
@@ -688,6 +762,7 @@ mod tests {
         .unwrap();
 
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .unwrap()
             .sign(&key, 1710000000)
             .unwrap()
             .build();
@@ -705,6 +780,7 @@ mod tests {
 
         let zone = DomainName::new("example.com.").unwrap();
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .unwrap()
             .build_unsigned()
             .unwrap();
 
@@ -740,6 +816,7 @@ mod tests {
         };
 
         let msg = UpdateBuilder::new(zone, RecordClass::IN)
+            .unwrap()
             .add_record(record)
             .sign_now(&key)
             .unwrap()
@@ -768,7 +845,7 @@ mod tests {
         .expect("test key must be valid");
 
         // Add many records to force a large message that exceeds UDP 512-byte limit
-        let mut builder = UpdateBuilder::new(zone, RecordClass::IN);
+        let mut builder = UpdateBuilder::new(zone, RecordClass::IN).unwrap();
         for i in 0..50u8 {
             let host = DomainName::new(&format!("bulk-{i}.example.com.")).unwrap();
             let record = ResourceRecord {

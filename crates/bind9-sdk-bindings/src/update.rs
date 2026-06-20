@@ -32,7 +32,8 @@ impl JsUpdateBuilder {
     #[napi(constructor)]
     pub fn new(zone: String) -> napi::Result<Self> {
         let domain = DomainName::new(&zone).map_err(BindSdkError::from_core)?;
-        let builder = UpdateBuilder::new(domain, RecordClass::IN);
+        let builder =
+            UpdateBuilder::new(domain, RecordClass::IN).map_err(BindSdkError::from_core)?;
         Ok(Self {
             inner: Some(builder),
         })

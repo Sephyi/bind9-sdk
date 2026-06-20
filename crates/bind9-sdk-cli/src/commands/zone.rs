@@ -275,14 +275,20 @@ async fn execute_export(
 /// Format a `ResourceRecord` as a zone file line.
 fn format_record(rr: &bind9_sdk::ResourceRecord) -> String {
     use bind9_sdk::core::zone::ZoneFile;
+    use bind9_sdk::{DomainName, Zone};
 
     // Build a minimal zone file containing just this record to leverage
     // the existing serializer for rdata formatting.
-    let zone_str = format!("$ORIGIN .\n$TTL {}\n", rr.ttl.value());
-    let mut zf = ZoneFile::parse(&zone_str).unwrap_or_else(|_| {
-        ZoneFile::parse("$ORIGIN .\n$TTL 0\n").expect("fallback zone parse should succeed")
-    });
-    zf.zone.records.push(rr.clone());
+    let root = DomainName::root();
+    let zf = ZoneFile {
+        origin: root.clone(),
+        default_ttl: Some(rr.ttl),
+        zone: Zone {
+            name: root,
+            class: rr.class,
+            records: vec![rr.clone()],
+        },
+    };
     let serialized = zf.serialize();
     // The serialized output includes $ORIGIN and $TTL lines; extract just the record line.
     serialized

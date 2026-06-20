@@ -186,7 +186,7 @@ impl RndcConnection<Unauthenticated> {
         // Starting serial randomized for unpredictability (F-002 hardening).
         // Previously derived from system time, which was predictable.
         let now = current_unix_time()?;
-        let nonce_bytes = generate_nonce();
+        let nonce_bytes = generate_nonce()?;
         let serial = u32::from_be_bytes([
             nonce_bytes[0],
             nonce_bytes[1],
@@ -511,10 +511,10 @@ fn sign_rndc_body(
     let body = sign_msg.encode_body()?;
 
     // Compute HMAC digest
-    let digest = key.sign(&body);
+    let digest = key.sign(&body)?;
 
     // Build the 89-byte auth value: algo_byte + base64(digest) + NUL padding
-    let algo_byte = isccc_algorithm_byte(key.algorithm());
+    let algo_byte = isccc_algorithm_byte(key.algorithm())?;
     let b64 = base64_encode(&digest);
 
     let mut buf = Vec::with_capacity(ISCCC_HMAC_BUF_SIZE);
@@ -534,13 +534,15 @@ fn sign_rndc_body(
 /// - ISCCC_ALG_HMACSHA256 = 0xA3 (163)
 /// - ISCCC_ALG_HMACSHA384 = 0xA4 (164) -- not supported by this SDK
 /// - ISCCC_ALG_HMACSHA512 = 0xA5 (165)
-fn isccc_algorithm_byte(algo: TsigAlgorithm) -> u8 {
+fn isccc_algorithm_byte(algo: TsigAlgorithm) -> Result<u8, NetError> {
     #[allow(deprecated)]
     match algo {
-        TsigAlgorithm::HmacSha1 => 0xA1,
-        TsigAlgorithm::HmacSha256 => 0xA3,
-        TsigAlgorithm::HmacSha512 => 0xA5,
-        _ => unreachable!("unsupported TSIG algorithm for rndc"),
+        TsigAlgorithm::HmacSha1 => Ok(0xA1),
+        TsigAlgorithm::HmacSha256 => Ok(0xA3),
+        TsigAlgorithm::HmacSha512 => Ok(0xA5),
+        _ => Err(NetError::Protocol(format!(
+            "unsupported TSIG algorithm for rndc: {algo}"
+        ))),
     }
 }
 
@@ -548,10 +550,11 @@ fn isccc_algorithm_byte(algo: TsigAlgorithm) -> u8 {
 ///
 /// Used to randomize the initial rndc serial number, preventing
 /// predictability based on the system clock (F-002 hardening).
-fn generate_nonce() -> Vec<u8> {
-    let mut buf = vec![0u8; 16];
-    getrandom::fill(&mut buf).expect("getrandom should not fail on supported platforms");
-    buf
+fn generate_nonce() -> Result<[u8; 16], NetError> {
+    let mut buf = [0u8; 16];
+    getrandom::fill(&mut buf)
+        .map_err(|error| NetError::Protocol(format!("rndc nonce generation failed: {error}")))?;
+    Ok(buf)
 }
 
 /// Get the current Unix timestamp in seconds.
@@ -635,7 +638,7 @@ fn verify_isccc_hmac(key: &TsigKey, hmac_input: &[u8], received: &[u8]) -> Resul
         });
     }
 
-    let expected_algorithm = isccc_algorithm_byte(key.algorithm());
+    let expected_algorithm = isccc_algorithm_byte(key.algorithm())?;
     if received[0] != expected_algorithm {
         return Err(NetError::AuthFailed {
             reason: format!(
@@ -905,18 +908,24 @@ mod tests {
 
     #[test]
     fn isccc_algorithm_byte_sha256() {
-        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha256), 0xA3);
+        assert_eq!(
+            isccc_algorithm_byte(TsigAlgorithm::HmacSha256).unwrap(),
+            0xA3
+        );
     }
 
     #[test]
     fn isccc_algorithm_byte_sha512() {
-        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha512), 0xA5);
+        assert_eq!(
+            isccc_algorithm_byte(TsigAlgorithm::HmacSha512).unwrap(),
+            0xA5
+        );
     }
 
     #[test]
     #[allow(deprecated)]
     fn isccc_algorithm_byte_sha1() {
-        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha1), 0xA1);
+        assert_eq!(isccc_algorithm_byte(TsigAlgorithm::HmacSha1).unwrap(), 0xA1);
     }
 
     #[test]
@@ -1063,8 +1072,8 @@ mod tests {
 
     #[test]
     fn rndc_nonce_is_random() {
-        let nonce1 = generate_nonce();
-        let nonce2 = generate_nonce();
+        let nonce1 = generate_nonce().unwrap();
+        let nonce2 = generate_nonce().unwrap();
         assert_ne!(nonce1, nonce2, "nonces should not be identical");
         assert_eq!(nonce1.len(), 16, "nonce should be 16 bytes");
     }
@@ -1122,7 +1131,7 @@ mod tests {
         )
         .unwrap();
         let mut received = vec![0; ISCCC_HMAC_BUF_SIZE];
-        received[0] = isccc_algorithm_byte(key.algorithm());
+        received[0] = isccc_algorithm_byte(key.algorithm()).unwrap();
         received[1..5].copy_from_slice(b"!!!!");
 
         let err = verify_isccc_hmac(&key, b"input", &received).unwrap_err();
@@ -1140,10 +1149,10 @@ mod tests {
             vec![0xA7; 32],
         )
         .unwrap();
-        let digest = key.sign(b"original");
+        let digest = key.sign(b"original").unwrap();
         let encoded = base64_encode(&digest);
         let mut received = vec![0; ISCCC_HMAC_BUF_SIZE];
-        received[0] = isccc_algorithm_byte(key.algorithm());
+        received[0] = isccc_algorithm_byte(key.algorithm()).unwrap();
         received[1..1 + encoded.len()].copy_from_slice(encoded.as_bytes());
 
         let err = verify_isccc_hmac(&key, b"tampered", &received).unwrap_err();

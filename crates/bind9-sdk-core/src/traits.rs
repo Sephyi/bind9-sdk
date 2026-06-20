@@ -367,6 +367,8 @@ pub trait NamedControl: Send + Sync {
     async fn reload_zone(&self, zone: &DomainName) -> Result<(), Self::Error>;
     /// Freeze dynamic updates for a zone so the zone file can be edited safely.
     async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, Self::Error>;
+    /// Thaw a previously frozen zone and resume dynamic updates.
+    async fn thaw(&self, zone: &DomainName) -> Result<(), Self::Error>;
 }
 
 /// RFC 2136 dynamic DNS updates.
@@ -447,11 +449,23 @@ mod tests {
                 class: RecordClass::IN,
             })
         }
+
+        async fn thaw(&self, _zone: &DomainName) -> Result<(), CoreError> {
+            Ok(())
+        }
     }
 
     #[test]
     fn mock_named_control_compiles() {
         let _mock = MockNamedControl;
+
+        async fn thaw_via_trait(mock: &MockNamedControl, zone: &DomainName) {
+            <MockNamedControl as NamedControl>::thaw(mock, zone)
+                .await
+                .unwrap();
+        }
+
+        let _ = thaw_via_trait;
     }
 
     struct MockZoneManager;

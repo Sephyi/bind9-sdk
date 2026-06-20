@@ -106,6 +106,7 @@ async fn execute_add(
 
     // Build the RFC 2136 dynamic update message.
     let update = UpdateBuilder::new(zone_name.clone(), RecordClass::IN)
+        .map_err(CliError::Core)?
         .add_record(record.clone())
         .sign_now(&config.rndc_key)
         .map_err(CliError::Core)?
@@ -160,7 +161,7 @@ async fn execute_delete(
     let record_name =
         DomainName::new(name).map_err(|e| CliError::Config(format!("invalid record name: {e}")))?;
 
-    let builder = UpdateBuilder::new(zone_name.clone(), RecordClass::IN);
+    let builder = UpdateBuilder::new(zone_name.clone(), RecordClass::IN).map_err(CliError::Core)?;
 
     let builder = if let Some(data) = data {
         // Delete a specific record: parse the full record via zone parser.

@@ -24,8 +24,14 @@ Include as much detail as possible:
 - Affected component (core, net, CLI, bindings)
 - Potential impact
 
-You will receive an acknowledgment within 7 days. Fixes for confirmed
-vulnerabilities will be released as patch versions with a security advisory.
+You will receive an acknowledgment within 72 hours. For confirmed
+vulnerabilities, the project targets a fix or documented mitigation within
+14 days. If that target cannot be met safely, the private advisory will receive
+a status update and revised timeline before the deadline.
+
+Fixes are released as patch versions with a GitHub security advisory. Issues
+affecting published Rust crates will also be submitted to the RustSec advisory
+database when they meet its reporting criteria.
 
 ## Scope
 

@@ -16,6 +16,9 @@ use crate::rdata::RecordData;
 pub struct Ttl(u32);
 
 impl Ttl {
+    /// Zero-second TTL.
+    pub const ZERO: Self = Self(0);
+
     /// Create a TTL value. Returns error if value exceeds RFC 8767 maximum.
     pub fn new(value: u32) -> Result<Self, CoreError> {
         if value > 2_147_483_647 {
@@ -303,6 +306,11 @@ mod tests {
     fn ttl_value_accessor() {
         let ttl = Ttl::new(3600).unwrap();
         assert_eq!(ttl.value(), 3600);
+    }
+
+    #[test]
+    fn ttl_zero_constant() {
+        assert_eq!(Ttl::ZERO.value(), 0);
     }
 
     // -- Serial tests (RFC 1982) --

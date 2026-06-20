@@ -25,6 +25,8 @@ pub mod dnssec;
 pub mod domain;
 /// Error type for all `bind9-sdk-core` operations.
 pub mod error;
+/// Bounded typed parser for SDK-relevant `named.conf` statements.
+pub mod named_conf;
 /// DNS protocol primitives: `RecordType` and `Rcode`.
 pub mod protocol;
 /// DNS record data variants (`RecordData`).
@@ -46,6 +48,10 @@ pub mod zone;
 pub use dnssec::{CdsRecord, DigestType, compute_key_tag};
 pub use domain::{DomainName, Label};
 pub use error::CoreError;
+pub use named_conf::{
+    Acl, AclElement, ControlEndpoint, ListenAddress, NamedAcl, NamedConf, NamedOptions, NamedZone,
+    NamedZoneType, StatisticsChannel,
+};
 pub use protocol::{Rcode, RecordType};
 pub use rdata::{RecordData, TxtString};
 pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};

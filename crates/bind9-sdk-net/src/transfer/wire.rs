@@ -32,6 +32,7 @@ const QTYPE_AXFR: u16 = 252;
 const QTYPE_IXFR: u16 = 251;
 
 /// Encoded transfer query plus the state needed to authenticate responses.
+#[derive(Debug)]
 pub(super) struct EncodedXfrQuery {
     pub(super) message: Vec<u8>,
     pub(super) id: u16,
@@ -180,9 +181,7 @@ pub fn parse_name(buf: &[u8], offset: usize) -> Result<(DomainName, usize), NetE
             )));
         }
 
-        let label_str = std::str::from_utf8(&buf[pos..pos + label_len])
-            .map_err(|_| NetError::XfrProtocolError("DNS label contains non-UTF8 bytes".into()))?;
-        labels.push(label_str.to_string());
+        labels.push(escape_wire_label(&buf[pos..pos + label_len]));
         pos += label_len;
     }
 
@@ -195,6 +194,19 @@ pub fn parse_name(buf: &[u8], offset: usize) -> Result<(DomainName, usize), NetE
         .map_err(|e| NetError::XfrProtocolError(format!("invalid DNS name from wire: {e}")))?;
 
     Ok((domain, bytes_consumed))
+}
+
+fn escape_wire_label(label: &[u8]) -> String {
+    let mut escaped = String::with_capacity(label.len());
+    for byte in label {
+        match *byte {
+            b'.' => escaped.push_str(r"\."),
+            b'\\' => escaped.push_str(r"\\"),
+            byte if byte.is_ascii_graphic() => escaped.push(char::from(byte)),
+            byte => escaped.push_str(&format!(r"\{byte:03}")),
+        }
+    }
+    escaped
 }
 
 /// Parse rdata from DNS wire format for common record types.
@@ -409,7 +421,7 @@ pub fn parse_resource_record(
             ttl_value,
             "TTL exceeds RFC 8767 max (2^31-1), clamping to 0"
         );
-        Ttl::new(0).unwrap()
+        Ttl::ZERO
     });
 
     let rr = ResourceRecord {
@@ -527,15 +539,18 @@ fn resource_record_type_and_len(message: &[u8], offset: usize) -> Result<(u16, u
 /// an additional record per RFC 8945).
 ///
 /// Returns the complete DNS message bytes (without TCP length prefix).
-pub fn encode_axfr_query(zone: &DomainName, tsig_key: Option<&TsigKey>) -> Vec<u8> {
-    encode_axfr_query_with_metadata(zone, tsig_key).message
+pub fn encode_axfr_query(
+    zone: &DomainName,
+    tsig_key: Option<&TsigKey>,
+) -> Result<Vec<u8>, NetError> {
+    Ok(encode_axfr_query_with_metadata(zone, tsig_key)?.message)
 }
 
 /// Encode an AXFR query while retaining response-authentication state.
 pub(super) fn encode_axfr_query_with_metadata(
     zone: &DomainName,
     tsig_key: Option<&TsigKey>,
-) -> EncodedXfrQuery {
+) -> Result<EncodedXfrQuery, NetError> {
     encode_xfr_query(zone, QTYPE_AXFR, None, tsig_key)
 }
 
@@ -549,8 +564,8 @@ pub fn encode_ixfr_query(
     zone: &DomainName,
     current_serial: Serial,
     tsig_key: Option<&TsigKey>,
-) -> Vec<u8> {
-    encode_ixfr_query_with_metadata(zone, current_serial, tsig_key).message
+) -> Result<Vec<u8>, NetError> {
+    Ok(encode_ixfr_query_with_metadata(zone, current_serial, tsig_key)?.message)
 }
 
 /// Encode an IXFR query while retaining response-authentication state.
@@ -558,7 +573,7 @@ pub(super) fn encode_ixfr_query_with_metadata(
     zone: &DomainName,
     current_serial: Serial,
     tsig_key: Option<&TsigKey>,
-) -> EncodedXfrQuery {
+) -> Result<EncodedXfrQuery, NetError> {
     encode_xfr_query(zone, QTYPE_IXFR, Some(current_serial), tsig_key)
 }
 
@@ -568,15 +583,25 @@ fn encode_xfr_query(
     qtype: u16,
     current_serial: Option<Serial>,
     tsig_key: Option<&TsigKey>,
-) -> EncodedXfrQuery {
-    let mut buf = Vec::with_capacity(128);
-
-    // Generate a cryptographically random query ID (RFC 5452 §3)
-    let id: u16 = {
-        let mut buf = [0u8; 2];
-        getrandom::fill(&mut buf).expect("getrandom failed for DNS query ID");
-        u16::from_be_bytes(buf)
+) -> Result<EncodedXfrQuery, NetError> {
+    let id = random_query_id()?;
+    let now = if tsig_key.is_some() {
+        Some(current_unix_time()?)
+    } else {
+        None
     };
+    encode_xfr_query_with_id_and_time(zone, qtype, current_serial, tsig_key, id, now)
+}
+
+fn encode_xfr_query_with_id_and_time(
+    zone: &DomainName,
+    qtype: u16,
+    current_serial: Option<Serial>,
+    tsig_key: Option<&TsigKey>,
+    id: u16,
+    now: Option<u64>,
+) -> Result<EncodedXfrQuery, NetError> {
+    let mut buf = Vec::with_capacity(128);
 
     // Header
     buf.extend_from_slice(&id.to_be_bytes()); // ID
@@ -624,12 +649,12 @@ fn encode_xfr_query(
     let mut arcount: u16 = 0;
     let mut request_mac = None;
     if let Some(key) = tsig_key {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let tsig = bind9_sdk_core::tsig::TsigRecord::new(key, &buf, now, None);
+        let now = now.ok_or_else(|| {
+            NetError::XfrProtocolError(
+                "system time is required to sign a zone-transfer query".into(),
+            )
+        })?;
+        let tsig = bind9_sdk_core::tsig::TsigRecord::new(key, &buf, now, None)?;
         request_mac = Some(tsig.mac.to_vec());
         buf.extend_from_slice(&tsig.wire_bytes);
         arcount = 1;
@@ -638,11 +663,28 @@ fn encode_xfr_query(
     // Patch ARCOUNT
     buf[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
 
-    EncodedXfrQuery {
+    Ok(EncodedXfrQuery {
         message: buf,
         id,
         request_mac,
-    }
+    })
+}
+
+fn random_query_id() -> Result<u16, NetError> {
+    let mut bytes = [0u8; 2];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        NetError::XfrProtocolError(format!("failed to generate a random DNS query ID: {error}"))
+    })?;
+    Ok(u16::from_be_bytes(bytes))
+}
+
+fn current_unix_time() -> Result<u64, NetError> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| {
+            NetError::XfrProtocolError(format!("system clock is before Unix epoch: {error}"))
+        })
 }
 
 /// Read a DNS TCP message: 2-byte big-endian length prefix + message bytes.
@@ -752,6 +794,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_name_preserves_arbitrary_label_octets() {
+        let buf = [3, b'a', b'.', 0xFF, 0];
+
+        let (name, consumed) = parse_name(&buf, 0).unwrap();
+        let mut roundtrip = Vec::new();
+        name.write_wire(&mut roundtrip);
+
+        assert_eq!(consumed, buf.len());
+        assert_eq!(roundtrip, buf);
+        assert_eq!(name.to_string(), r"a\.\255.");
+    }
+
+    #[test]
+    fn parse_name_preserves_nul_and_backslash_octets() {
+        let buf = [4, b'a', 0, b'\\', b'b', 0];
+
+        let (name, consumed) = parse_name(&buf, 0).unwrap();
+        let mut roundtrip = Vec::new();
+        name.write_wire(&mut roundtrip);
+
+        assert_eq!(consumed, buf.len());
+        assert_eq!(roundtrip, buf);
+        assert_eq!(name.to_string(), r"a\000\\b.");
+    }
+
+    #[test]
     fn parse_name_root() {
         let buf = [0];
         let (name, consumed) = parse_name(&buf, 0).unwrap();
@@ -857,7 +925,7 @@ mod tests {
     #[test]
     fn encode_axfr_query_no_tsig() {
         let zone = DomainName::new("example.com.").unwrap();
-        let query = encode_axfr_query(&zone, None);
+        let query = encode_axfr_query(&zone, None).unwrap();
 
         let header = DnsHeader::parse(&query).unwrap();
         assert!(!header.is_response);
@@ -877,7 +945,7 @@ mod tests {
     fn encode_ixfr_query_has_authority() {
         let zone = DomainName::new("example.com.").unwrap();
         let serial = Serial::new(2024010101);
-        let query = encode_ixfr_query(&zone, serial, None);
+        let query = encode_ixfr_query(&zone, serial, None).unwrap();
 
         let header = DnsHeader::parse(&query).unwrap();
         assert_eq!(header.question_count, 1);
@@ -898,7 +966,8 @@ mod tests {
             vec![0u8; 32],
         )
         .unwrap();
-        let query = encode_axfr_query(&DomainName::new("example.com.").unwrap(), Some(&key));
+        let query =
+            encode_axfr_query(&DomainName::new("example.com.").unwrap(), Some(&key)).unwrap();
 
         let header = DnsHeader::parse(&query).unwrap();
         assert_eq!(header.additional_count, 1);
@@ -914,7 +983,7 @@ mod tests {
         .unwrap();
         let zone = DomainName::new("example.com.").unwrap();
 
-        let encoded = encode_axfr_query_with_metadata(&zone, Some(&key));
+        let encoded = encode_axfr_query_with_metadata(&zone, Some(&key)).unwrap();
         let header = DnsHeader::parse(&encoded.message).unwrap();
         let tsig_offset = DNS_HEADER_SIZE + zone.wire_len() + 4;
         let parsed_tsig =
@@ -1001,8 +1070,8 @@ mod tests {
     fn query_id_is_random() {
         // Two queries for the same zone should (almost certainly) have different IDs
         let zone = DomainName::new("example.com.").unwrap();
-        let q1 = encode_axfr_query(&zone, None);
-        let q2 = encode_axfr_query(&zone, None);
+        let q1 = encode_axfr_query(&zone, None).unwrap();
+        let q2 = encode_axfr_query(&zone, None).unwrap();
         let id1 = u16::from_be_bytes([q1[0], q1[1]]);
         let id2 = u16::from_be_bytes([q2[0], q2[1]]);
         // With 16 bits of randomness, collision probability is 1/65536
@@ -1012,5 +1081,22 @@ mod tests {
             id1 != id2 || id1 != 0,
             "query IDs should be random, not zero"
         );
+    }
+
+    #[test]
+    fn signed_query_requires_a_valid_system_time() {
+        let key = TsigKey::new(
+            DomainName::new("test-key.").unwrap(),
+            bind9_sdk_core::tsig::TsigAlgorithm::HmacSha256,
+            vec![0xAA; 32],
+        )
+        .unwrap();
+        let zone = DomainName::new("example.com.").unwrap();
+
+        let error =
+            encode_xfr_query_with_id_and_time(&zone, QTYPE_AXFR, None, Some(&key), 1234, None)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("system time"));
     }
 }

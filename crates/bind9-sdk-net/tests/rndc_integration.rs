@@ -16,12 +16,14 @@
 //!
 //! See `tests/README.md` for BIND9 setup instructions.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_net::rndc::RndcConnection;
 use bind9_sdk_net::rndc::command::{RndcCommand, ZoneTarget};
 use bind9_sdk_net::rndc::dnssec::DnssecStatus;
+use bind9_sdk_net::{Bind9Client, ClientConfig};
 
 /// Brief delay to let BIND9's control channel release the previous connection.
 ///
@@ -190,4 +192,23 @@ async fn rndc_dnssec_status_parses_current_bind_output() {
     assert!(!status.policy.is_empty());
     assert!(!status.keys.is_empty());
     conn.close().await.expect("close failed");
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:9953"]
+async fn frozen_zone_guard_explicitly_thaws_live_zone() {
+    rndc_settle().await;
+    let client = Arc::new(Bind9Client::new(ClientConfig::new(
+        "127.0.0.1:9953".parse().unwrap(),
+        test_key(),
+    )));
+    let zone = DomainName::new("example.com.").unwrap();
+
+    let guard = client
+        .freeze_guard(&zone)
+        .await
+        .expect("freeze guard creation failed");
+    assert_eq!(guard.frozen_zone().map(|frozen| &frozen.name), Some(&zone));
+
+    guard.thaw().await.expect("explicit thaw failed");
 }

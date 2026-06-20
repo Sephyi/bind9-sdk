@@ -129,26 +129,30 @@ impl TsigKey {
     /// - HmacSha256: 32 bytes
     /// - HmacSha512: 64 bytes
     /// - HmacSha1: 20 bytes
-    pub fn sign(&self, message: &[u8]) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::Tsig`] if the HMAC implementation rejects the key.
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, CoreError> {
         #[allow(deprecated)]
         match self.algorithm {
             TsigAlgorithm::HmacSha256 => {
                 let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA256 key length".into()))?;
                 mac.update(message);
-                mac.finalize().into_bytes().to_vec()
+                Ok(mac.finalize().into_bytes().to_vec())
             }
             TsigAlgorithm::HmacSha512 => {
                 let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA512 key length".into()))?;
                 mac.update(message);
-                mac.finalize().into_bytes().to_vec()
+                Ok(mac.finalize().into_bytes().to_vec())
             }
             TsigAlgorithm::HmacSha1 => {
                 let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA1 key length".into()))?;
                 mac.update(message);
-                mac.finalize().into_bytes().to_vec()
+                Ok(mac.finalize().into_bytes().to_vec())
             }
         }
     }
@@ -162,21 +166,21 @@ impl TsigKey {
         match self.algorithm {
             TsigAlgorithm::HmacSha256 => {
                 let mut hmac = <Hmac<Sha256> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA256 key length".into()))?;
                 hmac.update(message);
                 hmac.verify_slice(mac)
                     .map_err(|_| CoreError::Tsig("HMAC-SHA256 verification failed".into()))
             }
             TsigAlgorithm::HmacSha512 => {
                 let mut hmac = <Hmac<Sha512> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA512 key length".into()))?;
                 hmac.update(message);
                 hmac.verify_slice(mac)
                     .map_err(|_| CoreError::Tsig("HMAC-SHA512 verification failed".into()))
             }
             TsigAlgorithm::HmacSha1 => {
                 let mut hmac = <Hmac<Sha1> as Mac>::new_from_slice(&self.key_material)
-                    .expect("HMAC accepts any key length");
+                    .map_err(|_| CoreError::Tsig("invalid HMAC-SHA1 key length".into()))?;
                 hmac.update(message);
                 hmac.verify_slice(mac)
                     .map_err(|_| CoreError::Tsig("HMAC-SHA1 verification failed".into()))

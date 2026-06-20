@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+mod freeze;
 pub mod limiter;
 pub mod nsupdate;
 pub mod pool;
@@ -15,8 +16,9 @@ pub mod tls;
 pub mod transfer;
 
 // Curated re-exports for common access
-pub use config::{Bind9Client, ClientConfig};
+pub use config::{Bind9Client, ClientConfig, RndcTransportPolicy};
 pub use error::NetError;
+pub use freeze::FrozenZoneGuard;
 pub use limiter::{RndcLimiter, RndcPermit};
 pub use nsupdate::NsUpdateSender;
 pub use pool::RndcPool;

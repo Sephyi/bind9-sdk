@@ -34,7 +34,10 @@ pub fn print_message(format: OutputFormat, message: &str) {
         }
         OutputFormat::Json => {
             let wrapper = serde_json::json!({ "message": message });
-            println!("{}", serde_json::to_string_pretty(&wrapper).unwrap());
+            match serde_json::to_string_pretty(&wrapper) {
+                Ok(json) => println!("{json}"),
+                Err(error) => eprintln!("error: failed to serialize JSON: {error}"),
+            }
         }
     }
 }
@@ -47,7 +50,10 @@ pub fn print_success(format: OutputFormat, message: &str) {
         }
         OutputFormat::Json => {
             let wrapper = serde_json::json!({ "status": "ok", "message": message });
-            println!("{}", serde_json::to_string_pretty(&wrapper).unwrap());
+            match serde_json::to_string_pretty(&wrapper) {
+                Ok(json) => println!("{json}"),
+                Err(error) => eprintln!("error: failed to serialize JSON: {error}"),
+            }
         }
     }
 }
