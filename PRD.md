@@ -37,7 +37,11 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 ### Active Hardening Log
 
+- **2026-06-19, complete typed rndc surface and truthful connection management**: aligned `RndcCommand` with the exact BIND 9.20.18 `rndc -h` grammar. Zone-bearing commands now use `ZoneTarget` with typed `DomainName`, optional class, and optional view; command-specific enums/structs cover dump categories, DNSSEC key selection and rollover, signing maintenance, managed keys, NTA controls, logging, stale serving, DNSTAP, TCP timeouts, shutdown behavior, and the remaining BIND commands while retaining `Raw` for forward compatibility. Replaced the misleading semaphore `RndcPool` API with `RndcLimiter`/`RndcPermit` and `rndc_max_concurrent`. Added a separate real `RndcPool`: workers retain authenticated connections, reuse them across commands, close them after configurable idle expiry, retry once after transport failure, and expose connection-creation telemetry. Evidence: 664 workspace tests pass (373 core, 270 net, 19 CLI, one trybuild, one doctest); all-feature clippy is warning-free; six live rndc tests pass; and four live limiter/pool tests prove concurrency limiting, authenticated connection reuse, and idle reconnection.
+- **2026-06-19, typed statistics and top-level no-std contract**: replaced the statistics-channel subset and `serde_json::Value` zone fallback with typed BIND 9.20 JSON models for schema version, opcode/RCODE counters, per-view resolver/query-type/cache/ADB counters, socket counters, memory contexts, traffic histograms, and zone view/load metadata. Cumulative query and SERVFAIL rates are derived from two snapshots with explicit zero-interval and counter-reset handling. Zone lookup now rejects ambiguous names across views and supports explicit view selection. The CLI emits one structured statistics JSON document. Live testing against BIND 9.20.18 confirmed that `/json/v1/zones` exposes metadata only, even with `zone-statistics full`; per-zone transfer/query counters and dedicated DNSSEC signing/key-event counters are therefore not fabricated as API fields. DNSSEC lifecycle state remains available through typed `rndc dnssec -status`. The top-level `bind9-sdk` crate also now honors `--no-default-features`, applies `#![no_std]` and `#![forbid(unsafe_code)]`, and no longer forces the core `std` feature. Evidence: 373 core tests, 259 net tests, 19 CLI tests, the complete workspace suite, all-feature clippy with warnings denied, four live statistics integration tests, and both core and top-level `wasm32-unknown-unknown` no-default-feature checks pass.
 - **2026-06-19, data integrity and update safety**: added lossless master-file parsing and serialization for modeled TLSA, SSHFP, CSYNC, and RP records; removed the zero-length generic fallback that could silently discard modeled RDATA. RFC 2136 construction is now fallible and rejects section counts above 65,535, RDATA above 65,535 bytes, TXT character-strings above 255 bytes, oversized CAA/NSEC3/NSEC3PARAM length-prefixed fields, total DNS messages above 65,535 bytes, and post-TSIG size overflow. Rust, CLI, and Node binding callers now propagate construction errors. A live integration run also identified and corrected an overly strict rndc response timestamp equality check; authenticated server time may advance within the 60-second isccc window, with expiry bound to the response timestamp. Full workspace tests, clippy with warnings denied, and all live BIND9 tests pass after these changes.
+- **2026-06-19, CLI and DNSSEC semantics**: replaced placeholder CLI zone and DNSSEC operations with live implementations. Zone names are listed from the statistics-channel because rndc exposes a count but no direct zone-name listing; `zone status` now executes `rndc zonestatus`; `dnssec status` executes and parses current BIND 9.20 multiline KASP output; zone export emits one aggregate JSON document. Corrected `dnssec -checkds` modeling: it is a state-changing operator confirmation and now requires `published` or `withdrawn`, rather than returning a fabricated publication-status object. Live BIND tests cover zone listing, zonestatus, and current DNSSEC status parsing.
+- **2026-06-19, master-file and TXT byte correctness**: expanded DNS labels beyond hostname-only syntax, including wildcard owners, escaped dots, decimal octet escapes, and correct wire-length accounting. `$ORIGIN` now resolves relative arguments against the current origin. `$INCLUDE path [origin]` inherits parser state, scopes and restores origin/current owner as BIND does, and rejects nesting beyond 16 levels instead of recursing without a bound. TXT character-strings are now validated byte containers rather than UTF-8 `String`s; embedded NUL and non-UTF-8 octets survive zone parsing, serialization, dynamic-update encoding, and transfer decoding. Evidence: 371 core tests and the full workspace unit suite pass; all-feature clippy is warning-free; the core `wasm32-unknown-unknown` no-std check and native binding compile pass.
 
 ## 1. Vision
 
@@ -172,7 +176,7 @@ pub trait ZoneManager: Send + Sync {
 pub trait NamedControl: Send + Sync {
     async fn command(&self, cmd: RndcCommand) -> Result<RndcResponse>;
     async fn dnssec_status(&self, zone: &DomainName) -> Result<DnssecStatus>;
-    async fn dnssec_checkds(&self, zone: &DomainName) -> Result<DsCheckResult>;
+    async fn dnssec_checkds(&self, zone: &DomainName, state: DsState) -> Result<()>;
 }
 
 // Dynamic DNS updates — RFC 2136
@@ -334,37 +338,33 @@ Typed enum covering all rndc commands available in BIND9 9.20.
 
 ```rust
 pub enum RndcCommand {
-    Reload { zone: Option<DomainName> },
-    Freeze { zone: Option<DomainName> },
-    Thaw { zone: Option<DomainName> },
-    Flush { cache: Option<String> },
-    FlushName { name: DomainName },
-    Zonestatus { zone: DomainName },
-    Retransfer { zone: DomainName },
-    Notify { zone: DomainName },
-    Sign { zone: DomainName },
-    Loadkeys { zone: DomainName },
-    DnssecStatus { zone: DomainName },
-    DnssecCheckds { zone: DomainName },
-    DnssecRollover { zone: DomainName, key_tag: u16 },
-    Validation { enable: bool },
-    Stats,
-    Status,
-    Stop { save: bool },
-    Halt { save: bool },
-    Querylog { enable: bool },
+    Reload { target: Option<ZoneTarget> },
+    Freeze { target: Option<ZoneTarget> },
+    Flush { view: Option<String> },
+    FlushName { name: DomainName, view: Option<String> },
+    ZoneStatus { target: ZoneTarget },
+    DnssecStatus { target: ZoneTarget },
+    DnssecCheckDs { target: ZoneTarget, state: DsState, key: Option<DnssecKeySelector>, when: Option<String> },
+    DnssecRollover { target: ZoneTarget, key: DnssecKeySelector, when: Option<String> },
+    DumpDb { options: DumpDbOptions },
+    Signing { action: SigningAction, target: ZoneTarget },
+    Validation { action: ValidationAction, view: Option<String> },
+    Stop { report_pid: bool },
+    Halt { report_pid: bool },
+    QueryLog { action: Option<Toggle> },
     Recursing,
-    Dumpdb { options: DumpDbOptions },
-    SecRoots,
-    NtaAdd { name: DomainName, lifetime: Duration },
-    NtaRemove { name: DomainName },
+    SecRoots { views: Vec<String> },
+    NtaAdd { domain: DomainName, lifetime: Option<Duration>, force: bool, view: Option<String> },
+    NtaRemove { domain: DomainName, view: Option<String> },
     NtaList,
-    Raw(String),  // escape hatch for commands not yet in enum
+    // Additional typed BIND 9.20 variants omitted here for brevity.
+    Raw(String),
 }
 ```
 
 **Acceptance Criteria**:
-- ✓ Each variant serializes to the correct rndc wire command string
+- ✓ Every command in BIND 9.20.18 `rndc -h` has a named typed variant and exact serialization coverage
+- ✓ Zone commands preserve optional class and view selectors through `ZoneTarget`
 - ✓ `Raw(String)` accepts arbitrary strings for forward compatibility
 - ✓ All variants round-trip: serialize → send → parse response without data loss
 
@@ -375,14 +375,16 @@ pub enum RndcCommand {
 HTTP client for BIND9 9.20 statistics-channel (JSON format). Parses the full response into typed Rust structs. Targets `statistics-channels { inet * port 8053 allow { localhost; }; };`.
 
 **Acceptance Criteria**:
-- ✓ Deserializes full BIND9 9.20 stats JSON into `NamedStats` struct without `serde_json::Value` fallback
-- ✓ Zone-level stats accessible via `ZoneStats { queries_in, queries_out, transfers_in, transfers_out, ... }`
-- ✓ Server-level stats: query rate, SERVFAIL rate, recursion stats, socket stats
-- ✓ DNSSEC stats: signing operations, key events
+- ✓ Deserializes the aggregate BIND9 9.20 JSON response into typed `ServerStats`, `ViewStats`, `MemoryStats`, `TrafficHistogram`, and `CounterSet` values without a `serde_json::Value` fallback
+- ✓ Zone metadata includes view, name, class, serial, type, and loaded timestamp; ambiguous zone names across views require explicit view selection
+- ✓ Server-level cumulative opcode/RCODE, resolver, query-type, cache, ADB, socket, memory, and traffic counters are exposed
+- ✓ Query and SERVFAIL rates are derived from two snapshots and return unknown after a counter reset or zero-length interval
+- ✓ Dedicated DNSSEC lifecycle state is obtained through typed `rndc dnssec -status`
 
 **Edge Cases**:
-- BIND9 9.18 stats format differences → detected by version field, degraded gracefully to partial parse
+- BIND9 schema/version differences → `json-stats-version` is retained and absent sections degrade to empty typed collections
 - Stats endpoint behind HTTP auth → configurable `Authorization` header support
+- BIND 9.20.18 does not emit per-zone query/transfer counters or dedicated DNSSEC signing/key-event counters in JSON, including with `zone-statistics full`; the SDK must not fabricate them
 
 #### FR-007: TSIG Key Utilities
 
@@ -485,7 +487,7 @@ Query BIND9 KASP (Key and Signing Policy) state via rndc.
 
 **Acceptance Criteria**:
 - ✓ `RndcCommand::DnssecStatus { zone }` response parsed into `DnssecStatus` struct with: key states (omnipresent/rumoured/hidden/unretentive), next rollover timestamp, active KSK/ZSK key tags
-- ✓ `RndcCommand::DnssecCheckds { zone }` response parsed into `DsCheckResult` (DS present/absent at parent)
+- ✓ `RndcCommand::DnssecCheckDs { zone, state }` records an explicit `published` or `withdrawn` parent DS state
 
 #### FR-022: CDS/CDNSKEY Generation
 
@@ -580,13 +582,13 @@ Complete TypeScript type definitions for the full Node.js SDK surface, auto-gene
 Command-line interface for quick BIND9 management operations without writing code. Uses `bind9-sdk-net` directly.
 
 ```
-bind9-sdk zone list                          # list zones from rndc
+bind9-sdk zone list                          # list zones from statistics-channel
 bind9-sdk zone status <name>                 # rndc zonestatus
 bind9-sdk zone reload <name>                 # rndc reload zone
 bind9-sdk record add <zone> <rr>             # nsupdate add record
 bind9-sdk record delete <zone> <rr>          # nsupdate delete record
 bind9-sdk dnssec status <zone>               # rndc dnssec -status
-bind9-sdk dnssec checkds <zone>              # rndc dnssec -checkds
+bind9-sdk dnssec checkds <zone> <state>      # state: published | withdrawn
 bind9-sdk stats                              # dump stats-channel summary
 bind9-sdk zone export <name>                 # AXFR and print zone file
 bind9-sdk zone diff <file> <name>            # diff local file vs live zone
@@ -614,12 +616,14 @@ Compute the diff between two `Zone` values (or a local file and a live zone) as 
 
 **Priority**: P1 | **Phase**: 5
 
-`RndcPool` — shared pool of `RndcClient` connections for high-frequency command scenarios.
+`RndcPool` retains authenticated rndc connections for high-frequency command scenarios. `RndcLimiter` is the separate primitive for limiting fresh connect/auth/command/close cycles.
 
 **Acceptance Criteria**:
-- ✓ Configurable pool size (default 4 connections)
-- ✓ Idle connections recycled after configurable timeout (default 30s)
-- ✓ On connection drop from pool, re-established transparently on next command
+- ✓ Configurable pool size, defaulting to `ClientConfig::rndc_max_concurrent` or four workers
+- ✓ Authenticated connections are reused across sequential commands
+- ✓ Idle connections are closed after a configurable timeout (default 30 seconds)
+- ✓ A failed pooled connection is discarded, re-established, and retried once
+- ✓ `total_connections_created()` exposes reconnect churn for operations and tests
 
 ### 4.6 Phase 6 — v0.6.0: Hardening
 
@@ -1008,7 +1012,7 @@ opt-level = "z"
 | Phase | Version | Focus | Status |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | Core Rust SDK: zone parser/serializer, all record types, rndc client, stats-channel, TSIG, nsupdate construction | **COMPLETE** — 441 tests. 0 `missing_docs` errors. Blockers before crates.io publish: license (OQ-005, deferred), e2e integration tests green in CI (OQ-007) |
-| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY, XoT enforcement. Also: nsupdate sender (delivered in Phase 1), stats kebab-case fix | **COMPLETE** — 538 tests. 21 integration tests passing against live BIND9 9.20 (Podman). Security hardening: random query IDs (RFC 5452), forward compression pointer rejection, transfer timeouts (60s/msg), record count limits (10M max), `#[non_exhaustive]` on DnsHeader/DnssecStatus/DnssecKeyInfo/DsCheckResult |
+| 2 | v0.2.0 | Zone transfers: IXFR/AXFR client, DNSSEC record types, KASP introspection, CDS/CDNSKEY, XoT enforcement. Also: nsupdate sender (delivered in Phase 1), stats kebab-case fix | **COMPLETE, corrected during hardening** — DNSSEC status parsing is live-tested against current BIND 9.20 output; `dnssec -checkds` is modeled as an explicit state-changing operation rather than a status query. |
 | 3 | v0.3.0 | JavaScript bindings: napi-rs v3 migration, core surface bindings (JsDomainName, JsZoneFile, JsResourceRecord, JsTsigKey, JsUpdateBuilder) | **COMPLETE** — napi-rs v2→v3 (napi 3, napi-derive 3, napi-build 2), `build.rs` with `napi_build::setup()`, `package.json` with `aarch64-apple-darwin` target |
 | 4 | v0.4.0 | Full SDK surface bindings: JsRndcClient (18 async commands), JsNsUpdateSender, JsStatsClient, JsTransferClient, JsRndcPool. Node.js smoke test | **COMPLETE** — all net modules `#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]` gated, `tests/smoke.mjs` |
 | 5 | v0.5.0 | CLI tool (`bind9-sdk-cli`, binary `bind9`), zone diff engine, RndcPool connection pooling | **COMPLETE** — 574 tests (337 core + 222 net + 13 CLI + 1 trybuild + 1 doc). Zone diff: `DiffEntry`/`ZoneDiff`/`Zone::diff()`/`apply_diff()`/`to_updates()`. CLI: clap subcommands (zone/record/dnssec/stats/completions), TOML config (XDG/macOS), JSON output, shell completions. Release binary 7.2MB (under PR-006 10MB target) |
@@ -1107,10 +1111,10 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 
 | Deliverable | What was delivered |
 | --- | --- |
-| DNSSEC types | `DnssecStatus`, `DnssecKeyInfo`, `KeyRole`, `DsCheckResult` with parsing |
+| DNSSEC types | `DnssecStatus`, `DnssecKeyInfo`, `KeyRole`, and `DsState`; current BIND 9.20 status output is parsed and live-tested |
 | IXFR/AXFR client | `TransferClient` (generic over stream), `transfer_record_stream` with `async_stream` |
 | Security hardening | Random query IDs (RFC 5452), forward compression pointer rejection, transfer timeouts (60s/msg), record count limits (10M max) |
-| Non-exhaustive | `#[non_exhaustive]` on `DnsHeader`, `DnssecStatus`, `DnssecKeyInfo`, `DsCheckResult` |
+| Non-exhaustive | `#[non_exhaustive]` on `DnsHeader`, `DnssecStatus`, and `DnssecKeyInfo` |
 
 #### Phase 3: napi-rs v3 Migration + Core Bindings — COMPLETE (2026-03-17)
 
@@ -1136,7 +1140,7 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 | `JsNsUpdateSender` | With `JsUpdateMessage` for TSIG MAC preservation |
 | `JsStatsClient` | `serverStats()` and `zoneStats()` async methods |
 | `JsTransferClient` | AXFR zone transfer |
-| `JsRndcPool` | Semaphore-based connection pool |
+| `JsRndcLimiter` | Semaphore-based limiter for fresh rndc command cycles |
 | Net module gating | All net modules: `#[cfg(all(feature = "nodejs", not(target_arch = "wasm32")))]` |
 
 #### Phase 5: CLI + Zone Diff + Connection Pooling — COMPLETE (2026-03-17)
@@ -1146,7 +1150,8 @@ Completed worktrees (see `docs/plans/2026-03-16-wave2-review-remediation.md` for
 | Deliverable | What was delivered |
 | --- | --- |
 | Zone diff engine | `DiffEntry` (Added/Removed/TtlChanged), `ZoneDiff`, `Zone::diff()`, `Zone::apply_diff()`, `ZoneDiff::to_updates()`, `Display` impl |
-| `RndcPool` | Semaphore-based concurrency limiter with `PoolGuard` RAII |
+| `RndcPool` | Persistent authenticated pool with idle expiry and reconnect |
+| `RndcLimiter` | Semaphore-based fresh-cycle limiter with `RndcPermit` RAII |
 | CLI tool | `bind9-sdk-cli` crate, binary name `bind9`, clap with `zone`/`record`/`dnssec`/`stats`/`completions` subcommands |
 | Config | TOML config loading from XDG (Linux) / macOS Application Support paths |
 | Output | JSON output support (`--output json`) for scripting |

@@ -25,15 +25,15 @@ Ships as three coordinated artifacts from one codebase:
 
 ## ✨ Highlights
 
-- 🔌 **Full rndc wire protocol** — 25+ commands over TCP, no shell subprocesses, no `rndc` binary needed
+- 🔌 **Full rndc wire protocol** — typed BIND 9.20 command grammar over TCP, no shell subprocesses or `rndc` binary
 - 📝 **RFC 2136 dynamic updates** — add, delete, and replace DNS records with TSIG signing
 - 🔄 **AXFR/IXFR zone transfers** — async streaming client with compression pointer rejection and per-message timeouts
 - 📄 **Zone file parser** — RFC 1035 compliant parser/serializer with zone diffing
 - 📊 **Statistics API** — BIND9 statistics-channel JSON API client
 - 🔐 **TSIG authentication** — HMAC-SHA256/SHA512, secrets zeroized on drop, never in logs
 - 🧱 **`no_std` core** — core crate compiles without std, works in WASM and embedded contexts
-- 🔗 **Connection pooling** — `RndcPool` for high-throughput rndc operations
-- 🧪 **576 tests** — unit, property (proptest), snapshot (insta), and integration tests
+- 🔗 **Connection management** — persistent authenticated `RndcPool` plus `RndcLimiter` for fresh command cycles
+- 🧪 **664 tests** — unit, property (proptest), snapshot (insta), compile-fail, and integration tests
 - 🦀 **Single workspace** — one repo, one `cargo build`, all three artifacts
 
 ## 📋 Prerequisites
@@ -404,8 +404,11 @@ Supported record types: `A`, `AAAA`, `CNAME`, `NS`, `PTR`, `SOA`, `MX`, `TXT`, `
 # Show DNSSEC status for a zone
 bind9 dnssec status example.com.
 
-# Check DS record publication
-bind9 dnssec checkds example.com.
+# Confirm that the parent DS was published
+bind9 dnssec checkds example.com. published
+
+# Confirm that the parent DS was withdrawn
+bind9 dnssec checkds example.com. withdrawn
 ```
 
 ### 📊 Stats
@@ -445,7 +448,7 @@ const status = await client.status();
 console.log(status);
 ```
 
-Available binding modules: `domain`, `zone`, `record`, `tsig`, `update`, `rndc`, `nsupdate`, `stats`, `transfer`, `pool`.
+Available binding modules: `domain`, `zone`, `record`, `tsig`, `update`, `rndc`, `nsupdate`, `stats`, `transfer`, `limiter`.
 
 ## 🏗️ Architecture
 
@@ -454,7 +457,7 @@ bind9-sdk/
 ├── bind9-sdk/                 ← re-export crate (crates.io entry point)
 ├── crates/
 │   ├── bind9-sdk-core/        ← no_std + alloc; DNS types, zone parsing, TSIG, RFC 2136
-│   ├── bind9-sdk-net/         ← tokio; rndc, nsupdate, AXFR/IXFR, stats HTTP, connection pool
+│   ├── bind9-sdk-net/         ← tokio; rndc, nsupdate, AXFR/IXFR, stats HTTP, pool/limiter
 │   ├── bind9-sdk-bindings/    ← napi-rs v3; native .node + WASM fallback
 │   └── bind9-sdk-cli/         ← clap CLI binary
 └── Cargo.toml                 ← workspace root
@@ -463,7 +466,7 @@ bind9-sdk/
 | Crate | `no_std` | What it provides |
 | --- | --- | --- |
 | `bind9-sdk-core` | ✅ | DNS types, zone parser/serializer, zone diff, RFC 2136 UpdateBuilder, TSIG (HMAC-SHA256/SHA512) |
-| `bind9-sdk-net` | ❌ | rndc wire protocol (25+ commands), NsUpdateSender, AXFR/IXFR client, stats HTTP, connection pool |
+| `bind9-sdk-net` | ❌ | typed BIND 9.20 rndc, NsUpdateSender, AXFR/IXFR, typed stats, persistent pool, concurrency limiter |
 | `bind9-sdk-bindings` | — | Node.js/Bun native addon via napi-rs v3 (11 binding modules) |
 | `bind9-sdk-cli` | — | `bind9` binary with zone/record/dnssec/stats subcommands |
 | `bind9-sdk` | — | Re-export crate — the single dependency users add |

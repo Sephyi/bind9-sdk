@@ -65,7 +65,8 @@ bind9-sdk/                     ← git repo root (this directory)
 │   │   └── src/
 │   │       ├── rndc/          ← rndc wire protocol + DNSSEC commands
 │   │       ├── transfer/      ← IXFR/AXFR zone transfer client
-│   │       └── pool.rs        ← connection pooling (RndcPool)
+│   │       ├── pool.rs        ← persistent authenticated connections (RndcPool)
+│   │       └── limiter.rs     ← fresh-cycle concurrency limiting (RndcLimiter)
 │   ├── bind9-sdk-bindings/    ← napi-rs v3 (Node.js/Bun native addon + WASM fallback)
 │   └── bind9-sdk-cli/         ← clap CLI binary (`bind9`); zone/record/dnssec/stats subcommands
 ├── docs/
@@ -81,8 +82,8 @@ bind9-sdk/                     ← git repo root (this directory)
 | Crate | `no_std` | Feature gate | What it provides |
 | --- | --- | --- | --- |
 | `bind9-sdk-core` | Yes | — | `DomainName`, `ResourceRecord`, `RecordData` (20+ variants), `Rcode`, `RecordType`, zone file parser/emitter (`ZoneFile`, `Zone`), zone diffing (`ZoneDiff`, `DiffEntry`, `Zone::diff()`/`apply_diff()`), RFC 2136 `UpdateBuilder` (typestate `Unsigned`/`Signed`, `UpdateMessage` with `request_mac()`), TSIG (`TsigKey`, `TsigRecord` with wire parsing + response verification, HMAC-SHA256/SHA512/SHA1), management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`) |
-| `bind9-sdk-net` | No | `net` (default) | `Bind9Client`, `ClientConfig`, `NetError`, `TlsConfig`; rndc TCP wire protocol (`RndcConnection` typestate, ISC binary encoding, 25+ `RndcCommand` variants, DNSSEC commands, `NamedControl` impl), `NsUpdateSender` (UDP+TCP, TSIG response verification), `StatsHttpClient` (JSON deserialization, `StatsClient` impl), IXFR/AXFR zone transfer client (random query IDs, compression pointer rejection, per-message timeouts, record count limits), `RndcPool` connection pooling |
-| `bind9-sdk-bindings` | — | `nodejs` | napi-rs v3: native `.node` + WASM fallback. Modules: domain, zone, record, tsig, update, rndc, nsupdate, stats, transfer, pool. Net modules gated behind `#[cfg(not(target_arch = "wasm32"))]` |
+| `bind9-sdk-net` | No | `net` (default) | `Bind9Client`, `ClientConfig`, `NetError`, `TlsConfig`; full typed BIND 9.20 rndc grammar, persistent `RndcPool`, fresh-cycle `RndcLimiter`, `NsUpdateSender`, typed `StatsHttpClient`, and verified IXFR/AXFR/XoT |
+| `bind9-sdk-bindings` | — | `nodejs` | napi-rs v3: native `.node` + WASM fallback. Modules: domain, zone, record, tsig, update, rndc, nsupdate, stats, transfer, limiter. Net modules gated behind `#[cfg(not(target_arch = "wasm32"))]` |
 | `bind9-sdk-cli` | — | — | `bind9` binary (clap). Subcommands: zone, record, dnssec, stats, completions. TOML config from XDG/macOS paths. Depends on `bind9-sdk` (re-export crate) |
 | `bind9-sdk` | — | — | Re-exports `core` and optionally `net`; the single crates.io entry point |
 
