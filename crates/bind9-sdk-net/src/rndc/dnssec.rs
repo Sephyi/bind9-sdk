@@ -4,8 +4,9 @@
 
 //! DNSSEC/KASP response parsing for rndc commands.
 //!
-//! Parses the text output of `rndc dnssec -status` and `rndc dnssec -checkds`
-//! into structured types for programmatic consumption.
+//! Parses the text output of `rndc dnssec -status` into structured types.
+//! `rndc dnssec -checkds` is a state-changing command and is represented by
+//! [`DsState`](crate::rndc::command::DsState), not by a response parser.
 
 use crate::error::NetError;
 
@@ -28,6 +29,8 @@ pub struct DnssecStatus {
 pub struct DnssecKeyInfo {
     /// Key tag (RFC 4034 Appendix B) identifying this key.
     pub tag: u16,
+    /// DNSSEC algorithm name reported by BIND, when present.
+    pub algorithm: Option<String>,
     /// Role of this key in the DNSSEC signing hierarchy.
     pub role: KeyRole,
     /// Current KASP state (e.g., "OMNIPRESENT", "RUMOURED", "HIDDEN").
@@ -44,19 +47,6 @@ pub enum KeyRole {
     Zsk,
     /// Combined Signing Key — serves both KSK and ZSK roles.
     Csk,
-}
-
-/// Result of a `rndc dnssec -checkds` query.
-///
-/// Indicates whether the CDS RRset has been published to or withdrawn
-/// from the parent zone.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct DsCheckResult {
-    /// Whether the CDS RRset is published at the parent.
-    pub published: bool,
-    /// Whether the CDS RRset has been withdrawn from the parent.
-    pub withdrawn: bool,
 }
 
 impl DnssecStatus {
@@ -76,16 +66,21 @@ impl DnssecStatus {
     pub fn parse(raw: &str) -> Result<Self, NetError> {
         let mut policy = String::new();
         let mut keys = Vec::new();
+        let mut current_key = None;
 
         for line in raw.lines() {
             let trimmed = line.trim();
 
             if let Some(rest) = trimmed.strip_prefix("dnssec-policy:") {
                 policy = rest.trim().to_string();
-            } else if let Some(rest) = trimmed.strip_prefix("key:")
-                && let Some(key_info) = parse_key_line(rest.trim())
-            {
+            } else if let Some(rest) = trimmed.strip_prefix("key:") {
+                let key_info = parse_key_line(rest.trim())?;
                 keys.push(key_info);
+                current_key = Some(keys.len() - 1);
+            } else if let Some(goal) = trimmed.strip_prefix("- goal:")
+                && let Some(index) = current_key
+            {
+                keys[index].state = goal.trim().to_string();
             }
         }
 
@@ -100,19 +95,51 @@ impl DnssecStatus {
 }
 
 /// Parse a key info line like `12345 (KSK), state: OMNIPRESENT`.
-fn parse_key_line(line: &str) -> Option<DnssecKeyInfo> {
-    // Expected: "12345 (KSK), state: OMNIPRESENT"
-    let tag_end = line.find(' ')?;
-    let tag: u16 = line[..tag_end].parse().ok()?;
+fn parse_key_line(line: &str) -> Result<DnssecKeyInfo, NetError> {
+    let tag_end = line.find(' ').ok_or_else(|| {
+        NetError::Protocol(format!("malformed dnssec key line (missing tag): {line}"))
+    })?;
+    let tag: u16 = line[..tag_end]
+        .parse()
+        .map_err(|_| NetError::Protocol(format!("invalid dnssec key tag: {line}")))?;
 
-    let role = if line.contains("(KSK)") {
-        KeyRole::Ksk
-    } else if line.contains("(ZSK)") {
-        KeyRole::Zsk
-    } else if line.contains("(CSK)") {
-        KeyRole::Csk
-    } else {
-        return None;
+    let open = line.find('(').ok_or_else(|| {
+        NetError::Protocol(format!(
+            "malformed dnssec key line (missing algorithm): {line}"
+        ))
+    })?;
+    let close = line[open + 1..]
+        .find(')')
+        .map(|offset| open + 1 + offset)
+        .ok_or_else(|| {
+            NetError::Protocol(format!("malformed dnssec key line (missing `)`): {line}"))
+        })?;
+    let parenthetical = &line[open + 1..close];
+    let suffix = line[close + 1..].trim().trim_start_matches(',').trim();
+
+    let (algorithm, role) = match parenthetical {
+        "KSK" => (None, KeyRole::Ksk),
+        "ZSK" => (None, KeyRole::Zsk),
+        "CSK" => (None, KeyRole::Csk),
+        algorithm => {
+            let role_text = suffix
+                .split([',', ' '])
+                .find(|part| !part.is_empty())
+                .ok_or_else(|| {
+                    NetError::Protocol(format!("dnssec key line missing key role: {line}"))
+                })?;
+            let role = match role_text {
+                "KSK" => KeyRole::Ksk,
+                "ZSK" => KeyRole::Zsk,
+                "CSK" => KeyRole::Csk,
+                _ => {
+                    return Err(NetError::Protocol(format!(
+                        "unsupported dnssec key role `{role_text}`: {line}"
+                    )));
+                }
+            };
+            (Some(algorithm.to_string()), role)
+        }
     };
 
     let state = line
@@ -121,50 +148,12 @@ fn parse_key_line(line: &str) -> Option<DnssecKeyInfo> {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    Some(DnssecKeyInfo { tag, role, state })
-}
-
-impl DsCheckResult {
-    /// Parse the text output of `rndc dnssec -checkds <zone>`.
-    ///
-    /// # Expected format
-    ///
-    /// ```text
-    /// CDS RRset is published: yes
-    /// CDS RRset is withdrawn: no
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns `NetError::Protocol` if neither field is found.
-    pub fn parse(raw: &str) -> Result<Self, NetError> {
-        let mut published = false;
-        let mut withdrawn = false;
-        let mut found_any = false;
-
-        for line in raw.lines() {
-            let trimmed = line.trim();
-
-            if let Some(rest) = trimmed.strip_prefix("CDS RRset is published:") {
-                published = rest.trim().eq_ignore_ascii_case("yes");
-                found_any = true;
-            } else if let Some(rest) = trimmed.strip_prefix("CDS RRset is withdrawn:") {
-                withdrawn = rest.trim().eq_ignore_ascii_case("yes");
-                found_any = true;
-            }
-        }
-
-        if !found_any {
-            return Err(NetError::Protocol(
-                "checkds response missing CDS RRset status fields".to_string(),
-            ));
-        }
-
-        Ok(DsCheckResult {
-            published,
-            withdrawn,
-        })
-    }
+    Ok(DnssecKeyInfo {
+        tag,
+        algorithm,
+        role,
+        state,
+    })
 }
 
 #[cfg(test)]
@@ -207,32 +196,36 @@ key: 54321 (ZSK), state: RUMOURED
     }
 
     #[test]
+    fn parse_dnssec_status_bind_9_20_multiline_key() {
+        let raw = "\
+dnssec-policy: default
+current time:  Fri Jun 19 19:59:55 2026
+
+key: 61161 (ECDSAP256SHA256), CSK
+  published:      yes - since Fri Jun 19 19:58:51 2026
+  key signing:    yes - since Fri Jun 19 19:58:51 2026
+  zone signing:   yes - since Fri Jun 19 19:58:51 2026
+
+  No rollover scheduled
+  - goal:           omnipresent
+  - dnskey:         rumoured
+  - ds:             hidden
+  - zone rrsig:     rumoured
+  - key rrsig:      rumoured
+";
+        let status = DnssecStatus::parse(raw).unwrap();
+        assert_eq!(status.policy, "default");
+        assert_eq!(status.keys.len(), 1);
+        assert_eq!(status.keys[0].tag, 61161);
+        assert_eq!(status.keys[0].algorithm.as_deref(), Some("ECDSAP256SHA256"));
+        assert_eq!(status.keys[0].role, KeyRole::Csk);
+        assert_eq!(status.keys[0].state, "omnipresent");
+    }
+
+    #[test]
     fn parse_dnssec_status_missing_policy() {
         let raw = "key: 12345 (KSK), state: OMNIPRESENT\n";
         let err = DnssecStatus::parse(raw).unwrap_err();
         assert!(err.to_string().contains("missing dnssec-policy"));
-    }
-
-    #[test]
-    fn parse_ds_check_result() {
-        let raw = "CDS RRset is published: yes\nCDS RRset is withdrawn: no\n";
-        let result = DsCheckResult::parse(raw).unwrap();
-        assert!(result.published);
-        assert!(!result.withdrawn);
-    }
-
-    #[test]
-    fn parse_ds_check_withdrawn() {
-        let raw = "CDS RRset is published: no\nCDS RRset is withdrawn: yes\n";
-        let result = DsCheckResult::parse(raw).unwrap();
-        assert!(!result.published);
-        assert!(result.withdrawn);
-    }
-
-    #[test]
-    fn parse_ds_check_missing_fields() {
-        let raw = "some unrelated output\n";
-        let err = DsCheckResult::parse(raw).unwrap_err();
-        assert!(err.to_string().contains("missing CDS RRset"));
     }
 }

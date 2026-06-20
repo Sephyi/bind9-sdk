@@ -9,10 +9,253 @@
 //! inside the ISC message `_data` field.
 
 use std::fmt;
+use std::time::Duration;
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::record::RecordClass;
 use bind9_sdk_core::traits::{FrozenZone, ServerStatus};
+
+/// A zone plus optional DNS class and BIND view selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ZoneTarget {
+    /// Absolute zone name.
+    pub zone: DomainName,
+    /// DNS class. BIND defaults this to IN.
+    pub class: Option<RecordClass>,
+    /// BIND view name.
+    pub view: Option<String>,
+}
+
+impl ZoneTarget {
+    /// Create a target for a zone in the default class and view.
+    pub fn new(zone: DomainName) -> Self {
+        Self {
+            zone,
+            class: None,
+            view: None,
+        }
+    }
+
+    /// Select an explicit DNS class.
+    pub fn with_class(mut self, class: RecordClass) -> Self {
+        self.class = Some(class);
+        self
+    }
+
+    /// Select a BIND view.
+    ///
+    /// The command serializer inserts class `IN` when a view is provided
+    /// without an explicit class because rndc's grammar requires the class
+    /// position before the view.
+    pub fn with_view(mut self, view: impl Into<String>) -> Self {
+        self.view = Some(view.into());
+        self
+    }
+
+    fn command_args(&self) -> String {
+        let mut args = self.zone.to_string();
+        if let Some(class) = self.class {
+            args.push(' ');
+            args.push_str(&class.to_string());
+        } else if self.view.is_some() {
+            args.push_str(" IN");
+        }
+        if let Some(view) = &self.view {
+            args.push(' ');
+            args.push_str(view);
+        }
+        args
+    }
+}
+
+/// A section accepted by `rndc dumpdb`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DumpDbCategory {
+    /// All database sections.
+    All,
+    /// Cache database.
+    Cache,
+    /// Authoritative zones.
+    Zones,
+    /// Address database.
+    Adb,
+    /// Bad-cache entries.
+    Bad,
+    /// Expired cache entries.
+    Expired,
+    /// Failed-fetch cache entries.
+    Fail,
+}
+
+impl fmt::Display for DumpDbCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::All => "-all",
+            Self::Cache => "-cache",
+            Self::Zones => "-zones",
+            Self::Adb => "-adb",
+            Self::Bad => "-bad",
+            Self::Expired => "-expired",
+            Self::Fail => "-fail",
+        })
+    }
+}
+
+/// Options for `rndc dumpdb`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DumpDbOptions {
+    /// Database categories to dump.
+    pub categories: Vec<DumpDbCategory>,
+    /// Views to include.
+    pub views: Vec<String>,
+}
+
+/// On/off switch used by rndc logging commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toggle {
+    On,
+    Off,
+}
+
+impl fmt::Display for Toggle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::On => "on",
+            Self::Off => "off",
+        })
+    }
+}
+
+/// DNSSEC validation control action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationAction {
+    On,
+    Off,
+    Status,
+}
+
+impl fmt::Display for ValidationAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Status => "status",
+        })
+    }
+}
+
+/// RFC 5011 managed-key operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedKeysAction {
+    Refresh,
+    Status,
+    Sync,
+}
+
+impl fmt::Display for ManagedKeysAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Refresh => "refresh",
+            Self::Status => "status",
+            Self::Sync => "sync",
+        })
+    }
+}
+
+/// Memory-profiler operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemProfAction {
+    On,
+    Off,
+    Dump,
+}
+
+impl fmt::Display for MemProfAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Dump => "dump",
+        })
+    }
+}
+
+/// `serve-stale` control action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServeStaleAction {
+    On,
+    Off,
+    Reset,
+    Status,
+}
+
+impl fmt::Display for ServeStaleAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Reset => "reset",
+            Self::Status => "status",
+        })
+    }
+}
+
+/// DNSSEC signing maintenance operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SigningAction {
+    ClearAll,
+    ClearKey {
+        key: String,
+    },
+    List,
+    Nsec3Param {
+        hash: u8,
+        flags: u8,
+        iterations: u16,
+        salt: String,
+    },
+    Nsec3ParamNone,
+    Serial(u32),
+}
+
+/// Values accepted by `rndc tcp-timeouts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TcpTimeoutValues {
+    pub initial: u32,
+    pub idle: u32,
+    pub keepalive: u32,
+    pub advertised: u32,
+}
+
+/// DNSSEC policy key selector used by `dnssec -checkds` and `-rollover`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DnssecKeySelector {
+    /// DNSSEC key tag.
+    pub key_tag: u16,
+    /// Optional DNSSEC algorithm identifier.
+    pub algorithm: Option<String>,
+}
+
+impl DnssecKeySelector {
+    /// Select a DNSSEC key by key tag.
+    pub fn new(key_tag: u16) -> Self {
+        Self {
+            key_tag,
+            algorithm: None,
+        }
+    }
+
+    /// Disambiguate the key with its DNSSEC algorithm identifier.
+    pub fn with_algorithm(mut self, algorithm: impl Into<String>) -> Self {
+        self.algorithm = Some(algorithm.into());
+        self
+    }
+}
 
 /// An rndc command to send to a BIND9 server.
 ///
@@ -25,39 +268,51 @@ use bind9_sdk_core::traits::{FrozenZone, ServerStatus};
 /// let cmd = RndcCommand::Status;
 /// assert_eq!(cmd.to_command_string(), "status");
 ///
-/// let cmd = RndcCommand::ReloadZone { zone: "example.com".into() };
-/// assert_eq!(cmd.to_command_string(), "reload example.com");
+/// let target = ZoneTarget::new(DomainName::new("example.com.").unwrap());
+/// let cmd = RndcCommand::Reload { target: Some(target) };
+/// assert_eq!(cmd.to_command_string(), "reload example.com.");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RndcCommand {
     /// Query server status.
     Status,
-    /// Reload all zones and configuration.
-    Reload,
-    /// Reload a specific zone.
-    ReloadZone { zone: String },
+    /// Reload configuration and either all zones or one selected zone.
+    Reload { target: Option<ZoneTarget> },
     /// Refresh a secondary zone from its primary.
-    Refresh { zone: String },
+    Refresh { target: ZoneTarget },
     /// Force a zone retransfer from primary.
-    Retransfer { zone: String },
-    /// Freeze a zone (stop dynamic updates).
-    Freeze { zone: String },
-    /// Thaw a frozen zone (resume dynamic updates).
-    Thaw { zone: String },
+    Retransfer { target: ZoneTarget },
+    /// Freeze all dynamic zones or one selected zone.
+    Freeze { target: Option<ZoneTarget> },
+    /// Thaw all dynamic zones or one selected zone.
+    Thaw { target: Option<ZoneTarget> },
     /// Synchronize zone journal to zone file.
     /// If `zone` is `None`, syncs all zones.
-    Sync { zone: Option<String> },
-    /// Flush all caches.
-    Flush,
+    Sync {
+        /// Remove journal files after synchronizing.
+        clean: bool,
+        /// Optional zone target; `None` synchronizes all dynamic zones.
+        target: Option<ZoneTarget>,
+    },
+    /// Flush all caches or one view's cache.
+    Flush { view: Option<String> },
     /// Flush a specific name from cache.
-    FlushName { name: String },
+    FlushName {
+        name: DomainName,
+        view: Option<String>,
+    },
+    /// Flush a name and all names below it from cache.
+    FlushTree {
+        name: DomainName,
+        view: Option<String>,
+    },
     /// Dump statistics to the statistics file.
     Stats,
     /// Dump the database to the dump file.
-    DumpDb,
+    DumpDb { options: DumpDbOptions },
     /// Send NOTIFY for a zone.
-    Notify { zone: String },
+    Notify { target: ZoneTarget },
     /// Set debug trace level.
     /// If `level` is `None`, increments by 1.
     Trace { level: Option<u32> },
@@ -66,33 +321,98 @@ pub enum RndcCommand {
     /// Reload configuration and add/remove zones.
     Reconfig,
     /// Sign a zone with DNSSEC keys.
-    Sign { zone: String },
-    /// Enable or disable DNSSEC validation.
-    Validation { enable: bool },
+    Sign { target: ZoneTarget },
+    /// Maintain DNSSEC signing state.
+    Signing {
+        action: SigningAction,
+        target: ZoneTarget,
+    },
+    /// Control DNSSEC validation.
+    Validation {
+        action: ValidationAction,
+        view: Option<String>,
+    },
     /// Add a zone at runtime.
-    AddZone { zone: String, config: String },
+    AddZone { target: ZoneTarget, config: String },
     /// Modify a zone's configuration at runtime.
-    ModZone { zone: String, config: String },
+    ModZone { target: ZoneTarget, config: String },
     /// Delete a zone at runtime.
-    DelZone { zone: String },
+    DelZone { target: ZoneTarget, clean: bool },
     /// Show a zone's runtime configuration.
-    ShowZone { zone: String },
-    /// Managed-keys operations.
-    Managed { subcommand: String },
+    ShowZone { target: ZoneTarget },
+    /// RFC 5011 managed-key operation.
+    ManagedKeys {
+        action: ManagedKeysAction,
+        class: Option<RecordClass>,
+        view: Option<String>,
+    },
     /// Query zone status.
-    ZoneStatus { zone: String },
-    /// Negative Trust Anchor operations.
-    /// - `domain: None` = list all NTAs
-    /// - `domain: Some(d), lifetime: Some(l)` = add NTA
-    /// - `domain: Some(d), lifetime: None` = remove NTA
-    NtA {
-        domain: Option<String>,
-        lifetime: Option<u32>,
+    ZoneStatus { target: ZoneTarget },
+    /// List all negative trust anchors.
+    NtaList,
+    /// Add a negative trust anchor.
+    NtaAdd {
+        domain: DomainName,
+        lifetime: Option<Duration>,
+        force: bool,
+        view: Option<String>,
+    },
+    /// Remove a negative trust anchor.
+    NtaRemove {
+        domain: DomainName,
+        view: Option<String>,
     },
     /// Query DNSSEC status for a zone.
-    DnssecStatus { zone: String },
-    /// Check DS record publication status for a zone.
-    DnssecCheckDs { zone: String },
+    DnssecStatus { target: ZoneTarget },
+    /// Mark DS publication state for a zone key.
+    DnssecCheckDs {
+        target: ZoneTarget,
+        state: DsState,
+        key: Option<DnssecKeySelector>,
+        when: Option<String>,
+    },
+    /// Update DNSSEC keys without signing immediately.
+    LoadKeys { target: ZoneTarget },
+    /// Manually roll a DNSSEC policy key.
+    DnssecRollover {
+        target: ZoneTarget,
+        key: DnssecKeySelector,
+        when: Option<String>,
+    },
+    /// Reopen the DNSTAP output file.
+    DnstapReopen,
+    /// Roll DNSTAP output files, optionally retaining `count` files.
+    DnstapRoll { count: Option<u32> },
+    /// Show fetch-limit throttling state.
+    FetchLimit { view: Option<String> },
+    /// Save pending updates and stop named.
+    Stop { report_pid: bool },
+    /// Stop named without saving pending updates.
+    Halt { report_pid: bool },
+    /// Import a signed-key-response file for offline KSK signing.
+    SkrImport { file: String, target: ZoneTarget },
+    /// Control or dump memory profiling.
+    MemProf { action: Option<MemProfAction> },
+    /// Toggle or explicitly set query logging.
+    QueryLog { action: Option<Toggle> },
+    /// Dump currently recursing queries.
+    Recursing,
+    /// Reset selected statistics counters.
+    ResetStats { counters: Vec<String> },
+    /// Toggle or explicitly set response logging.
+    ResponseLog { action: Option<Toggle> },
+    /// Rescan network interfaces.
+    Scan,
+    /// Write security roots for the selected views.
+    SecRoots { views: Vec<String> },
+    /// Control stale-answer serving.
+    ServeStale {
+        action: Option<ServeStaleAction>,
+        class: Option<RecordClass>,
+        view: Option<String>,
+    },
+    /// Display or update TCP timeout values.
+    TcpTimeouts { values: Option<TcpTimeoutValues> },
     /// Raw command string -- escape hatch for commands not yet in the enum.
     Raw(String),
 }
@@ -105,47 +425,296 @@ impl RndcCommand {
     pub fn to_command_string(&self) -> String {
         match self {
             Self::Status => "status".to_string(),
-            Self::Reload => "reload".to_string(),
-            Self::ReloadZone { zone } => format!("reload {zone}"),
-            Self::Refresh { zone } => format!("refresh {zone}"),
-            Self::Retransfer { zone } => format!("retransfer {zone}"),
-            Self::Freeze { zone } => format!("freeze {zone}"),
-            Self::Thaw { zone } => format!("thaw {zone}"),
-            Self::Sync { zone: Some(z) } => format!("sync {z}"),
-            Self::Sync { zone: None } => "sync".to_string(),
-            Self::Flush => "flush".to_string(),
-            Self::FlushName { name } => format!("flush {name}"),
+            Self::Reload { target } => command_with_target("reload", target.as_ref()),
+            Self::Refresh { target } => command_with_target("refresh", Some(target)),
+            Self::Retransfer { target } => command_with_target("retransfer", Some(target)),
+            Self::Freeze { target } => command_with_target("freeze", target.as_ref()),
+            Self::Thaw { target } => command_with_target("thaw", target.as_ref()),
+            Self::Sync { clean, target } => {
+                let mut command = String::from("sync");
+                if *clean {
+                    command.push_str(" -clean");
+                }
+                if let Some(target) = target {
+                    command.push(' ');
+                    command.push_str(&target.command_args());
+                }
+                command
+            }
+            Self::Flush { view } => command_with_optional_token("flush", view.as_deref()),
+            Self::FlushName { name, view } => {
+                command_with_name_and_view("flushname", name, view.as_deref())
+            }
+            Self::FlushTree { name, view } => {
+                command_with_name_and_view("flushtree", name, view.as_deref())
+            }
             Self::Stats => "stats".to_string(),
-            Self::DumpDb => "dumpdb".to_string(),
-            Self::Notify { zone } => format!("notify {zone}"),
+            Self::DumpDb { options } => {
+                let mut command = String::from("dumpdb");
+                for category in &options.categories {
+                    command.push(' ');
+                    command.push_str(&category.to_string());
+                }
+                for view in &options.views {
+                    command.push(' ');
+                    command.push_str(view);
+                }
+                command
+            }
+            Self::Notify { target } => command_with_target("notify", Some(target)),
             Self::Trace { level: Some(l) } => format!("trace {l}"),
             Self::Trace { level: None } => "trace".to_string(),
             Self::NoTrace => "notrace".to_string(),
             Self::Reconfig => "reconfig".to_string(),
-            Self::Sign { zone } => format!("sign {zone}"),
-            Self::Validation { enable: true } => "validation on".to_string(),
-            Self::Validation { enable: false } => "validation off".to_string(),
-            Self::AddZone { zone, config } => format!("addzone {zone} {config}"),
-            Self::ModZone { zone, config } => format!("modzone {zone} {config}"),
-            Self::DelZone { zone } => format!("delzone {zone}"),
-            Self::ShowZone { zone } => format!("showzone {zone}"),
-            Self::Managed { subcommand } => format!("managed-keys {subcommand}"),
-            Self::ZoneStatus { zone } => format!("zonestatus {zone}"),
-            Self::NtA {
-                domain: None,
-                lifetime: _,
-            } => "nta -dump".to_string(),
-            Self::NtA {
-                domain: Some(d),
-                lifetime: Some(l),
-            } => format!("nta -lifetime {l} {d}"),
-            Self::NtA {
-                domain: Some(d),
-                lifetime: None,
-            } => format!("nta -remove {d}"),
-            Self::DnssecStatus { zone } => format!("dnssec -status {zone}"),
-            Self::DnssecCheckDs { zone } => format!("dnssec -checkds {zone}"),
+            Self::Sign { target } => command_with_target("sign", Some(target)),
+            Self::Signing { action, target } => signing_command(action, target),
+            Self::Validation { action, view } => {
+                command_with_optional_token(&format!("validation {action}"), view.as_deref())
+            }
+            Self::AddZone { target, config } => {
+                format!("addzone {} {config}", target.command_args())
+            }
+            Self::ModZone { target, config } => {
+                format!("modzone {} {config}", target.command_args())
+            }
+            Self::DelZone { target, clean } => {
+                let command = if *clean { "delzone -clean" } else { "delzone" };
+                command_with_target(command, Some(target))
+            }
+            Self::ShowZone { target } => command_with_target("showzone", Some(target)),
+            Self::ManagedKeys {
+                action,
+                class,
+                view,
+            } => command_with_class_and_view(
+                &format!("managed-keys {action}"),
+                *class,
+                view.as_deref(),
+            ),
+            Self::ZoneStatus { target } => command_with_target("zonestatus", Some(target)),
+            Self::NtaList => "nta -dump".to_string(),
+            Self::NtaAdd {
+                domain,
+                lifetime,
+                force,
+                view,
+            } => {
+                let mut command = String::from("nta");
+                if let Some(lifetime) = lifetime {
+                    command.push_str(" -lifetime ");
+                    command.push_str(&lifetime.as_secs().to_string());
+                }
+                if *force {
+                    command.push_str(" -force");
+                }
+                command.push(' ');
+                command.push_str(&domain.to_string());
+                if let Some(view) = view {
+                    command.push(' ');
+                    command.push_str(view);
+                }
+                command
+            }
+            Self::NtaRemove { domain, view } => {
+                let mut command = format!("nta -remove {domain}");
+                if let Some(view) = view {
+                    command.push(' ');
+                    command.push_str(view);
+                }
+                command
+            }
+            Self::DnssecStatus { target } => command_with_target("dnssec -status", Some(target)),
+            Self::DnssecCheckDs {
+                target,
+                state,
+                key,
+                when,
+            } => {
+                let mut command = String::from("dnssec -checkds");
+                append_key_options(&mut command, key.as_ref(), when.as_deref());
+                command.push(' ');
+                command.push_str(&state.to_string());
+                command.push(' ');
+                command.push_str(&target.command_args());
+                command
+            }
+            Self::LoadKeys { target } => format!("loadkeys {}", target.command_args()),
+            Self::DnssecRollover { target, key, when } => {
+                let mut command = format!("dnssec -rollover -key {}", key.key_tag);
+                if let Some(algorithm) = &key.algorithm {
+                    command.push_str(" -alg ");
+                    command.push_str(algorithm);
+                }
+                if let Some(when) = when {
+                    command.push_str(" -when ");
+                    command.push_str(when);
+                }
+                command.push(' ');
+                command.push_str(&target.command_args());
+                command
+            }
+            Self::DnstapReopen => "dnstap -reopen".into(),
+            Self::DnstapRoll { count } => command_with_optional_value("dnstap -roll", *count),
+            Self::FetchLimit { view } => command_with_optional_token("fetchlimit", view.as_deref()),
+            Self::Stop { report_pid } => {
+                if *report_pid {
+                    "stop -p".into()
+                } else {
+                    "stop".into()
+                }
+            }
+            Self::Halt { report_pid } => {
+                if *report_pid {
+                    "halt -p".into()
+                } else {
+                    "halt".into()
+                }
+            }
+            Self::SkrImport { file, target } => {
+                format!("skr -import {file} {}", target.command_args())
+            }
+            Self::MemProf { action } => match action {
+                Some(action) => format!("memprof {action}"),
+                None => "memprof".into(),
+            },
+            Self::QueryLog { action } => match action {
+                Some(action) => format!("querylog {action}"),
+                None => "querylog".into(),
+            },
+            Self::Recursing => "recursing".into(),
+            Self::ResetStats { counters } => {
+                let mut command = String::from("reset-stats");
+                for counter in counters {
+                    command.push(' ');
+                    command.push_str(counter);
+                }
+                command
+            }
+            Self::ResponseLog { action } => match action {
+                Some(action) => format!("responselog {action}"),
+                None => "responselog".into(),
+            },
+            Self::Scan => "scan".into(),
+            Self::SecRoots { views } => {
+                let mut command = String::from("secroots");
+                for view in views {
+                    command.push(' ');
+                    command.push_str(view);
+                }
+                command
+            }
+            Self::ServeStale {
+                action,
+                class,
+                view,
+            } => {
+                let base = action
+                    .map(|action| format!("serve-stale {action}"))
+                    .unwrap_or_else(|| "serve-stale".into());
+                command_with_class_and_view(&base, *class, view.as_deref())
+            }
+            Self::TcpTimeouts { values } => match values {
+                Some(values) => format!(
+                    "tcp-timeouts {} {} {} {}",
+                    values.initial, values.idle, values.keepalive, values.advertised
+                ),
+                None => "tcp-timeouts".into(),
+            },
             Self::Raw(cmd) => cmd.clone(),
+        }
+    }
+}
+
+fn command_with_target(command: &str, target: Option<&ZoneTarget>) -> String {
+    match target {
+        Some(target) => format!("{command} {}", target.command_args()),
+        None => command.into(),
+    }
+}
+
+fn command_with_optional_token(command: &str, token: Option<&str>) -> String {
+    match token {
+        Some(token) => format!("{command} {token}"),
+        None => command.into(),
+    }
+}
+
+fn command_with_optional_value(command: &str, value: Option<u32>) -> String {
+    match value {
+        Some(value) => format!("{command} {value}"),
+        None => command.into(),
+    }
+}
+
+fn command_with_name_and_view(command: &str, name: &DomainName, view: Option<&str>) -> String {
+    command_with_optional_token(&format!("{command} {name}"), view)
+}
+
+fn command_with_class_and_view(
+    command: &str,
+    class: Option<RecordClass>,
+    view: Option<&str>,
+) -> String {
+    let mut output = String::from(command);
+    if let Some(class) = class {
+        output.push(' ');
+        output.push_str(&class.to_string());
+    } else if view.is_some() {
+        output.push_str(" IN");
+    }
+    if let Some(view) = view {
+        output.push(' ');
+        output.push_str(view);
+    }
+    output
+}
+
+fn append_key_options(command: &mut String, key: Option<&DnssecKeySelector>, when: Option<&str>) {
+    if let Some(key) = key {
+        command.push_str(" -key ");
+        command.push_str(&key.key_tag.to_string());
+        if let Some(algorithm) = &key.algorithm {
+            command.push_str(" -alg ");
+            command.push_str(algorithm);
+        }
+    }
+    if let Some(when) = when {
+        command.push_str(" -when ");
+        command.push_str(when);
+    }
+}
+
+fn signing_command(action: &SigningAction, target: &ZoneTarget) -> String {
+    let operation = match action {
+        SigningAction::ClearAll => "-clear all".into(),
+        SigningAction::ClearKey { key } => format!("-clear {key}"),
+        SigningAction::List => "-list".into(),
+        SigningAction::Nsec3Param {
+            hash,
+            flags,
+            iterations,
+            salt,
+        } => format!("-nsec3param {hash} {flags} {iterations} {salt}"),
+        SigningAction::Nsec3ParamNone => "-nsec3param none".into(),
+        SigningAction::Serial(serial) => format!("-serial {serial}"),
+    };
+    format!("signing {operation} {}", target.command_args())
+}
+
+/// Parent DS state reported to BIND's DNSSEC policy engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DsState {
+    /// The DS record has been published in the parent zone.
+    Published,
+    /// The DS record has been withdrawn from the parent zone.
+    Withdrawn,
+}
+
+impl fmt::Display for DsState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Published => f.write_str("published"),
+            Self::Withdrawn => f.write_str("withdrawn"),
         }
     }
 }
@@ -291,6 +860,10 @@ mod tests {
 
     // -- RndcCommand serialization tests --
 
+    fn target(name: &str) -> ZoneTarget {
+        ZoneTarget::new(DomainName::new(name).unwrap())
+    }
+
     #[test]
     fn command_status() {
         assert_eq!(RndcCommand::Status.to_command_string(), "status");
@@ -298,74 +871,85 @@ mod tests {
 
     #[test]
     fn command_reload() {
-        assert_eq!(RndcCommand::Reload.to_command_string(), "reload");
+        assert_eq!(
+            RndcCommand::Reload { target: None }.to_command_string(),
+            "reload"
+        );
     }
 
     #[test]
     fn command_reload_zone() {
-        let cmd = RndcCommand::ReloadZone {
-            zone: "example.com".into(),
+        let cmd = RndcCommand::Reload {
+            target: Some(target("example.com.")),
         };
-        assert_eq!(cmd.to_command_string(), "reload example.com");
+        assert_eq!(cmd.to_command_string(), "reload example.com.");
     }
 
     #[test]
     fn command_refresh() {
         let cmd = RndcCommand::Refresh {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "refresh example.com");
+        assert_eq!(cmd.to_command_string(), "refresh example.com.");
     }
 
     #[test]
     fn command_retransfer() {
         let cmd = RndcCommand::Retransfer {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "retransfer example.com");
+        assert_eq!(cmd.to_command_string(), "retransfer example.com.");
     }
 
     #[test]
     fn command_freeze() {
         let cmd = RndcCommand::Freeze {
-            zone: "example.com".into(),
+            target: Some(target("example.com.")),
         };
-        assert_eq!(cmd.to_command_string(), "freeze example.com");
+        assert_eq!(cmd.to_command_string(), "freeze example.com.");
     }
 
     #[test]
     fn command_thaw() {
         let cmd = RndcCommand::Thaw {
-            zone: "example.com".into(),
+            target: Some(target("example.com.")),
         };
-        assert_eq!(cmd.to_command_string(), "thaw example.com");
+        assert_eq!(cmd.to_command_string(), "thaw example.com.");
     }
 
     #[test]
     fn command_sync_all() {
-        let cmd = RndcCommand::Sync { zone: None };
+        let cmd = RndcCommand::Sync {
+            clean: false,
+            target: None,
+        };
         assert_eq!(cmd.to_command_string(), "sync");
     }
 
     #[test]
     fn command_sync_zone() {
         let cmd = RndcCommand::Sync {
-            zone: Some("example.com".into()),
+            clean: false,
+            target: Some(ZoneTarget::new(DomainName::new("example.com.").unwrap())),
         };
-        assert_eq!(cmd.to_command_string(), "sync example.com");
+        assert_eq!(cmd.to_command_string(), "sync example.com.");
     }
 
     #[test]
     fn command_flush() {
-        assert_eq!(RndcCommand::Flush.to_command_string(), "flush");
+        assert_eq!(
+            RndcCommand::Flush { view: None }.to_command_string(),
+            "flush"
+        );
     }
 
     #[test]
     fn command_flush_name() {
         let cmd = RndcCommand::FlushName {
-            name: "stale.example.com".into(),
+            name: DomainName::new("stale.example.com.").unwrap(),
+            view: None,
         };
-        assert_eq!(cmd.to_command_string(), "flush stale.example.com");
+        assert_eq!(cmd.to_command_string(), "flushname stale.example.com.");
     }
 
     #[test]
@@ -375,15 +959,21 @@ mod tests {
 
     #[test]
     fn command_dumpdb() {
-        assert_eq!(RndcCommand::DumpDb.to_command_string(), "dumpdb");
+        assert_eq!(
+            RndcCommand::DumpDb {
+                options: DumpDbOptions::default()
+            }
+            .to_command_string(),
+            "dumpdb"
+        );
     }
 
     #[test]
     fn command_notify() {
         let cmd = RndcCommand::Notify {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "notify example.com");
+        assert_eq!(cmd.to_command_string(), "notify example.com.");
     }
 
     #[test]
@@ -411,67 +1001,76 @@ mod tests {
     #[test]
     fn command_sign() {
         let cmd = RndcCommand::Sign {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "sign example.com");
+        assert_eq!(cmd.to_command_string(), "sign example.com.");
     }
 
     #[test]
     fn command_validation_on() {
-        let cmd = RndcCommand::Validation { enable: true };
+        let cmd = RndcCommand::Validation {
+            action: ValidationAction::On,
+            view: None,
+        };
         assert_eq!(cmd.to_command_string(), "validation on");
     }
 
     #[test]
     fn command_validation_off() {
-        let cmd = RndcCommand::Validation { enable: false };
+        let cmd = RndcCommand::Validation {
+            action: ValidationAction::Off,
+            view: None,
+        };
         assert_eq!(cmd.to_command_string(), "validation off");
     }
 
     #[test]
     fn command_addzone() {
         let cmd = RndcCommand::AddZone {
-            zone: "new.example.com".into(),
+            target: target("new.example.com."),
             config: "{ type primary; file \"new.zone\"; };".into(),
         };
         assert_eq!(
             cmd.to_command_string(),
-            "addzone new.example.com { type primary; file \"new.zone\"; };"
+            "addzone new.example.com. { type primary; file \"new.zone\"; };"
         );
     }
 
     #[test]
     fn command_modzone() {
         let cmd = RndcCommand::ModZone {
-            zone: "example.com".into(),
+            target: target("example.com."),
             config: "{ type primary; file \"updated.zone\"; };".into(),
         };
         assert_eq!(
             cmd.to_command_string(),
-            "modzone example.com { type primary; file \"updated.zone\"; };"
+            "modzone example.com. { type primary; file \"updated.zone\"; };"
         );
     }
 
     #[test]
     fn command_delzone() {
         let cmd = RndcCommand::DelZone {
-            zone: "old.example.com".into(),
+            target: target("old.example.com."),
+            clean: false,
         };
-        assert_eq!(cmd.to_command_string(), "delzone old.example.com");
+        assert_eq!(cmd.to_command_string(), "delzone old.example.com.");
     }
 
     #[test]
     fn command_showzone() {
         let cmd = RndcCommand::ShowZone {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "showzone example.com");
+        assert_eq!(cmd.to_command_string(), "showzone example.com.");
     }
 
     #[test]
     fn command_managed_keys() {
-        let cmd = RndcCommand::Managed {
-            subcommand: "status".into(),
+        let cmd = RndcCommand::ManagedKeys {
+            action: ManagedKeysAction::Status,
+            class: None,
+            view: None,
         };
         assert_eq!(cmd.to_command_string(), "managed-keys status");
     }
@@ -479,67 +1078,70 @@ mod tests {
     #[test]
     fn command_zonestatus() {
         let cmd = RndcCommand::ZoneStatus {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "zonestatus example.com");
+        assert_eq!(cmd.to_command_string(), "zonestatus example.com.");
     }
 
     #[test]
     fn command_nta_list() {
-        let cmd = RndcCommand::NtA {
-            domain: None,
-            lifetime: None,
-        };
+        let cmd = RndcCommand::NtaList;
         assert_eq!(cmd.to_command_string(), "nta -dump");
     }
 
     #[test]
     fn command_nta_add() {
-        let cmd = RndcCommand::NtA {
-            domain: Some("bad.example.com".into()),
-            lifetime: Some(3600),
+        let cmd = RndcCommand::NtaAdd {
+            domain: DomainName::new("bad.example.com.").unwrap(),
+            lifetime: Some(Duration::from_secs(3600)),
+            force: false,
+            view: None,
         };
         assert_eq!(
             cmd.to_command_string(),
-            "nta -lifetime 3600 bad.example.com"
+            "nta -lifetime 3600 bad.example.com."
         );
     }
 
     #[test]
     fn command_nta_remove() {
-        let cmd = RndcCommand::NtA {
-            domain: Some("bad.example.com".into()),
-            lifetime: None,
+        let cmd = RndcCommand::NtaRemove {
+            domain: DomainName::new("bad.example.com.").unwrap(),
+            view: None,
         };
-        assert_eq!(cmd.to_command_string(), "nta -remove bad.example.com");
+        assert_eq!(cmd.to_command_string(), "nta -remove bad.example.com.");
     }
 
     #[test]
     fn command_dnssec_status() {
         let cmd = RndcCommand::DnssecStatus {
-            zone: "example.com".into(),
+            target: target("example.com."),
         };
-        assert_eq!(cmd.to_command_string(), "dnssec -status example.com");
+        assert_eq!(cmd.to_command_string(), "dnssec -status example.com.");
     }
 
     #[test]
     fn command_dnssec_checkds() {
         let published = RndcCommand::DnssecCheckDs {
-            zone: "example.com".into(),
+            target: target("example.com."),
             state: DsState::Published,
+            key: None,
+            when: None,
         };
         assert_eq!(
             published.to_command_string(),
-            "dnssec -checkds published example.com"
+            "dnssec -checkds published example.com."
         );
 
         let withdrawn = RndcCommand::DnssecCheckDs {
-            zone: "example.com".into(),
+            target: target("example.com."),
             state: DsState::Withdrawn,
+            key: None,
+            when: None,
         };
         assert_eq!(
             withdrawn.to_command_string(),
-            "dnssec -checkds withdrawn example.com"
+            "dnssec -checkds withdrawn example.com."
         );
     }
 
@@ -553,6 +1155,264 @@ mod tests {
     fn command_display_matches_command_string() {
         let cmd = RndcCommand::Status;
         assert_eq!(format!("{cmd}"), cmd.to_command_string());
+    }
+
+    #[test]
+    fn command_loadkeys_uses_typed_zone_target() {
+        let target = ZoneTarget::new(DomainName::new("example.com.").unwrap())
+            .with_class(RecordClass::IN)
+            .with_view("external");
+        assert_eq!(
+            RndcCommand::LoadKeys { target }.to_command_string(),
+            "loadkeys example.com. IN external"
+        );
+    }
+
+    #[test]
+    fn command_dnssec_rollover_includes_key_algorithm_and_time() {
+        let command = RndcCommand::DnssecRollover {
+            target: ZoneTarget::new(DomainName::new("example.com.").unwrap()),
+            key: DnssecKeySelector::new(12345).with_algorithm("13"),
+            when: Some("20260620010000".into()),
+        };
+        assert_eq!(
+            command.to_command_string(),
+            "dnssec -rollover -key 12345 -alg 13 -when 20260620010000 example.com."
+        );
+    }
+
+    #[test]
+    fn command_shutdown_variants_preserve_save_semantics() {
+        assert_eq!(
+            RndcCommand::Stop { report_pid: false }.to_command_string(),
+            "stop"
+        );
+        assert_eq!(
+            RndcCommand::Stop { report_pid: true }.to_command_string(),
+            "stop -p"
+        );
+        assert_eq!(
+            RndcCommand::Halt { report_pid: false }.to_command_string(),
+            "halt"
+        );
+        assert_eq!(
+            RndcCommand::Halt { report_pid: true }.to_command_string(),
+            "halt -p"
+        );
+    }
+
+    #[test]
+    fn command_querylog_supports_toggle_and_explicit_state() {
+        assert_eq!(
+            RndcCommand::QueryLog { action: None }.to_command_string(),
+            "querylog"
+        );
+        assert_eq!(
+            RndcCommand::QueryLog {
+                action: Some(Toggle::On)
+            }
+            .to_command_string(),
+            "querylog on"
+        );
+        assert_eq!(
+            RndcCommand::QueryLog {
+                action: Some(Toggle::Off)
+            }
+            .to_command_string(),
+            "querylog off"
+        );
+    }
+
+    #[test]
+    fn command_recursing_and_secroots() {
+        assert_eq!(RndcCommand::Recursing.to_command_string(), "recursing");
+        assert_eq!(
+            RndcCommand::SecRoots {
+                views: vec!["_default".into(), "internal".into()]
+            }
+            .to_command_string(),
+            "secroots _default internal"
+        );
+    }
+
+    #[test]
+    fn command_dumpdb_has_typed_categories_and_views() {
+        let command = RndcCommand::DumpDb {
+            options: DumpDbOptions {
+                categories: vec![DumpDbCategory::Cache, DumpDbCategory::Expired],
+                views: vec!["internal".into()],
+            },
+        };
+        assert_eq!(
+            command.to_command_string(),
+            "dumpdb -cache -expired internal"
+        );
+    }
+
+    #[test]
+    fn command_sync_clean_all_and_targeted_zone() {
+        assert_eq!(
+            RndcCommand::Sync {
+                clean: true,
+                target: None
+            }
+            .to_command_string(),
+            "sync -clean"
+        );
+        assert_eq!(
+            RndcCommand::Sync {
+                clean: false,
+                target: Some(ZoneTarget::new(DomainName::new("example.com.").unwrap()))
+            }
+            .to_command_string(),
+            "sync example.com."
+        );
+    }
+
+    #[test]
+    fn command_remaining_bind_9_20_surface_serializes_exactly() {
+        let zone = || target("example.com.");
+
+        assert_eq!(
+            RndcCommand::DnstapReopen.to_command_string(),
+            "dnstap -reopen"
+        );
+        assert_eq!(
+            RndcCommand::DnstapRoll { count: Some(4) }.to_command_string(),
+            "dnstap -roll 4"
+        );
+        assert_eq!(
+            RndcCommand::FetchLimit {
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "fetchlimit internal"
+        );
+        assert_eq!(
+            RndcCommand::FlushTree {
+                name: DomainName::new("example.com.").unwrap(),
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "flushtree example.com. internal"
+        );
+        assert_eq!(
+            RndcCommand::Freeze { target: None }.to_command_string(),
+            "freeze"
+        );
+        assert_eq!(
+            RndcCommand::Thaw { target: None }.to_command_string(),
+            "thaw"
+        );
+        assert_eq!(
+            RndcCommand::SkrImport {
+                file: "/var/lib/bind/offline.skr".into(),
+                target: zone()
+            }
+            .to_command_string(),
+            "skr -import /var/lib/bind/offline.skr example.com."
+        );
+        assert_eq!(
+            RndcCommand::ManagedKeys {
+                action: ManagedKeysAction::Refresh,
+                class: None,
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "managed-keys refresh IN internal"
+        );
+        assert_eq!(
+            RndcCommand::MemProf {
+                action: Some(MemProfAction::Dump)
+            }
+            .to_command_string(),
+            "memprof dump"
+        );
+        assert_eq!(
+            RndcCommand::ResetStats {
+                counters: vec!["QrySuccess".into(), "QryFailure".into()]
+            }
+            .to_command_string(),
+            "reset-stats QrySuccess QryFailure"
+        );
+        assert_eq!(
+            RndcCommand::ResponseLog {
+                action: Some(Toggle::On)
+            }
+            .to_command_string(),
+            "responselog on"
+        );
+        assert_eq!(RndcCommand::Scan.to_command_string(), "scan");
+        assert_eq!(
+            RndcCommand::ServeStale {
+                action: Some(ServeStaleAction::Status),
+                class: None,
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "serve-stale status IN internal"
+        );
+        assert_eq!(
+            RndcCommand::Signing {
+                action: SigningAction::Nsec3Param {
+                    hash: 1,
+                    flags: 0,
+                    iterations: 10,
+                    salt: "A1B2".into()
+                },
+                target: zone()
+            }
+            .to_command_string(),
+            "signing -nsec3param 1 0 10 A1B2 example.com."
+        );
+        assert_eq!(
+            RndcCommand::TcpTimeouts {
+                values: Some(TcpTimeoutValues {
+                    initial: 30,
+                    idle: 300,
+                    keepalive: 30,
+                    advertised: 30
+                })
+            }
+            .to_command_string(),
+            "tcp-timeouts 30 300 30 30"
+        );
+        assert_eq!(
+            RndcCommand::Validation {
+                action: ValidationAction::Status,
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "validation status internal"
+        );
+        assert_eq!(
+            RndcCommand::DelZone {
+                target: zone(),
+                clean: true
+            }
+            .to_command_string(),
+            "delzone -clean example.com."
+        );
+        assert_eq!(
+            RndcCommand::DnssecCheckDs {
+                target: zone(),
+                state: DsState::Published,
+                key: Some(DnssecKeySelector::new(12345).with_algorithm("13")),
+                when: Some("20260620010000".into())
+            }
+            .to_command_string(),
+            "dnssec -checkds -key 12345 -alg 13 -when 20260620010000 published example.com."
+        );
+        assert_eq!(
+            RndcCommand::NtaAdd {
+                domain: DomainName::new("broken.example.").unwrap(),
+                lifetime: Some(Duration::from_secs(900)),
+                force: true,
+                view: Some("internal".into())
+            }
+            .to_command_string(),
+            "nta -lifetime 900 -force broken.example. internal"
+        );
     }
 
     // -- RndcResponse tests --

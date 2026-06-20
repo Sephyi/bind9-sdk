@@ -47,11 +47,12 @@ pub use dnssec::{CdsRecord, DigestType, compute_key_tag};
 pub use domain::{DomainName, Label};
 pub use error::CoreError;
 pub use protocol::{Rcode, RecordType};
-pub use rdata::RecordData;
+pub use rdata::{RecordData, TxtString};
 pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};
 pub use traits::{
-    DynamicUpdater, FrozenZone, NamedControl, ServerStats, ServerStatus, StatsClient, ZoneManager,
-    ZoneStats,
+    CounterSet, DynamicUpdater, FrozenZone, MemoryContextStats, MemoryStats, NamedControl,
+    NamedCounter, ServerStats, ServerStatsRates, ServerStatus, StatsClient, TrafficHistogram,
+    ViewStats, ZoneManager, ZoneStats,
 };
 pub use transfer::{Active, IxfrEvent, Pending, TransferKind, TransferRecord, TransferSession};
 pub use tsig::{TsigAlgorithm, TsigKey, TsigRecord};

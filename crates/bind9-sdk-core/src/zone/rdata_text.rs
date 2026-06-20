@@ -9,7 +9,7 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::domain::DomainName;
 use crate::error::CoreError;
-use crate::rdata::RecordData;
+use crate::rdata::{RecordData, TxtString};
 use crate::record::{Serial, Ttl};
 
 /// Parse record data from zone file text tokens.
@@ -358,8 +358,53 @@ fn parse_txt(tokens: &[&str]) -> Result<RecordData, CoreError> {
             reason: "TXT record expects at least 1 token".into(),
         });
     }
-    let strings: Vec<String> = tokens.iter().map(|t| String::from(*t)).collect();
+    let strings = tokens
+        .iter()
+        .map(|token| TxtString::new(decode_character_string(token)?))
+        .collect::<Result<Vec<_>, CoreError>>()?;
     Ok(RecordData::Txt(strings))
+}
+
+fn decode_character_string(token: &str) -> Result<Vec<u8>, CoreError> {
+    let bytes = token.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos] != b'\\' {
+            decoded.push(bytes[pos]);
+            pos += 1;
+            continue;
+        }
+        if pos + 1 >= bytes.len() {
+            return Err(CoreError::ZoneParse {
+                line: 0,
+                column: None,
+                reason: "TXT character-string ends with incomplete escape".into(),
+            });
+        }
+        if pos + 3 < bytes.len()
+            && bytes[pos + 1].is_ascii_digit()
+            && bytes[pos + 2].is_ascii_digit()
+            && bytes[pos + 3].is_ascii_digit()
+        {
+            let value = u16::from(bytes[pos + 1] - b'0') * 100
+                + u16::from(bytes[pos + 2] - b'0') * 10
+                + u16::from(bytes[pos + 3] - b'0');
+            if value > 255 {
+                return Err(CoreError::ZoneParse {
+                    line: 0,
+                    column: None,
+                    reason: format!("TXT decimal escape exceeds 255: `{token}`"),
+                });
+            }
+            decoded.push(value as u8);
+            pos += 4;
+        } else {
+            decoded.push(bytes[pos + 1]);
+            pos += 2;
+        }
+    }
+    Ok(decoded)
 }
 
 fn parse_srv(tokens: &[&str], origin: &DomainName) -> Result<RecordData, CoreError> {
@@ -623,22 +668,24 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
     s
 }
 
-fn serialize_txt(strings: &[String]) -> String {
+fn serialize_txt(strings: &[TxtString]) -> String {
     let mut out = String::new();
     for (i, s) in strings.iter().enumerate() {
         if i > 0 {
             out.push(' ');
         }
         out.push('"');
-        for ch in s.chars() {
-            if ch == '"' {
-                out.push('\\');
-                out.push('"');
-            } else if ch == '\\' {
-                out.push('\\');
-                out.push('\\');
-            } else {
-                out.push(ch);
+        for &byte in s.as_bytes() {
+            match byte {
+                b'"' | b'\\' => {
+                    out.push('\\');
+                    out.push(char::from(byte));
+                }
+                0x20..=0x7e => out.push(char::from(byte)),
+                _ => {
+                    use core::fmt::Write;
+                    let _ = write!(out, "\\{byte:03}");
+                }
             }
         }
         out.push('"');
@@ -662,6 +709,10 @@ mod tests {
 
     fn origin() -> DomainName {
         DomainName::new("example.com.").unwrap()
+    }
+
+    fn txt(value: &str) -> TxtString {
+        TxtString::from_text(value).unwrap()
     }
 
     // -- A record --
@@ -889,7 +940,7 @@ mod tests {
     #[test]
     fn parse_txt_single_string() {
         let rdata = parse_rdata("TXT", &["v=spf1 ~all"], &origin()).unwrap();
-        assert_eq!(rdata, RecordData::Txt(alloc::vec!["v=spf1 ~all".into()]));
+        assert_eq!(rdata, RecordData::Txt(alloc::vec![txt("v=spf1 ~all")]));
     }
 
     #[test]
@@ -899,9 +950,9 @@ mod tests {
         assert_eq!(
             rdata,
             RecordData::Txt(alloc::vec![
-                "v=spf1".into(),
-                "include:example.com".into(),
-                "~all".into(),
+                txt("v=spf1"),
+                txt("include:example.com"),
+                txt("~all"),
             ])
         );
     }
@@ -914,13 +965,13 @@ mod tests {
 
     #[test]
     fn serialize_txt_single() {
-        let rdata = RecordData::Txt(alloc::vec!["hello world".into()]);
+        let rdata = RecordData::Txt(alloc::vec![txt("hello world")]);
         assert_eq!(serialize_rdata(&rdata), "\"hello world\"");
     }
 
     #[test]
     fn serialize_txt_multiple() {
-        let rdata = RecordData::Txt(alloc::vec!["v=spf1".into(), "include:example.com".into(),]);
+        let rdata = RecordData::Txt(alloc::vec![txt("v=spf1"), txt("include:example.com")]);
         assert_eq!(
             serialize_rdata(&rdata),
             "\"v=spf1\" \"include:example.com\""
@@ -929,8 +980,30 @@ mod tests {
 
     #[test]
     fn serialize_txt_with_quote_in_value() {
-        let rdata = RecordData::Txt(alloc::vec!["has\"quote".into()]);
+        let rdata = RecordData::Txt(alloc::vec![
+            crate::rdata::TxtString::new(b"has\"quote".to_vec()).unwrap(),
+        ]);
         assert_eq!(serialize_rdata(&rdata), "\"has\\\"quote\"");
+    }
+
+    #[test]
+    fn parse_and_serialize_txt_embedded_nul() {
+        let rdata = parse_rdata("TXT", &[r"a\000b"], &origin()).unwrap();
+        let RecordData::Txt(strings) = &rdata else {
+            panic!("expected TXT");
+        };
+        assert_eq!(strings[0].as_bytes(), b"a\0b");
+        assert_eq!(serialize_rdata(&rdata), r#""a\000b""#);
+    }
+
+    #[test]
+    fn parse_and_serialize_txt_non_utf8_octet() {
+        let rdata = parse_rdata("TXT", &[r"\255"], &origin()).unwrap();
+        let RecordData::Txt(strings) = &rdata else {
+            panic!("expected TXT");
+        };
+        assert_eq!(strings[0].as_bytes(), &[0xff]);
+        assert_eq!(serialize_rdata(&rdata), r#""\255""#);
     }
 
     // -- SRV record --

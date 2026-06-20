@@ -18,8 +18,10 @@
 
 use std::time::Duration;
 
+use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_net::rndc::RndcConnection;
-use bind9_sdk_net::rndc::command::RndcCommand;
+use bind9_sdk_net::rndc::command::{RndcCommand, ZoneTarget};
+use bind9_sdk_net::rndc::dnssec::DnssecStatus;
 
 /// Brief delay to let BIND9's control channel release the previous connection.
 ///
@@ -86,7 +88,7 @@ async fn rndc_reload() {
     let conn = RndcConnection::connect(addr).await.expect("connect failed");
     let mut conn = conn.authenticate(&key).await.expect("auth failed");
     let resp = conn
-        .command(RndcCommand::Reload)
+        .command(RndcCommand::Reload { target: None })
         .await
         .expect("reload command failed");
 
@@ -138,5 +140,54 @@ async fn rndc_multiple_commands_on_same_connection() {
         .expect("stats command failed");
     assert!(resp2.is_success());
 
+    conn.close().await.expect("close failed");
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:9953"]
+async fn rndc_zone_status_returns_requested_zone() {
+    rndc_settle().await;
+    let addr = "127.0.0.1:9953".parse().unwrap();
+    let key = test_key();
+
+    let conn = RndcConnection::connect(addr).await.expect("connect failed");
+    let mut conn = conn.authenticate(&key).await.expect("auth failed");
+    let resp = conn
+        .command(RndcCommand::ZoneStatus {
+            target: ZoneTarget::new(DomainName::new("example.com.").unwrap()),
+        })
+        .await
+        .expect("zonestatus command failed");
+
+    assert!(resp.is_success(), "zonestatus failed: {resp:?}");
+    assert!(
+        resp.text.contains("example.com"),
+        "zonestatus output should identify the requested zone: {}",
+        resp.text
+    );
+    conn.close().await.expect("close failed");
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:9953"]
+async fn rndc_dnssec_status_parses_current_bind_output() {
+    rndc_settle().await;
+    let addr = "127.0.0.1:9953".parse().unwrap();
+    let key = test_key();
+
+    let conn = RndcConnection::connect(addr).await.expect("connect failed");
+    let mut conn = conn.authenticate(&key).await.expect("auth failed");
+    let resp = conn
+        .command(RndcCommand::DnssecStatus {
+            target: ZoneTarget::new(DomainName::new("dnssec.example.com.").unwrap()),
+        })
+        .await
+        .expect("dnssec status command failed");
+
+    assert!(resp.is_success(), "dnssec status failed: {resp:?}");
+    let status = DnssecStatus::parse(&resp.text)
+        .unwrap_or_else(|error| panic!("failed to parse {error}; raw output:\n{}", resp.text));
+    assert!(!status.policy.is_empty());
+    assert!(!status.keys.is_empty());
     conn.close().await.expect("close failed");
 }

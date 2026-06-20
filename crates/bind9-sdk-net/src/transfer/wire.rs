@@ -10,6 +10,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use bind9_sdk_core::TxtString;
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::protocol::RecordType;
 use bind9_sdk_core::rdata::RecordData;
@@ -275,10 +276,10 @@ pub fn parse_rdata_wire(
                 if pos + str_len > rdata_buf.len() {
                     return Err(NetError::XfrProtocolError("truncated TXT string".into()));
                 }
-                let s = std::str::from_utf8(&rdata_buf[pos..pos + str_len])
-                    .map_err(|_| NetError::XfrProtocolError("TXT string not UTF-8".into()))?
-                    .to_string();
-                strings.push(s);
+                strings.push(
+                    TxtString::new(rdata_buf[pos..pos + str_len].to_vec())
+                        .map_err(|e| NetError::XfrProtocolError(e.to_string()))?,
+                );
                 pos += str_len;
             }
             Ok(RecordData::Txt(strings))
@@ -949,10 +950,21 @@ mod tests {
         ];
         let result = parse_rdata_wire(16, &rdata, &rdata, 0).unwrap();
         if let RecordData::Txt(strings) = result {
-            assert_eq!(strings, vec!["hello", "world"]);
+            assert_eq!(strings[0].as_bytes(), b"hello");
+            assert_eq!(strings[1].as_bytes(), b"world");
         } else {
             panic!("expected TXT");
         }
+    }
+
+    #[test]
+    fn parse_rdata_txt_preserves_non_utf8_and_nul() {
+        let rdata = [3, b'a', 0, 0xff];
+        let result = parse_rdata_wire(16, &rdata, &rdata, 0).unwrap();
+        let RecordData::Txt(strings) = result else {
+            panic!("expected TXT");
+        };
+        assert_eq!(strings[0].as_bytes(), &[b'a', 0, 0xff]);
     }
 
     #[test]

@@ -1,21 +1,72 @@
 {
   "name": "bind9-sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "private": false,
   "description": "BIND9 DNS server management SDK — native + WASM",
   "main": "index.js",
   "types": "index.d.ts",
+  "browser": "browser.js",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "browser": "./browser.js",
+      "node": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "browser.js"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "AGPL-3.0-only OR LicenseRef-Commercial",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sephyi/bind9-sdk.git"
+  },
+  "homepage": "https://github.com/sephyi/bind9-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/sephyi/bind9-sdk/issues"
+  },
+  "keywords": [
+    "bind9",
+    "dns",
+    "rndc",
+    "nsupdate",
+    "dnssec"
+  ],
   "napi": {
     "binaryName": "bind9-sdk",
     "targets": [
-      "aarch64-apple-darwin"
-    ]
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "wasm32-wasip1-threads"
+    ],
+    "wasm": {
+      "browser": {
+        "fs": false,
+        "asyncInit": true
+      }
+    }
   },
   "scripts": {
     "build": "napi build --release --platform --features nodejs",
-    "build:wasm": "napi build --release --target wasm32-wasip1-threads"
+    "build:wasm": "napi build --release --platform --target wasm32-wasip1-threads --features wasm",
+    "test": "node tests/package-contract.mjs",
+    "test:native": "node tests/smoke.mjs",
+    "test:wasm": "node tests/wasm-smoke.mjs",
+    "prepublishOnly": "napi prepublish -t npm"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0"
+    "@napi-rs/cli": "^3.0.0",
+    "@napi-rs/wasm-runtime": "^1.1.5"
   }
 }

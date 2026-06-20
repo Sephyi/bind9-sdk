@@ -43,6 +43,7 @@ pub(crate) mod protocol;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -87,6 +88,15 @@ pub struct Authenticated<'k> {
     serial: u32,
     /// Server-provided nonce from the auth handshake response.
     /// Echoed in all subsequent command messages.
+    nonce: Option<String>,
+}
+
+/// Internal authenticated state that owns a shared TSIG key.
+///
+/// This form is used by the persistent rndc connection pool.
+pub(crate) struct SharedAuthenticated {
+    key: Arc<TsigKey>,
+    serial: u32,
     nonce: Option<String>,
 }
 
@@ -269,6 +279,23 @@ impl RndcConnection<Unauthenticated> {
             state: Authenticated { key, serial, nonce },
         })
     }
+
+    /// Authenticate while retaining shared ownership of the TSIG key.
+    ///
+    /// This is used by persistent connection managers that cannot borrow a key
+    /// from their own storage.
+    pub(crate) async fn authenticate_shared(
+        self,
+        key: Arc<TsigKey>,
+    ) -> Result<RndcConnection<SharedAuthenticated>, NetError> {
+        let authenticated = self.authenticate(key.as_ref()).await?;
+        let RndcConnection { stream, state } = authenticated;
+        let Authenticated { serial, nonce, .. } = state;
+        Ok(RndcConnection {
+            stream,
+            state: SharedAuthenticated { key, serial, nonce },
+        })
+    }
 }
 
 impl<'k> RndcConnection<Authenticated<'k>> {
@@ -372,6 +399,78 @@ impl<'k> RndcConnection<Authenticated<'k>> {
             .await
             .map_err(|e| NetError::Connection(format!("failed to close connection: {e}")))?;
         Ok(())
+    }
+}
+
+impl RndcConnection<SharedAuthenticated> {
+    /// Send an rndc command over a pooled authenticated connection.
+    pub(crate) async fn command_shared(
+        &mut self,
+        cmd: RndcCommand,
+    ) -> Result<RndcResponse, NetError> {
+        let cmd_text = cmd.to_command_string();
+        tracing::debug!("sending pooled rndc command: {cmd_text}");
+
+        self.state.serial = self.state.serial.wrapping_add(1);
+        let now = current_unix_time()?;
+        let ctrl = build_ctrl_table(self.state.serial, now, self.state.nonce.as_deref());
+
+        let mut data = BTreeMap::new();
+        data.insert("type".to_string(), IscValue::String(cmd_text.clone()));
+
+        let hmac_value = sign_rndc_body(self.state.key.as_ref(), &ctrl, &data)?;
+        let mut auth = BTreeMap::new();
+        auth.insert("hsha".to_string(), IscValue::Binary(hmac_value));
+
+        let mut msg = IscMessage::new();
+        msg.insert_map("_auth", auth);
+        msg.insert_map("_ctrl", ctrl);
+        msg.insert_map("_data", data);
+
+        let frame = frame_message(&msg)?;
+        self.stream
+            .write_all(&frame)
+            .await
+            .map_err(|e| NetError::Connection(format!("failed to send command: {e}")))?;
+
+        let (response, hmac_raw_input) = read_isc_message(&mut self.stream).await?;
+        verify_authenticated_response(
+            self.state.key.as_ref(),
+            &response,
+            &hmac_raw_input,
+            self.state.serial,
+            now,
+            self.state.nonce.as_deref(),
+            Some(&cmd_text),
+        )?;
+
+        let data_map = response.get_map("_data");
+        let result_code = data_map
+            .and_then(|data| match data.get("result") {
+                Some(IscValue::String(value)) => Some(value.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let text = data_map.and_then(extract_response_text).unwrap_or_default();
+
+        if result_code == "0" {
+            Ok(RndcResponse::from_text(&text))
+        } else {
+            let error = if text.is_empty() {
+                format!("rndc command failed with result code {result_code}")
+            } else {
+                text
+            };
+            Ok(RndcResponse::from_text(&format!("rndc: {error}")))
+        }
+    }
+
+    /// Close a pooled connection gracefully.
+    pub(crate) async fn close_shared(mut self) -> Result<(), NetError> {
+        self.stream
+            .shutdown()
+            .await
+            .map_err(|e| NetError::Connection(format!("failed to close connection: {e}")))
     }
 }
 

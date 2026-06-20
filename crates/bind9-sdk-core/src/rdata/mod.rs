@@ -7,7 +7,39 @@ use alloc::vec::Vec;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::domain::DomainName;
+use crate::error::CoreError;
 use crate::record::{Serial, Ttl};
+
+/// One RFC 1035 DNS character-string.
+///
+/// The payload is raw bytes, not UTF-8 text, and is limited to 255 octets by
+/// the one-byte length prefix used in DNS wire format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TxtString {
+    bytes: Vec<u8>,
+}
+
+impl TxtString {
+    /// Construct a character-string from raw bytes.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CoreError> {
+        if bytes.len() > u8::MAX as usize {
+            return Err(CoreError::InvalidRecord(
+                "TXT character-string exceeds 255 bytes".into(),
+            ));
+        }
+        Ok(Self { bytes })
+    }
+
+    /// Construct a character-string from UTF-8 text.
+    pub fn from_text(text: &str) -> Result<Self, CoreError> {
+        Self::new(text.as_bytes().to_vec())
+    }
+
+    /// Raw character-string bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 
 /// DNS record data — every record type is a strongly-typed variant.
 ///
@@ -67,7 +99,7 @@ pub enum RecordData {
     /// TXT record — text strings (RFC 1035)
     ///
     /// Each element is one character-string (max 255 bytes each).
-    Txt(Vec<String>),
+    Txt(Vec<TxtString>),
 
     /// SRV record — service locator (RFC 2782)
     Srv {

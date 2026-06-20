@@ -7,29 +7,88 @@
 //! Fetches server and zone statistics from the BIND9 statistics-channel
 //! JSON API (typically at `http://localhost:8053/json/v1`).
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::record::{RecordClass, Serial};
-use bind9_sdk_core::traits::{ServerStats, ZoneStats};
+use bind9_sdk_core::traits::{
+    CounterSet, MemoryContextStats, MemoryStats, NamedCounter, ServerStats, TrafficHistogram,
+    ViewStats, ZoneStats,
+};
 
 use crate::error::NetError;
 
 /// Raw JSON structure from BIND9 statistics-channel `/json/v1/server`.
 ///
-/// Only the fields we need for v0.1.0 are included. Unknown fields
-/// are silently ignored via `#[serde(deny_unknown_fields)]` NOT being set.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct RawServerStats {
+    json_stats_version: Option<String>,
     boot_time: Option<String>,
     config_time: Option<String>,
     current_time: Option<String>,
     version: Option<String>,
+    #[serde(default)]
+    opcodes: BTreeMap<String, u64>,
+    #[serde(default)]
+    rcodes: BTreeMap<String, u64>,
+    #[serde(default)]
+    views: BTreeMap<String, RawView>,
+    #[serde(default)]
+    sockstats: BTreeMap<String, u64>,
+    memory: Option<RawMemoryStats>,
+    #[serde(default)]
+    traffic: BTreeMap<String, BTreeMap<String, u64>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawView {
+    resolver: Option<RawResolverStats>,
+    #[serde(default)]
+    zones: Vec<RawZoneEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawResolverStats {
+    #[serde(default)]
+    stats: BTreeMap<String, u64>,
+    #[serde(default)]
+    qtypes: BTreeMap<String, u64>,
+    #[serde(default)]
+    cache: BTreeMap<String, u64>,
+    #[serde(default)]
+    cachestats: BTreeMap<String, u64>,
+    #[serde(default)]
+    adb: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawMemoryStats {
+    #[serde(rename = "InUse")]
+    in_use: u64,
+    #[serde(rename = "Malloced")]
+    malloced: u64,
+    #[serde(default)]
+    contexts: Vec<RawMemoryContextStats>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawMemoryContextStats {
+    id: String,
+    name: String,
+    references: u64,
+    malloced: u64,
+    #[serde(rename = "inuse")]
+    in_use: u64,
+    pools: u64,
+    hiwater: u64,
+    lowater: u64,
 }
 
 /// Raw JSON structure for a single zone entry in `/json/v1/zones`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct RawZoneEntry {
     name: String,
     #[serde(rename = "class")]
@@ -37,26 +96,96 @@ struct RawZoneEntry {
     serial: Option<u32>,
     #[serde(rename = "type")]
     zone_type: Option<String>,
-    #[serde(rename = "rcodes")]
-    #[allow(dead_code)]
-    rcodes: Option<serde_json::Value>,
+    loaded: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawZonesResponse {
+    #[serde(default)]
+    views: BTreeMap<String, RawView>,
 }
 
 impl From<RawServerStats> for ServerStats {
     fn from(raw: RawServerStats) -> Self {
-        ServerStats::new(
-            raw.boot_time,
-            raw.config_time,
-            raw.current_time,
-            raw.version,
-        )
+        let views = raw
+            .views
+            .into_iter()
+            .filter_map(|(name, view)| {
+                view.resolver.map(|resolver| {
+                    let mut stats = ViewStats::default();
+                    stats.name = name;
+                    stats.resolver_stats = counter_set(resolver.stats);
+                    stats.query_types = counter_set(resolver.qtypes);
+                    stats.cache = counter_set(resolver.cache);
+                    stats.cache_stats = counter_set(resolver.cachestats);
+                    stats.adb = counter_set(resolver.adb);
+                    stats
+                })
+            })
+            .collect();
+        let traffic = raw
+            .traffic
+            .into_iter()
+            .map(|(name, buckets)| {
+                let mut histogram = TrafficHistogram::default();
+                histogram.name = name;
+                histogram.buckets = counter_set(buckets);
+                histogram
+            })
+            .collect();
+        let memory = raw.memory.map(|memory| {
+            let contexts = memory
+                .contexts
+                .into_iter()
+                .map(|context| {
+                    let mut stats = MemoryContextStats::default();
+                    stats.id = context.id;
+                    stats.name = context.name;
+                    stats.references = context.references;
+                    stats.malloced = context.malloced;
+                    stats.in_use = context.in_use;
+                    stats.pools = context.pools;
+                    stats.high_water = context.hiwater;
+                    stats.low_water = context.lowater;
+                    stats
+                })
+                .collect();
+            let mut stats = MemoryStats::default();
+            stats.in_use = memory.in_use;
+            stats.malloced = memory.malloced;
+            stats.contexts = contexts;
+            stats
+        });
+
+        let mut stats = ServerStats::default();
+        stats.json_stats_version = raw.json_stats_version;
+        stats.boot_time = raw.boot_time;
+        stats.config_time = raw.config_time;
+        stats.current_time = raw.current_time;
+        stats.version = raw.version;
+        stats.opcodes = counter_set(raw.opcodes);
+        stats.rcodes = counter_set(raw.rcodes);
+        stats.views = views;
+        stats.socket = counter_set(raw.sockstats);
+        stats.memory = memory;
+        stats.traffic = traffic;
+        stats
     }
+}
+
+fn counter_set(counters: BTreeMap<String, u64>) -> CounterSet {
+    CounterSet::new(
+        counters
+            .into_iter()
+            .map(|(name, value)| NamedCounter::new(name, value))
+            .collect(),
+    )
 }
 
 /// Convert a raw zone JSON entry to a typed `ZoneStats`.
 ///
 /// Returns `NetError` if the zone name is not a valid DNS name.
-fn zone_stats_from_raw(raw: &RawZoneEntry) -> Result<ZoneStats, NetError> {
+fn zone_stats_from_raw(view: &str, raw: &RawZoneEntry) -> Result<ZoneStats, NetError> {
     // Append trailing dot if not present (BIND9 JSON uses relative names)
     let name_str = if raw.name.ends_with('.') {
         raw.name.clone()
@@ -80,7 +209,71 @@ fn zone_stats_from_raw(raw: &RawZoneEntry) -> Result<ZoneStats, NetError> {
     let serial = Serial::new(raw.serial.unwrap_or(0));
     let zone_type = raw.zone_type.clone().unwrap_or_else(|| "unknown".into());
 
-    Ok(ZoneStats::new(name, class, serial, None, zone_type))
+    Ok(ZoneStats::new_in_view(
+        view.into(),
+        name,
+        class,
+        serial,
+        zone_type,
+        raw.loaded.clone(),
+    ))
+}
+
+fn parse_zones_response(body: RawZonesResponse) -> Result<Vec<ZoneStats>, NetError> {
+    let mut zones = Vec::new();
+    for (view_name, view) in body.views {
+        for raw in view.zones {
+            zones.push(zone_stats_from_raw(&view_name, &raw)?);
+        }
+    }
+
+    zones.sort_by(|left, right| {
+        left.name
+            .to_string()
+            .cmp(&right.name.to_string())
+            .then_with(|| left.view.cmp(&right.view))
+    });
+    Ok(zones)
+}
+
+fn select_zone_stats(
+    zones: Vec<ZoneStats>,
+    zone: &DomainName,
+    view: Option<&str>,
+) -> Result<ZoneStats, NetError> {
+    let mut matches = zones
+        .into_iter()
+        .filter(|candidate| {
+            candidate.name == *zone && view.is_none_or(|view| candidate.view == view)
+        })
+        .collect::<Vec<_>>();
+
+    match matches.len() {
+        0 => {
+            let view_suffix = view
+                .map(|view| format!(" in view `{view}`"))
+                .unwrap_or_default();
+            Err(NetError::Protocol(format!(
+                "zone `{}` not found{view_suffix} in statistics-channel response",
+                zone.to_string().trim_end_matches('.')
+            )))
+        }
+        1 => Ok(matches.remove(0)),
+        _ => Err(NetError::Protocol(format!(
+            "zone `{}` exists in multiple views; select a view explicitly",
+            zone.to_string().trim_end_matches('.')
+        ))),
+    }
+}
+
+fn zones_endpoint(url: &str) -> String {
+    if url.ends_with("/zones") {
+        url.into()
+    } else if let Some(base) = url.strip_suffix("/server") {
+        format!("{base}/zones")
+    } else {
+        format!("{url}/zones")
+    }
 }
 
 /// HTTP client for the BIND9 statistics-channel JSON API.
@@ -132,17 +325,14 @@ impl StatsHttpClient {
 
     /// Fetch server-level statistics from the BIND9 statistics-channel.
     ///
-    /// Hits `{url}/server` (or `{url}` if the URL already ends with `/server`).
+    /// Fetches the configured endpoint. Pointing the client at `/json/v1`
+    /// returns BIND's aggregate response, including socket, memory, traffic,
+    /// and per-view resolver counters. A `/server` URL yields the documented
+    /// server-only subset.
     pub async fn fetch_server_stats(&self) -> Result<ServerStats, NetError> {
-        let endpoint = if self.url.ends_with("/server") {
-            self.url.clone()
-        } else {
-            format!("{}/server", self.url)
-        };
-
         let response = self
             .http
-            .get(&endpoint)
+            .get(&self.url)
             .send()
             .await
             .map_err(|e| NetError::Connection(format!("stats HTTP request failed: {e}")))?;
@@ -166,13 +356,26 @@ impl StatsHttpClient {
 
     /// Fetch zone-level statistics for a specific zone.
     ///
-    /// Queries the zones endpoint and searches for the named zone in the response.
+    /// Queries the zones endpoint and searches for the named zone. Returns an
+    /// error when the same zone exists in multiple views.
     pub async fn fetch_zone_stats(&self, zone: &DomainName) -> Result<ZoneStats, NetError> {
-        let endpoint = if self.url.ends_with("/zones") {
-            self.url.clone()
-        } else {
-            format!("{}/zones", self.url)
-        };
+        let zones = self.fetch_zones().await?;
+        select_zone_stats(zones, zone, None)
+    }
+
+    /// Fetch zone-level statistics for a zone in one named BIND view.
+    pub async fn fetch_zone_stats_in_view(
+        &self,
+        view: &str,
+        zone: &DomainName,
+    ) -> Result<ZoneStats, NetError> {
+        let zones = self.fetch_zones().await?;
+        select_zone_stats(zones, zone, Some(view))
+    }
+
+    /// Fetch all zones from all views exposed by the statistics channel.
+    pub async fn fetch_zones(&self) -> Result<Vec<ZoneStats>, NetError> {
+        let endpoint = zones_endpoint(&self.url);
 
         let response = self
             .http
@@ -190,35 +393,11 @@ impl StatsHttpClient {
             });
         }
 
-        let body: serde_json::Value = response
+        let body: RawZonesResponse = response
             .json()
             .await
             .map_err(|e| NetError::Protocol(format!("failed to parse zones JSON: {e}")))?;
-
-        // BIND9 organizes zones under views. Search all views for the zone.
-        let zone_display = zone.to_string();
-        // Strip trailing dot for comparison (BIND9 JSON uses names without trailing dot)
-        let zone_name_no_dot = zone_display.strip_suffix('.').unwrap_or(&zone_display);
-
-        if let Some(views) = body.get("views").and_then(|v| v.as_object()) {
-            for (_view_name, view_data) in views {
-                if let Some(zones_arr) = view_data.get("zones").and_then(|z| z.as_array()) {
-                    for zone_val in zones_arr {
-                        let raw: RawZoneEntry =
-                            serde_json::from_value(zone_val.clone()).map_err(|e| {
-                                NetError::Protocol(format!("failed to parse zone entry: {e}"))
-                            })?;
-                        if raw.name == zone_name_no_dot {
-                            return zone_stats_from_raw(&raw);
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(NetError::Protocol(format!(
-            "zone '{zone_name_no_dot}' not found in statistics-channel response"
-        )))
+        parse_zones_response(body)
     }
 }
 
@@ -268,13 +447,45 @@ mod tests {
     use super::*;
 
     const SERVER_STATS_JSON: &str = r#"{
+        "json-stats-version": "1.8",
         "boot-time": "2026-01-15T08:30:00Z",
         "config-time": "2026-01-15T08:30:05Z",
         "current-time": "2026-03-14T12:00:00Z",
         "version": "BIND 9.20.4 (Stable Release)",
-        "opcodes": {},
-        "rcodes": {},
-        "qtypes": {}
+        "opcodes": {"QUERY": 160, "UPDATE": 3},
+        "rcodes": {"NOERROR": 155, "SERVFAIL": 5},
+        "views": {
+            "_default": {
+                "resolver": {
+                    "stats": {"Queryv4": 120, "BucketSize": 3},
+                    "qtypes": {"A": 90, "AAAA": 30},
+                    "cache": {"A": 8},
+                    "cachestats": {"CacheHits": 10, "CacheMisses": 2},
+                    "adb": {"nentries": 4}
+                }
+            }
+        },
+        "sockstats": {"UDP4Open": 6, "TCP4Accept": 42},
+        "memory": {
+            "InUse": 7201830,
+            "Malloced": 7201830,
+            "contexts": [{
+                "id": "0xffffb1060000",
+                "name": "OpenSSL",
+                "references": 1,
+                "malloced": 480104,
+                "inuse": 480104,
+                "pools": 0,
+                "hiwater": 0,
+                "lowater": 0
+            }]
+        },
+        "traffic": {
+            "dns-udp-requests-sizes-received-ipv4": {
+                "0-15": 2,
+                "16-31": 8
+            }
+        }
     }"#;
 
     #[test]
@@ -282,6 +493,20 @@ mod tests {
         let raw: RawServerStats = serde_json::from_str(SERVER_STATS_JSON).unwrap();
         assert_eq!(raw.boot_time.as_deref(), Some("2026-01-15T08:30:00Z"));
         assert_eq!(raw.version.as_deref(), Some("BIND 9.20.4 (Stable Release)"));
+        let stats = ServerStats::from(raw);
+        assert_eq!(stats.json_stats_version.as_deref(), Some("1.8"));
+        assert_eq!(stats.opcodes.get("QUERY"), Some(160));
+        assert_eq!(stats.rcodes.get("SERVFAIL"), Some(5));
+        assert_eq!(stats.socket.get("TCP4Accept"), Some(42));
+        assert_eq!(stats.views[0].name, "_default");
+        assert_eq!(stats.views[0].resolver_stats.get("Queryv4"), Some(120));
+        assert_eq!(stats.views[0].cache_stats.get("CacheHits"), Some(10));
+        assert_eq!(
+            stats.memory.as_ref().map(|memory| memory.in_use),
+            Some(7201830)
+        );
+        assert_eq!(stats.memory.as_ref().unwrap().contexts[0].name, "OpenSSL");
+        assert_eq!(stats.traffic[0].buckets.get("16-31"), Some(8),);
     }
 
     #[test]
@@ -299,7 +524,7 @@ mod tests {
         "class": "IN",
         "serial": 2026031401,
         "type": "primary",
-        "rcodes": {}
+        "loaded": "2026-03-14T11:58:00Z"
     }"#;
 
     #[test]
@@ -309,6 +534,7 @@ mod tests {
         assert_eq!(raw.dns_class.as_deref(), Some("IN"));
         assert_eq!(raw.serial, Some(2026031401));
         assert_eq!(raw.zone_type.as_deref(), Some("primary"));
+        assert_eq!(raw.loaded.as_deref(), Some("2026-03-14T11:58:00Z"));
     }
 
     #[test]
@@ -327,6 +553,7 @@ mod tests {
             config_time: Some("2026-01-15T08:30:05Z".into()),
             current_time: Some("2026-03-14T12:00:00Z".into()),
             version: Some("BIND 9.20.4".into()),
+            ..RawServerStats::default()
         };
         let stats = ServerStats::from(raw);
         assert_eq!(stats.boot_time.as_deref(), Some("2026-01-15T08:30:00Z"));
@@ -335,12 +562,7 @@ mod tests {
 
     #[test]
     fn raw_server_stats_none_for_missing_fields() {
-        let raw = RawServerStats {
-            boot_time: None,
-            config_time: None,
-            current_time: None,
-            version: None,
-        };
+        let raw = RawServerStats::default();
         let stats = ServerStats::from(raw);
         assert!(stats.boot_time.is_none());
         assert!(stats.version.is_none());
@@ -353,13 +575,15 @@ mod tests {
             dns_class: Some("IN".into()),
             serial: Some(2026031401),
             zone_type: Some("primary".into()),
-            rcodes: None,
+            loaded: None,
         };
-        let stats = zone_stats_from_raw(&raw).unwrap();
+        let stats = zone_stats_from_raw("_default", &raw).unwrap();
         assert_eq!(stats.name, DomainName::new("example.com.").unwrap());
+        assert_eq!(stats.view, "_default");
         assert_eq!(stats.class, RecordClass::IN);
         assert_eq!(stats.serial, Serial::new(2026031401));
         assert_eq!(stats.zone_type, "primary");
+        assert_eq!(stats.loaded.as_deref(), None);
     }
 
     #[test]
@@ -371,9 +595,9 @@ mod tests {
             dns_class: None,
             serial: None,
             zone_type: None,
-            rcodes: None,
+            loaded: None,
         };
-        assert!(zone_stats_from_raw(&raw).is_err());
+        assert!(zone_stats_from_raw("_default", &raw).is_err());
     }
 
     #[test]
@@ -403,11 +627,79 @@ mod tests {
             }
         });
 
-        let zones = parse_zones_response(&json).unwrap();
+        let raw: RawZonesResponse = serde_json::from_value(json).unwrap();
+        let zones = parse_zones_response(raw).unwrap();
         assert_eq!(zones.len(), 2);
-        assert_eq!(zones[0].name, DomainName::new("example.com.").unwrap());
-        assert_eq!(zones[1].name, DomainName::new("corp.example.").unwrap());
-        assert_eq!(zones[1].zone_type, "secondary");
+        assert_eq!(zones[0].name, DomainName::new("corp.example.").unwrap());
+        assert_eq!(zones[0].view, "internal");
+        assert_eq!(zones[0].zone_type, "secondary");
+        assert_eq!(zones[1].name, DomainName::new("example.com.").unwrap());
+        assert_eq!(zones[1].view, "_default");
+    }
+
+    #[test]
+    fn zone_selection_rejects_ambiguous_names_across_views() {
+        let zone = DomainName::new("shared.example.").unwrap();
+        let zones = vec![
+            ZoneStats::new_in_view(
+                "_default".into(),
+                zone.clone(),
+                RecordClass::IN,
+                Serial::new(1),
+                "primary".into(),
+                None,
+            ),
+            ZoneStats::new_in_view(
+                "internal".into(),
+                zone.clone(),
+                RecordClass::IN,
+                Serial::new(2),
+                "primary".into(),
+                None,
+            ),
+        ];
+
+        let error = select_zone_stats(zones, &zone, None).unwrap_err();
+        assert!(error.to_string().contains("multiple views"));
+    }
+
+    #[test]
+    fn zone_selection_can_target_a_specific_view() {
+        let zone = DomainName::new("shared.example.").unwrap();
+        let zones = vec![
+            ZoneStats::new_in_view(
+                "_default".into(),
+                zone.clone(),
+                RecordClass::IN,
+                Serial::new(1),
+                "primary".into(),
+                None,
+            ),
+            ZoneStats::new_in_view(
+                "internal".into(),
+                zone.clone(),
+                RecordClass::IN,
+                Serial::new(2),
+                "primary".into(),
+                None,
+            ),
+        ];
+
+        let selected = select_zone_stats(zones, &zone, Some("internal")).unwrap();
+        assert_eq!(selected.view, "internal");
+        assert_eq!(selected.serial, Serial::new(2));
+    }
+
+    #[test]
+    fn zones_endpoint_replaces_server_suffix() {
+        assert_eq!(
+            zones_endpoint("https://stats.example/json/v1/server"),
+            "https://stats.example/json/v1/zones"
+        );
+        assert_eq!(
+            zones_endpoint("https://stats.example/json/v1"),
+            "https://stats.example/json/v1/zones"
+        );
     }
 
     #[test]
@@ -425,7 +717,7 @@ mod tests {
             }
         });
 
-        assert!(parse_zones_response(&json).is_err());
+        assert!(serde_json::from_value::<RawZonesResponse>(json).is_err());
     }
 
     #[test]
@@ -585,9 +877,9 @@ mod tests {
                 dns_class: Some(class_str.into()),
                 serial: Some(1),
                 zone_type: Some("primary".into()),
-                rcodes: None,
+                loaded: None,
             };
-            let stats = zone_stats_from_raw(&raw).unwrap();
+            let stats = zone_stats_from_raw("_default", &raw).unwrap();
             assert_eq!(
                 stats.class, expected,
                 "class mismatch for input '{class_str}'"
@@ -602,9 +894,9 @@ mod tests {
             dns_class: None,
             serial: Some(100),
             zone_type: None,
-            rcodes: None,
+            loaded: None,
         };
-        let stats = zone_stats_from_raw(&raw).unwrap();
+        let stats = zone_stats_from_raw("_default", &raw).unwrap();
         assert_eq!(stats.name, DomainName::new("example.com.").unwrap());
     }
 
@@ -615,9 +907,9 @@ mod tests {
             dns_class: None,
             serial: Some(100),
             zone_type: None,
-            rcodes: None,
+            loaded: None,
         };
-        let stats = zone_stats_from_raw(&raw).unwrap();
+        let stats = zone_stats_from_raw("_default", &raw).unwrap();
         assert_eq!(stats.name, DomainName::new("example.com.").unwrap());
     }
 

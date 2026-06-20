@@ -13,6 +13,8 @@ use crate::zone::{IncludeResolver, Zone, ZoneFile};
 
 use super::tokenizer::Token;
 
+const MAX_INCLUDE_DEPTH: usize = 16;
+
 /// Check if a word token is a record class keyword.
 fn is_class(word: &str) -> Option<RecordClass> {
     match word {
@@ -72,47 +74,18 @@ pub(crate) fn parse_zone(
     input: &str,
     resolver: Option<&dyn IncludeResolver>,
 ) -> Result<ZoneFile, CoreError> {
-    use super::tokenizer::Tokenizer;
-
-    let mut tok = Tokenizer::new(input);
     let mut state = ParseState {
         origin: None,
+        zone_origin: None,
         default_ttl: None,
         default_class: RecordClass::IN,
         last_owner: None,
         records: Vec::new(),
     };
-
-    let mut current_tokens: Vec<Token> = Vec::new();
-    let mut record_line: u32 = tok.line();
-
-    loop {
-        let t = tok.next_token();
-        match t {
-            None => {
-                if !current_tokens.is_empty() {
-                    process_line(&current_tokens, record_line, &mut state, resolver)?;
-                }
-                break;
-            }
-            Some(Token::Newline) => {
-                if !current_tokens.is_empty() {
-                    process_line(&current_tokens, record_line, &mut state, resolver)?;
-                    current_tokens.clear();
-                }
-                record_line = tok.line();
-            }
-            Some(Token::ParenOpen) | Some(Token::ParenClose) => {
-                // Parens are consumed by tokenizer for line continuation
-            }
-            Some(token) => {
-                current_tokens.push(token);
-            }
-        }
-    }
+    parse_into(input, resolver, &mut state, 0)?;
 
     // Determine zone origin
-    let zone_origin = if let Some(o) = state.origin {
+    let zone_origin = if let Some(o) = state.zone_origin {
         o
     } else {
         // Try to infer from the first SOA record
@@ -141,9 +114,59 @@ pub(crate) fn parse_zone(
     })
 }
 
+fn parse_into(
+    input: &str,
+    resolver: Option<&dyn IncludeResolver>,
+    state: &mut ParseState,
+    include_depth: usize,
+) -> Result<(), CoreError> {
+    if include_depth > MAX_INCLUDE_DEPTH {
+        return Err(CoreError::ZoneParse {
+            line: 1,
+            column: None,
+            reason: alloc::format!("$INCLUDE include depth exceeds maximum of {MAX_INCLUDE_DEPTH}"),
+        });
+    }
+
+    use super::tokenizer::Tokenizer;
+
+    let mut tok = Tokenizer::new(input);
+
+    let mut current_tokens: Vec<Token> = Vec::new();
+    let mut record_line: u32 = tok.line();
+
+    loop {
+        let t = tok.next_token();
+        match t {
+            None => {
+                if !current_tokens.is_empty() {
+                    process_line(&current_tokens, record_line, state, resolver, include_depth)?;
+                }
+                break;
+            }
+            Some(Token::Newline) => {
+                if !current_tokens.is_empty() {
+                    process_line(&current_tokens, record_line, state, resolver, include_depth)?;
+                    current_tokens.clear();
+                }
+                record_line = tok.line();
+            }
+            Some(Token::ParenOpen) | Some(Token::ParenClose) => {
+                // Parens are consumed by tokenizer for line continuation
+            }
+            Some(token) => {
+                current_tokens.push(token);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Mutable parsing state threaded through record assembly.
 struct ParseState {
     origin: Option<DomainName>,
+    zone_origin: Option<DomainName>,
     default_ttl: Option<Ttl>,
     default_class: RecordClass,
     last_owner: Option<DomainName>,
@@ -157,6 +180,7 @@ fn process_line(
     line: u32,
     state: &mut ParseState,
     resolver: Option<&dyn IncludeResolver>,
+    include_depth: usize,
 ) -> Result<(), CoreError> {
     if tokens.is_empty() {
         return Ok(());
@@ -174,11 +198,24 @@ fn process_line(
                     });
                 }
                 let name_str = token_as_str(&tokens[1]);
-                let o = DomainName::new(&name_str).map_err(|e| CoreError::ZoneParse {
+                let o = if name_str.ends_with('.') {
+                    DomainName::new(&name_str)
+                } else {
+                    let current = state.origin.as_ref().ok_or_else(|| CoreError::ZoneParse {
+                        line,
+                        column: None,
+                        reason: "relative $ORIGIN requires an existing origin".into(),
+                    })?;
+                    resolve_owner(&name_str, current)
+                }
+                .map_err(|e| CoreError::ZoneParse {
                     line,
                     column: None,
                     reason: alloc::format!("invalid $ORIGIN `{name_str}`: {e}"),
                 })?;
+                if state.zone_origin.is_none() {
+                    state.zone_origin = Some(o.clone());
+                }
                 state.origin = Some(o);
                 return Ok(());
             }
@@ -214,8 +251,37 @@ fn process_line(
                     }
                     let path = token_as_str(&tokens[1]);
                     let content = r.resolve(&path)?;
-                    let included = parse_zone(&content, Some(r))?;
-                    state.records.extend(included.zone.records);
+                    let saved_origin = state.origin.clone();
+                    let saved_owner = state.last_owner.clone();
+
+                    if tokens.len() >= 3 {
+                        let include_origin = token_as_str(&tokens[2]);
+                        let origin = if include_origin.ends_with('.') {
+                            DomainName::new(&include_origin)
+                        } else {
+                            let current =
+                                state.origin.as_ref().ok_or_else(|| CoreError::ZoneParse {
+                                    line,
+                                    column: None,
+                                    reason: "relative $INCLUDE origin requires an existing origin"
+                                        .into(),
+                                })?;
+                            resolve_owner(&include_origin, current)
+                        }
+                        .map_err(|e| CoreError::ZoneParse {
+                            line,
+                            column: None,
+                            reason: alloc::format!(
+                                "invalid $INCLUDE origin `{include_origin}`: {e}"
+                            ),
+                        })?;
+                        state.origin = Some(origin);
+                    }
+
+                    let result = parse_into(&content, Some(r), state, include_depth + 1);
+                    state.origin = saved_origin;
+                    state.last_owner = saved_owner;
+                    result?;
                     return Ok(());
                 }
                 return Err(CoreError::ZoneParse {

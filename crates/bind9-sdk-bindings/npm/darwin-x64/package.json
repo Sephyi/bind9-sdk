@@ -1,0 +1,34 @@
+{
+  "name": "bind9-sdk-darwin-x64",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "bind9-sdk.darwin-x64.node",
+  "files": [
+    "bind9-sdk.darwin-x64.node"
+  ],
+  "description": "BIND9 DNS server management SDK — native + WASM",
+  "keywords": [
+    "bind9",
+    "dns",
+    "rndc",
+    "nsupdate",
+    "dnssec"
+  ],
+  "homepage": "https://github.com/sephyi/bind9-sdk#readme",
+  "license": "AGPL-3.0-only OR LicenseRef-Commercial",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sephyi/bind9-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sephyi/bind9-sdk/issues"
+  },
+  "os": [
+    "darwin"
+  ]
+}

@@ -8,7 +8,7 @@ use alloc::string::ToString;
 
 use crate::domain::DomainName;
 use crate::protocol::RecordType;
-use crate::rdata::RecordData;
+use crate::rdata::{RecordData, TxtString};
 use crate::record::{RecordClass, Ttl};
 
 #[test]
@@ -674,20 +674,8 @@ fn build_rejects_rdata_larger_than_u16() {
 }
 
 #[test]
-fn build_rejects_txt_character_string_larger_than_u8() {
-    let record = ResourceRecord {
-        name: DomainName::new("txt.example.com.").unwrap(),
-        class: RecordClass::IN,
-        ttl: Ttl::new(60).unwrap(),
-        rdata: RecordData::Txt(alloc::vec!["x".repeat(256)]),
-    };
-
-    let error =
-        UpdateBuilder::with_id(1, DomainName::new("example.com.").unwrap(), RecordClass::IN)
-            .add_record(record)
-            .build_unsigned()
-            .unwrap_err();
-
+fn txt_character_string_rejects_larger_than_u8() {
+    let error = TxtString::new(alloc::vec![b'x'; 256]).unwrap_err();
     assert!(error.to_string().contains("TXT") && error.to_string().contains("255"));
 }
 

@@ -11,8 +11,11 @@ use crate::error::CoreError;
 
 /// A single DNS label (component between dots).
 ///
-/// Maximum 63 bytes. ASCII letters, digits, hyphens, and underscores.
-/// Must not start or end with a hyphen.
+/// Maximum 63 bytes. DNS labels are not restricted to hostname syntax:
+/// printable ASCII characters other than `.` and `\` are accepted.
+///
+/// Master-file escape decoding is handled by the zone parser before labels
+/// reach this type.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Label {
     inner: String,
@@ -24,23 +27,12 @@ impl Label {
         if s.is_empty() {
             return Err(CoreError::InvalidLabel("label is empty".into()));
         }
-        if s.len() > 63 {
+        let decoded = decode_label(s)?;
+        if decoded.len() > 63 {
             return Err(CoreError::InvalidLabel(format!(
                 "label exceeds 63 bytes: {} bytes",
-                s.len()
+                decoded.len()
             )));
-        }
-        if s.starts_with('-') || s.ends_with('-') {
-            return Err(CoreError::InvalidLabel(format!(
-                "label must not start or end with hyphen: `{s}`"
-            )));
-        }
-        for byte in s.bytes() {
-            if !(byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
-                return Err(CoreError::InvalidLabel(format!(
-                    "label contains invalid character: `{s}`"
-                )));
-            }
         }
         Ok(Label { inner: s.into() })
     }
@@ -52,13 +44,104 @@ impl Label {
 
     /// Byte length of the label.
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.wire_bytes().len()
     }
 
     /// Whether the label is empty (should never be true for a valid Label).
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    fn wire_bytes(&self) -> Vec<u8> {
+        decode_label(&self.inner).expect("Label is validated during construction")
+    }
+}
+
+fn decode_label(label: &str) -> Result<Vec<u8>, CoreError> {
+    let bytes = label.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if byte == b'\\' {
+            if pos + 1 >= bytes.len() {
+                return Err(CoreError::InvalidLabel(format!(
+                    "label ends with incomplete escape: `{label}`"
+                )));
+            }
+            if pos + 3 < bytes.len()
+                && bytes[pos + 1].is_ascii_digit()
+                && bytes[pos + 2].is_ascii_digit()
+                && bytes[pos + 3].is_ascii_digit()
+            {
+                let value = u16::from(bytes[pos + 1] - b'0') * 100
+                    + u16::from(bytes[pos + 2] - b'0') * 10
+                    + u16::from(bytes[pos + 3] - b'0');
+                if value > 255 {
+                    return Err(CoreError::InvalidLabel(format!(
+                        "decimal escape exceeds 255 in label: `{label}`"
+                    )));
+                }
+                decoded.push(value as u8);
+                pos += 4;
+                continue;
+            }
+            decoded.push(bytes[pos + 1]);
+            pos += 2;
+            continue;
+        }
+        if !byte.is_ascii_graphic() || byte == b'.' {
+            return Err(CoreError::InvalidLabel(format!(
+                "label contains invalid character: `{label}`"
+            )));
+        }
+        decoded.push(byte);
+        pos += 1;
+    }
+
+    Ok(decoded)
+}
+
+fn split_domain_labels(name: &str) -> Result<(Vec<&str>, bool), CoreError> {
+    let bytes = name.as_bytes();
+    let mut labels = Vec::new();
+    let mut start = 0;
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => {
+                if pos + 1 >= bytes.len() {
+                    return Err(CoreError::InvalidName {
+                        name: name.into(),
+                        reason: "name ends with incomplete escape".into(),
+                    });
+                }
+                if pos + 3 < bytes.len()
+                    && bytes[pos + 1].is_ascii_digit()
+                    && bytes[pos + 2].is_ascii_digit()
+                    && bytes[pos + 3].is_ascii_digit()
+                {
+                    pos += 4;
+                } else {
+                    pos += 2;
+                }
+            }
+            b'.' => {
+                labels.push(&name[start..pos]);
+                start = pos + 1;
+                pos += 1;
+            }
+            _ => pos += 1,
+        }
+    }
+
+    let absolute = start == name.len();
+    if !absolute {
+        labels.push(&name[start..]);
+    }
+    Ok((labels, absolute))
 }
 
 impl fmt::Debug for Label {
@@ -96,23 +179,9 @@ impl DomainName {
             return Ok(Self::root());
         }
 
-        // Strip trailing dot for splitting; we always store absolute
-        let trimmed = name.strip_suffix('.').unwrap_or(name);
-
-        if trimmed.is_empty() {
-            return Ok(Self::root());
-        }
-
-        // Check text length (max 253 characters excluding trailing dot)
-        if trimmed.len() > 253 {
-            return Err(CoreError::InvalidName {
-                name: name.into(),
-                reason: format!("exceeds 253 characters: {} characters", trimmed.len()),
-            });
-        }
-
+        let (parts, _) = split_domain_labels(name)?;
         let mut labels = Vec::new();
-        for part in trimmed.split('.') {
+        for part in parts {
             if part.is_empty() {
                 return Err(CoreError::InvalidName {
                     name: name.into(),
@@ -173,9 +242,9 @@ impl DomainName {
     /// Preserves original label casing.
     pub fn write_wire(&self, buf: &mut Vec<u8>) {
         for label in &self.labels {
-            let bytes = label.as_str().as_bytes();
+            let bytes = label.wire_bytes();
             buf.push(bytes.len() as u8);
-            buf.extend_from_slice(bytes);
+            buf.extend_from_slice(&bytes);
         }
         buf.push(0); // root label
     }
@@ -186,9 +255,9 @@ impl DomainName {
     /// characters. Required by RFC 8945 for TSIG MAC computation.
     pub fn write_wire_canonical(&self, buf: &mut Vec<u8>) {
         for label in &self.labels {
-            let bytes = label.as_str().as_bytes();
+            let bytes = label.wire_bytes();
             buf.push(bytes.len() as u8);
-            for &byte in bytes {
+            for byte in bytes {
                 buf.push(byte.to_ascii_lowercase());
             }
         }
@@ -201,10 +270,14 @@ impl PartialEq for DomainName {
         if self.labels.len() != other.labels.len() {
             return false;
         }
-        self.labels
-            .iter()
-            .zip(other.labels.iter())
-            .all(|(a, b)| a.as_str().eq_ignore_ascii_case(b.as_str()))
+        self.labels.iter().zip(other.labels.iter()).all(|(a, b)| {
+            let a = a.wire_bytes();
+            let b = b.wire_bytes();
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(left, right)| left.eq_ignore_ascii_case(right))
+        })
     }
 }
 
@@ -214,8 +287,9 @@ impl core::hash::Hash for DomainName {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.labels.len().hash(state);
         for label in &self.labels {
-            label.as_str().len().hash(state);
-            for byte in label.as_str().bytes() {
+            let bytes = label.wire_bytes();
+            bytes.len().hash(state);
+            for byte in bytes {
                 state.write_u8(byte.to_ascii_lowercase());
             }
         }
@@ -270,6 +344,24 @@ mod tests {
     }
 
     #[test]
+    fn label_accepts_dns_wildcard() {
+        let label = Label::new("*").unwrap();
+        assert_eq!(label.as_str(), "*");
+    }
+
+    #[test]
+    fn label_accepts_non_hostname_dns_characters() {
+        assert!(Label::new("-service-").is_ok());
+        assert!(Label::new("owner!tag").is_ok());
+    }
+
+    #[test]
+    fn escaped_dot_is_one_label_byte() {
+        let label = Label::new(r"host\.name").unwrap();
+        assert_eq!(label.len(), 9);
+    }
+
+    #[test]
     fn label_empty_rejected() {
         assert!(Label::new("").is_err());
     }
@@ -287,13 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn label_leading_hyphen_rejected() {
-        assert!(Label::new("-start").is_err());
+    fn label_leading_hyphen_accepted() {
+        assert!(Label::new("-start").is_ok());
     }
 
     #[test]
-    fn label_trailing_hyphen_rejected() {
-        assert!(Label::new("end-").is_err());
+    fn label_trailing_hyphen_accepted() {
+        assert!(Label::new("end-").is_ok());
     }
 
     #[test]
@@ -329,6 +421,26 @@ mod tests {
     fn domain_name_appends_trailing_dot() {
         let name = DomainName::new("example.com").unwrap();
         assert_eq!(alloc::format!("{name}"), "example.com.");
+    }
+
+    #[test]
+    fn domain_escaped_dot_does_not_split_label() {
+        let name = DomainName::new(r"host\.name.example.").unwrap();
+        assert_eq!(name.label_count(), 2);
+        assert_eq!(name.labels()[0].as_str(), r"host\.name");
+        let mut wire = alloc::vec::Vec::new();
+        name.write_wire(&mut wire);
+        assert_eq!(&wire[..10], b"\thost.name");
+        assert_eq!(alloc::format!("{name}"), r"host\.name.example.");
+    }
+
+    #[test]
+    fn domain_decimal_escape_writes_arbitrary_octet() {
+        let name = DomainName::new(r"binary\000label.example.").unwrap();
+        let mut wire = alloc::vec::Vec::new();
+        name.write_wire(&mut wire);
+        assert_eq!(wire[0], 12);
+        assert_eq!(wire[7], 0);
     }
 
     #[test]

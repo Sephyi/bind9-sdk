@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Integration tests for `RndcPool` against a live BIND9 instance.
+//! Integration tests for `RndcLimiter` against a live BIND9 instance.
 //!
 //! These tests require:
 //! - BIND9 9.20 running on localhost:9953
@@ -19,7 +19,7 @@ use bind9_sdk_core::domain::DomainName;
 use bind9_sdk_core::tsig::{TsigAlgorithm, TsigKey};
 use bind9_sdk_net::rndc::RndcConnection;
 use bind9_sdk_net::rndc::command::RndcCommand;
-use bind9_sdk_net::{ClientConfig, RndcPool};
+use bind9_sdk_net::{ClientConfig, RndcLimiter, RndcPermit, RndcPool};
 
 /// rndc address for the test BIND9 instance.
 const RNDC_ADDR: &str = "127.0.0.1:9953";
@@ -40,7 +40,7 @@ fn test_key() -> TsigKey {
 fn test_config() -> ClientConfig {
     let mut config = ClientConfig::new(RNDC_ADDR.parse().unwrap(), test_key());
     config.timeout = Duration::from_secs(5);
-    config.pool_size = Some(4);
+    config.rndc_max_concurrent = Some(4);
     config
 }
 
@@ -50,7 +50,7 @@ async fn rndc_settle() {
 }
 
 /// Send a single rndc `Status` command through a guard from the pool.
-async fn status_via_pool(guard: &bind9_sdk_net::PoolGuard) -> bool {
+async fn status_via_limiter(guard: &RndcPermit) -> bool {
     let conn = RndcConnection::connect(guard.config().rndc_addr)
         .await
         .expect("connect failed");
@@ -66,41 +66,41 @@ async fn status_via_pool(guard: &bind9_sdk_net::PoolGuard) -> bool {
     resp.is_success()
 }
 
-/// Verify the pool correctly limits concurrency to `pool_size` slots and that
-/// all acquired guards can independently open real rndc connections to BIND9.
+/// Verify the limiter bounds concurrent command cycles and that all acquired
+/// permits can independently open real rndc connections to BIND9.
 ///
 /// The pool size is set to 1 (BIND9's rndc handler is single-connection) so
 /// guards must be used sequentially even though the pool itself is async-safe.
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
-async fn pool_burst_through_rndc() {
+async fn limiter_burst_through_rndc() {
     rndc_settle().await;
 
     // Single-slot pool — matches BIND9's single-connection rndc handler.
-    let pool = RndcPool::new(test_config(), 1);
-    assert_eq!(pool.available(), 1);
+    let limiter = RndcLimiter::new(test_config(), 1);
+    assert_eq!(limiter.available(), 1);
 
     // Acquire the single slot.
-    let guard = pool.acquire().await.expect("acquire failed");
-    assert_eq!(pool.available(), 0);
+    let guard = limiter.acquire().await.expect("acquire failed");
+    assert_eq!(limiter.available(), 0);
 
     // Use the guard to run a real rndc command.
     assert!(
-        status_via_pool(&guard).await,
-        "rndc status should succeed through pool guard"
+        status_via_limiter(&guard).await,
+        "rndc status should succeed through limiter permit"
     );
 
     // Releasing the guard restores the slot.
     drop(guard);
-    assert_eq!(pool.available(), 1);
+    assert_eq!(limiter.available(), 1);
 
     rndc_settle().await;
 
     // A second acquire after release should also succeed.
-    let guard2 = pool.acquire().await.expect("second acquire failed");
+    let guard2 = limiter.acquire().await.expect("second acquire failed");
     assert!(
-        status_via_pool(&guard2).await,
-        "second rndc status should succeed through pool guard"
+        status_via_limiter(&guard2).await,
+        "second rndc status should succeed through limiter permit"
     );
 }
 
@@ -108,17 +108,59 @@ async fn pool_burst_through_rndc() {
 /// completing before release — even against a live server.
 #[tokio::test]
 #[ignore = "requires live BIND9 on localhost:9953"]
-async fn pool_blocks_third_connection_when_full() {
+async fn limiter_blocks_second_cycle_when_full() {
     rndc_settle().await;
 
-    let pool = RndcPool::new(test_config(), 1);
+    let limiter = RndcLimiter::new(test_config(), 1);
 
-    let _guard = pool.acquire().await.expect("first acquire failed");
+    let _guard = limiter.acquire().await.expect("first acquire failed");
 
     // With the slot held, a second acquire must not complete immediately.
-    let result = tokio::time::timeout(Duration::from_millis(100), pool.acquire()).await;
+    let result = tokio::time::timeout(Duration::from_millis(100), limiter.acquire()).await;
     assert!(
         result.is_err(),
-        "pool should block second acquire while slot is held"
+        "limiter should block second acquire while slot is held"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:9953"]
+async fn pool_reuses_one_authenticated_connection() {
+    rndc_settle().await;
+
+    let pool =
+        RndcPool::new(test_config(), 1, Duration::from_secs(30)).expect("pool creation failed");
+    assert_eq!(pool.total_connections_created(), 0);
+
+    let first = pool
+        .execute(RndcCommand::Status)
+        .await
+        .expect("first pooled status failed");
+    let second = pool
+        .execute(RndcCommand::Status)
+        .await
+        .expect("second pooled status failed");
+
+    assert!(first.is_success());
+    assert!(second.is_success());
+    assert_eq!(pool.total_connections_created(), 1);
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 on localhost:9953"]
+async fn pool_reconnects_after_idle_expiry() {
+    rndc_settle().await;
+
+    let pool =
+        RndcPool::new(test_config(), 1, Duration::from_millis(100)).expect("pool creation failed");
+    pool.execute(RndcCommand::Status)
+        .await
+        .expect("initial pooled status failed");
+    assert_eq!(pool.total_connections_created(), 1);
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    pool.execute(RndcCommand::Status)
+        .await
+        .expect("status after idle expiry failed");
+    assert_eq!(pool.total_connections_created(), 2);
 }

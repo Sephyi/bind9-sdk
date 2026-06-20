@@ -55,13 +55,24 @@ fn record_data_mx() {
 #[test]
 fn record_data_txt_multistring() {
     let rd = RecordData::Txt(alloc::vec![
-        "v=spf1".into(),
-        "include:example.com".into(),
-        "~all".into(),
+        TxtString::new(b"v=spf1".to_vec()).unwrap(),
+        TxtString::new(b"include:example.com".to_vec()).unwrap(),
+        TxtString::new(b"~all".to_vec()).unwrap(),
     ]);
     if let RecordData::Txt(ref strings) = rd {
         assert_eq!(strings.len(), 3);
     }
+}
+
+#[test]
+fn txt_string_preserves_arbitrary_octets() {
+    let value = TxtString::new(alloc::vec![b'a', 0, 0xff, b'z']).unwrap();
+    assert_eq!(value.as_bytes(), &[b'a', 0, 0xff, b'z']);
+}
+
+#[test]
+fn txt_string_rejects_more_than_255_octets() {
+    assert!(TxtString::new(alloc::vec![0; 256]).is_err());
 }
 
 #[test]

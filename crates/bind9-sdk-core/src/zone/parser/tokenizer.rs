@@ -129,7 +129,14 @@ impl<'a> Tokenizer<'a> {
                         let d3 = (bytes[self.pos + 2] - b'0') as u16;
                         let byte_val = d1 * 100 + d2 * 10 + d3;
                         if byte_val <= 255 {
-                            value.push(byte_val as u8 as char);
+                            if byte_val <= 0x7f {
+                                value.push(byte_val as u8 as char);
+                            } else {
+                                value.push('\\');
+                                value.push(bytes[self.pos] as char);
+                                value.push(bytes[self.pos + 1] as char);
+                                value.push(bytes[self.pos + 2] as char);
+                            }
                             self.pos += 3;
                             continue;
                         }

@@ -16,7 +16,10 @@ use bind9_sdk_core::update::{UpdateMessage, UpdateResult};
 use crate::error::NetError;
 use crate::nsupdate::NsUpdateSender;
 use crate::rndc::RndcConnection;
-use crate::rndc::command::{RndcCommand, make_frozen_zone, parse_server_status};
+use crate::rndc::command::{
+    DsState, RndcCommand, ZoneTarget, make_frozen_zone, parse_server_status,
+};
+use crate::rndc::dnssec::DnssecStatus;
 use crate::stats::StatsHttpClient;
 use crate::tls::TlsConfig;
 
@@ -47,11 +50,12 @@ pub struct ClientConfig {
     /// Timeout for individual operations (default: 10 seconds).
     pub timeout: Duration,
 
-    /// Maximum concurrent rndc connections for [`RndcPool`](crate::pool::RndcPool).
+    /// Maximum concurrent rndc command cycles for
+    /// [`RndcLimiter`](crate::limiter::RndcLimiter).
     ///
-    /// `None` means the pool will use its own default (4).
+    /// `None` means the limiter will use its own default (4).
     /// `Some(0)` is treated the same as `None`.
-    pub pool_size: Option<usize>,
+    pub rndc_max_concurrent: Option<usize>,
 }
 
 impl std::fmt::Debug for ClientConfig {
@@ -63,7 +67,7 @@ impl std::fmt::Debug for ClientConfig {
             .field("dns_addr", &self.dns_addr)
             .field("tls", &self.tls.as_ref().map(|_| "[configured]"))
             .field("timeout", &self.timeout)
-            .field("pool_size", &self.pool_size)
+            .field("rndc_max_concurrent", &self.rndc_max_concurrent)
             .finish()
     }
 }
@@ -71,7 +75,8 @@ impl std::fmt::Debug for ClientConfig {
 impl ClientConfig {
     /// Create a minimal configuration with only the required fields.
     ///
-    /// All optional fields (`stats_url`, `dns_addr`, `tls`, `pool_size`) are
+    /// All optional fields (`stats_url`, `dns_addr`, `tls`,
+    /// `rndc_max_concurrent`) are
     /// set to `None`. The `timeout` defaults to 10 seconds.
     ///
     /// Use direct struct construction (within the crate) to set optional fields,
@@ -84,7 +89,7 @@ impl ClientConfig {
             dns_addr: None,
             tls: None,
             timeout: std::time::Duration::from_secs(10),
-            pool_size: None,
+            rndc_max_concurrent: None,
         }
     }
 }
@@ -128,6 +133,65 @@ impl Bind9Client {
     /// Access the client configuration.
     pub fn config(&self) -> &ClientConfig {
         &self.config
+    }
+
+    fn zone_status_command(zone: &DomainName) -> RndcCommand {
+        RndcCommand::ZoneStatus {
+            target: ZoneTarget::new(zone.clone()),
+        }
+    }
+
+    fn dnssec_status_command(zone: &DomainName) -> RndcCommand {
+        RndcCommand::DnssecStatus {
+            target: ZoneTarget::new(zone.clone()),
+        }
+    }
+
+    fn dnssec_checkds_command(zone: &DomainName, state: DsState) -> RndcCommand {
+        RndcCommand::DnssecCheckDs {
+            target: ZoneTarget::new(zone.clone()),
+            state,
+            key: None,
+            when: None,
+        }
+    }
+
+    /// Return the raw `rndc zonestatus` response for a zone.
+    pub async fn zone_status(&self, zone: &DomainName) -> Result<String, NetError> {
+        let response = self.rndc_command(Self::zone_status_command(zone)).await?;
+        if !response.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc zonestatus failed: {}",
+                response.text
+            )));
+        }
+        Ok(response.text)
+    }
+
+    /// Return the parsed DNSSEC policy status for a zone.
+    pub async fn dnssec_status(&self, zone: &DomainName) -> Result<DnssecStatus, NetError> {
+        let response = self.rndc_command(Self::dnssec_status_command(zone)).await?;
+        if !response.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc dnssec -status failed: {}",
+                response.text
+            )));
+        }
+        DnssecStatus::parse(&response.text)
+    }
+
+    /// Inform BIND that the parent DS record was published or withdrawn.
+    pub async fn dnssec_checkds(&self, zone: &DomainName, state: DsState) -> Result<(), NetError> {
+        let response = self
+            .rndc_command(Self::dnssec_checkds_command(zone, state))
+            .await?;
+        if !response.is_success() {
+            return Err(NetError::Protocol(format!(
+                "rndc dnssec -checkds failed: {}",
+                response.text
+            )));
+        }
+        Ok(())
     }
 
     /// Execute a single rndc command using a fresh connection.
@@ -182,7 +246,9 @@ impl NamedControl for Bind9Client {
     }
 
     async fn reload(&self) -> Result<(), NetError> {
-        let resp = self.rndc_command(RndcCommand::Reload).await?;
+        let resp = self
+            .rndc_command(RndcCommand::Reload { target: None })
+            .await?;
         if !resp.is_success() {
             return Err(NetError::Protocol(format!(
                 "rndc reload failed: {}",
@@ -194,8 +260,8 @@ impl NamedControl for Bind9Client {
 
     async fn reload_zone(&self, zone: &DomainName) -> Result<(), NetError> {
         let resp = self
-            .rndc_command(RndcCommand::ReloadZone {
-                zone: zone.to_string(),
+            .rndc_command(RndcCommand::Reload {
+                target: Some(ZoneTarget::new(zone.clone())),
             })
             .await?;
         if !resp.is_success() {
@@ -210,7 +276,7 @@ impl NamedControl for Bind9Client {
     async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, NetError> {
         let resp = self
             .rndc_command(RndcCommand::Freeze {
-                zone: zone.to_string(),
+                target: Some(ZoneTarget::new(zone.clone())),
             })
             .await?;
         if !resp.is_success() {
@@ -271,6 +337,7 @@ mod tests {
     use super::*;
 
     use crate::config::test_key;
+    use crate::rndc::command::DsState;
     use bind9_sdk_core::protocol::Rcode;
 
     #[test]
@@ -282,11 +349,47 @@ mod tests {
             dns_addr: Some("127.0.0.1:53".parse().unwrap()),
             tls: None,
             timeout: Duration::from_secs(10),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         assert_eq!(config.rndc_addr.port(), 953);
         assert!(config.stats_url.is_some());
         assert_eq!(config.timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn zone_status_command_targets_requested_zone() {
+        let zone = DomainName::new("example.com.").unwrap();
+        assert_eq!(
+            Bind9Client::zone_status_command(&zone),
+            RndcCommand::ZoneStatus {
+                target: ZoneTarget::new(zone.clone())
+            }
+        );
+    }
+
+    #[test]
+    fn dnssec_status_command_targets_requested_zone() {
+        let zone = DomainName::new("example.com.").unwrap();
+        assert_eq!(
+            Bind9Client::dnssec_status_command(&zone),
+            RndcCommand::DnssecStatus {
+                target: ZoneTarget::new(zone.clone())
+            }
+        );
+    }
+
+    #[test]
+    fn dnssec_checkds_command_includes_parent_state() {
+        let zone = DomainName::new("example.com.").unwrap();
+        assert_eq!(
+            Bind9Client::dnssec_checkds_command(&zone, DsState::Published),
+            RndcCommand::DnssecCheckDs {
+                target: ZoneTarget::new(zone),
+                state: DsState::Published,
+                key: None,
+                when: None,
+            }
+        );
     }
 
     #[test]
@@ -298,7 +401,7 @@ mod tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(10),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("[REDACTED]"), "key must be redacted");
@@ -314,7 +417,7 @@ mod tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         assert!(config.stats_url.is_none());
         assert!(config.dns_addr.is_none());
@@ -330,7 +433,7 @@ mod tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(10),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         let client = Bind9Client::new(config);
         assert_eq!(client.config().rndc_addr.port(), 953);
@@ -352,7 +455,7 @@ mod tests {
             dns_addr: None,
             tls: Some(tls),
             timeout: Duration::from_secs(10),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         assert!(config.tls.is_some());
     }
@@ -409,7 +512,7 @@ mod stats_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         let client = Bind9Client::new(config);
         let result = client.server_stats().await;
@@ -428,7 +531,7 @@ mod stats_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         let client = Bind9Client::new(config);
         let zone = bind9_sdk_core::domain::DomainName::new("example.com.").unwrap();
@@ -464,7 +567,7 @@ mod dynamic_updater_tests {
             dns_addr: None,
             tls: None,
             timeout: Duration::from_secs(5),
-            pool_size: None,
+            rndc_max_concurrent: None,
         };
         let _client = Bind9Client::new(config);
         // Trait impl is verified at compile time via _assert_dynamic_updater_impl

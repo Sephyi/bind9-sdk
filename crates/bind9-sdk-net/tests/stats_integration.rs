@@ -36,6 +36,16 @@ async fn stats_fetch_server_stats_has_version() {
         "expected non-empty version in ServerStats, got {:?}",
         stats.version
     );
+    assert_eq!(stats.json_stats_version.as_deref(), Some("1.8"));
+    assert!(stats.opcodes.get("QUERY").is_some());
+    assert!(stats.rcodes.get("SERVFAIL").is_some());
+    assert!(stats.socket.get("UDP4Open").is_some());
+    assert!(
+        stats
+            .views
+            .iter()
+            .any(|view| view.name == "_default" && !view.cache_stats.is_empty())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +71,27 @@ async fn stats_fetch_zone_stats_example_com() {
     assert!(
         serial >= 2026031601,
         "serial {serial} is less than initial value 2026031601"
+    );
+    assert_eq!(stats.view, "_default");
+    assert!(stats.loaded.is_some());
+}
+
+#[tokio::test]
+#[ignore = "requires live BIND9 statistics-channel on localhost:8053"]
+async fn stats_fetch_all_zones() {
+    let client = StatsHttpClient::new("http://127.0.0.1:8053/json/v1", Duration::from_secs(5))
+        .expect("client construction failed");
+    let zones = client.fetch_zones().await.expect("fetch_zones failed");
+
+    assert!(
+        zones
+            .iter()
+            .any(|zone| zone.name == DomainName::new("example.com.").unwrap())
+    );
+    assert!(
+        zones
+            .iter()
+            .any(|zone| zone.name == DomainName::new("transfer.example.com.").unwrap())
     );
 }
 

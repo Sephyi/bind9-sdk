@@ -434,6 +434,129 @@ $ORIGIN sub.example.com.
 }
 
 #[test]
+fn parse_relative_origin_resolves_against_current_origin() {
+    let input = "\
+$ORIGIN example.com.
+$TTL 300
+$ORIGIN sub
+@ IN A 192.0.2.1
+";
+    let zf = ZoneFile::parse(input).unwrap();
+    assert_eq!(
+        zf.zone.records[0].name,
+        DomainName::new("sub.example.com.").unwrap()
+    );
+}
+
+#[test]
+fn parse_wildcard_owner() {
+    let input = "\
+$ORIGIN example.com.
+$TTL 300
+* IN A 192.0.2.1
+";
+    let zf = ZoneFile::parse(input).unwrap();
+    assert_eq!(
+        zf.zone.records[0].name,
+        DomainName::new("*.example.com.").unwrap()
+    );
+}
+
+#[test]
+fn parse_escaped_dot_owner() {
+    let input = r"$ORIGIN example.com.
+$TTL 300
+host\.name IN A 192.0.2.1
+";
+    let zf = ZoneFile::parse(input).unwrap();
+    assert_eq!(
+        zf.zone.records[0].name,
+        DomainName::new(r"host\.name.example.com.").unwrap()
+    );
+}
+
+#[test]
+fn parse_txt_decimal_escapes_preserve_raw_octets() {
+    let input = r#"$ORIGIN example.com.
+$TTL 300
+@ IN TXT "a\000\255z"
+"#;
+    let zf = ZoneFile::parse(input).unwrap();
+    let RecordData::Txt(strings) = &zf.zone.records[0].rdata else {
+        panic!("expected TXT");
+    };
+    assert_eq!(strings[0].as_bytes(), &[b'a', 0, 0xff, b'z']);
+}
+
+struct FixedIncludeResolver;
+
+impl crate::zone::IncludeResolver for FixedIncludeResolver {
+    fn resolve(&self, path: &str) -> Result<alloc::string::String, crate::CoreError> {
+        match path {
+            "child.zone" => Ok("\
+@ IN A 192.0.2.2
+host IN A 192.0.2.3
+"
+            .into()),
+            other => Err(crate::CoreError::ZoneParse {
+                line: 1,
+                column: None,
+                reason: alloc::format!("unknown include: {other}"),
+            }),
+        }
+    }
+}
+
+#[test]
+fn parse_include_inherits_origin_and_restores_parent_state() {
+    let input = "\
+$ORIGIN example.com.
+$TTL 300
+before IN A 192.0.2.1
+$INCLUDE child.zone sub
+after IN A 192.0.2.4
+";
+    let zf = ZoneFile::parse_with_includes(input, &FixedIncludeResolver).unwrap();
+    let names: alloc::vec::Vec<_> = zf
+        .zone
+        .records
+        .iter()
+        .map(|record| record.name.to_string())
+        .collect();
+    assert_eq!(
+        names,
+        alloc::vec![
+            "before.example.com.",
+            "sub.example.com.",
+            "host.sub.example.com.",
+            "after.example.com.",
+        ]
+    );
+}
+
+struct RecursiveIncludeResolver;
+
+impl crate::zone::IncludeResolver for RecursiveIncludeResolver {
+    fn resolve(&self, _path: &str) -> Result<alloc::string::String, crate::CoreError> {
+        Ok("$INCLUDE recursive.zone\n".into())
+    }
+}
+
+#[test]
+fn parse_include_recursion_is_bounded() {
+    let input = "\
+$ORIGIN example.com.
+$TTL 300
+$INCLUDE recursive.zone
+";
+    let error = ZoneFile::parse_with_includes(input, &RecursiveIncludeResolver).unwrap_err();
+    assert!(
+        error.to_string().contains("include depth"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn parse_no_origin_infers_from_soa() {
     let input = "\
 $TTL 3600

@@ -12,7 +12,7 @@ use serde::Serialize;
 use tokio_stream::StreamExt;
 
 use bind9_sdk::core::{DiffEntry, TransferRecord, ZoneFile};
-use bind9_sdk::net::{Bind9Client, ClientConfig, TransferClient};
+use bind9_sdk::net::{Bind9Client, ClientConfig, StatsHttpClient, TransferClient};
 use bind9_sdk::{DomainName, NamedControl};
 
 use crate::commands::OutputFormat;
@@ -62,6 +62,64 @@ struct DiffResult {
     diff: String,
 }
 
+#[derive(Debug, Serialize)]
+struct ZoneList {
+    zones: Vec<ZoneListEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct ZoneListEntry {
+    name: String,
+    class: String,
+    serial: u32,
+    zone_type: String,
+}
+
+impl std::fmt::Display for ZoneList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for zone in &self.zones {
+            writeln!(
+                f,
+                "{}\t{}\t{}\t{}",
+                zone.name, zone.class, zone.serial, zone.zone_type
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ZoneStatus {
+    zone: String,
+    status: String,
+}
+
+impl std::fmt::Display for ZoneStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.status)
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ZoneExport {
+    zone: String,
+    record_count: usize,
+    records: Vec<String>,
+}
+
+impl std::fmt::Display for ZoneExport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for record in &self.records {
+            writeln!(f, "{record}")?;
+        }
+        write!(
+            f,
+            "; Transfer complete: {} records for {}",
+            self.record_count, self.zone
+        )
+    }
+}
+
 impl std::fmt::Display for DiffResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.diff)
@@ -90,17 +148,26 @@ async fn execute_list(format: OutputFormat, config: Option<ClientConfig>) -> Res
                 .into(),
         )
     })?;
-    let client = Bind9Client::new(config);
-    // Bind9Client does not implement ZoneManager (no AXFR-based zone listing yet).
-    // Use rndc status to show basic server info including zone count.
-    let status = client.status().await.map_err(CliError::Net)?;
-    print_message(
-        format,
-        &format!(
-            "Server: {} (zones: {})\nUse 'zone status <zone>' for per-zone details.",
-            status.version, status.zone_count
-        ),
-    );
+    let stats_url = config.stats_url.as_deref().ok_or_else(|| {
+        CliError::Config(
+            "stats_url must be configured for zone list; rndc does not expose a zone-name list"
+                .into(),
+        )
+    })?;
+    let client = StatsHttpClient::new(stats_url, config.timeout)?;
+    let zones = client.fetch_zones().await?;
+    let output = ZoneList {
+        zones: zones
+            .into_iter()
+            .map(|zone| ZoneListEntry {
+                name: zone.name.to_string(),
+                class: zone.class.to_string(),
+                serial: zone.serial.value(),
+                zone_type: zone.zone_type,
+            })
+            .collect(),
+    };
+    print_output(format, &output);
     Ok(())
 }
 
@@ -118,13 +185,13 @@ async fn execute_status(
     let client = Bind9Client::new(config);
     let name =
         DomainName::new(zone).map_err(|e| CliError::Config(format!("invalid zone name: {e}")))?;
-    let status = client.status().await.map_err(CliError::Net)?;
-    print_message(
+    let status = client.zone_status(&name).await?;
+    print_output(
         format,
-        &format!(
-            "Server: {} (zones: {})\nZone: {}",
-            status.version, status.zone_count, name
-        ),
+        &ZoneStatus {
+            zone: name.to_string(),
+            status,
+        },
     );
     Ok(())
 }
@@ -181,8 +248,8 @@ async fn execute_export(
     // The stream returned by axfr is not Unpin, so we must pin it.
     tokio::pin!(stream);
 
-    // Collect and print each record from the transfer stream.
-    let mut count = 0usize;
+    // Collect the complete result so JSON mode emits exactly one document.
+    let mut records = Vec::new();
     while let Some(result) = stream.next().await {
         let transfer_record = result.map_err(CliError::Net)?;
         let rr = match &transfer_record {
@@ -191,14 +258,16 @@ async fn execute_export(
             | TransferRecord::EndSoa(rr) => rr,
             _ => continue,
         };
-        // Format as a zone file line: name ttl class type rdata
-        print_message(format, &format_record(rr));
-        count += 1;
+        records.push(format_record(rr));
     }
 
-    print_message(
+    print_output(
         format,
-        &format!("; Transfer complete: {count} records for {name}"),
+        &ZoneExport {
+            zone: name.to_string(),
+            record_count: records.len(),
+            records,
+        },
     );
     Ok(())
 }
@@ -326,5 +395,23 @@ new IN A   192.0.2.3
             OutputFormat::Text,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn zone_export_serializes_as_one_json_document() {
+        let output = ZoneExport {
+            zone: "example.com.".into(),
+            record_count: 2,
+            records: vec![
+                "example.com. 3600 IN A 192.0.2.1".into(),
+                "www.example.com. 3600 IN A 192.0.2.2".into(),
+            ],
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["zone"], "example.com.");
+        assert_eq!(parsed["record_count"], 2);
+        assert_eq!(parsed["records"].as_array().unwrap().len(), 2);
     }
 }
