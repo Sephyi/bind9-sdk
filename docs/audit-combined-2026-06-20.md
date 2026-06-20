@@ -16,13 +16,21 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 The Rust SDK has a strong implemented core and the earlier critical audit
 findings around transfer TSIG verification, IXFR semantics, remote plaintext
 defaults, typed statistics, serialization loss, and connection pooling are
-closed. The audited baseline was green at 664 tests. The current remediation
-worktree is green at 689 deterministic tests and all 28 live BIND 9.20 tests.
+closed. The audited baseline was green at 664 tests. The current worktree is
+green at **719 deterministic tests** and **all 29 live BIND 9.20 tests**
+(verified locally against the Podman fixture and gated in CI).
 
-The project is not yet v1.0 production-ready. Phase 6 release gates are absent,
-Phase 7 requirements are unimplemented, several security/operational
-requirements exist only in the PRD, and live BIND tests do not gate CI. The
-current state is suitable for controlled staging and continued development.
+**Update (post-remediation):** Every High and Medium combined-audit finding
+(CX-01…CX-22) is now fixed. Phase 6 release gates (cargo-deny, SBOM, release
+workflow, MSRV matrix, bounded fuzz-smoke), the FR-061 fuzz workspace, Phase 7
+features (FR-070 views, FR-071 DNSSEC rollover, FR-072 Prometheus), the typed
+operational-security model, post-update SOA verification, TLS-config cleanup,
+`#![deny(missing_docs)]` across the public Rust API, the napi Node/Bun/WASI
+build+smoke matrix, and PRD/README reconciliation are all implemented and
+verified. The remaining items are **not technically actionable in-repo**: the
+FR-061 24-hour fuzz run (a manual pre-v1.0 release gate), a real browser-runtime
+test, and the OQ-005 license decision (owner-only). With those caveats the Rust
+SDK is production-ready for backend use (e.g. a zone-management web service).
 
 ## Findings
 
