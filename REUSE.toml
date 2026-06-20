@@ -15,6 +15,7 @@ path = [
     ".github/**",
     ".claude/**",
     "npm/**",
+    "crates/bind9-sdk-bindings/npm/**",
     "fuzz/corpus/**",
 ]
 SPDX-FileCopyrightText = "2026 Sephyi <me@sephy.io>"
