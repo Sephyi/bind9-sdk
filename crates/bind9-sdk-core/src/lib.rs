@@ -30,6 +30,8 @@ pub mod error;
 pub mod fuzz;
 /// Bounded typed parser for SDK-relevant `named.conf` statements.
 pub mod named_conf;
+/// Prometheus text exposition for BIND statistics (FR-072).
+pub mod prometheus;
 /// DNS protocol primitives: `RecordType` and `Rcode`.
 pub mod protocol;
 /// DNS record data variants (`RecordData`).
@@ -57,6 +59,7 @@ pub use named_conf::{
     Acl, AclElement, ControlEndpoint, ListenAddress, NamedAcl, NamedConf, NamedOptions, NamedZone,
     NamedZoneType, StatisticsChannel,
 };
+pub use prometheus::server_stats_to_prometheus;
 pub use protocol::{Rcode, RecordType};
 pub use rdata::{RecordData, TxtString};
 pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};

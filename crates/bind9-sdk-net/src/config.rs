@@ -252,6 +252,13 @@ impl Bind9Client {
         FrozenZoneGuard::for_client(frozen, Arc::clone(self))
     }
 
+    /// Fetch server statistics and render them as Prometheus text exposition
+    /// format (FR-072), suitable for serving from a `/metrics` endpoint.
+    pub async fn prometheus_metrics(&self) -> Result<String, NetError> {
+        let stats = self.stats_client()?.fetch_server_stats().await?;
+        Ok(bind9_sdk_core::server_stats_to_prometheus(&stats))
+    }
+
     /// Send a dynamic update and verify it was actually applied by confirming
     /// the zone's SOA serial advanced (PRD REQ-ZONE-3).
     ///
