@@ -59,10 +59,15 @@ pub struct ClientConfig {
     /// DNS server address for sending updates (default: same host, port 53).
     pub dns_addr: Option<SocketAddr>,
 
-    /// Optional TLS configuration for encrypted connections.
+    /// Optional TLS trust configuration for the encrypted transports.
     ///
-    /// **Note:** Currently unused. Reserved for future TLS-encrypted rndc
-    /// and statistics-channel connections (Phase 2 XoT).
+    /// When set, the statistics-channel client uses these trust anchors for
+    /// HTTPS (`server_stats`/`zone_stats`), and the same [`TlsConfig`] can be
+    /// passed to [`TransferClient`](crate::transfer::TransferClient) for
+    /// certificate-validated XoT zone transfers. It does **not** apply to the
+    /// rndc control channel: BIND's rndc is plaintext TCP authenticated with
+    /// HMAC and has no TLS mode — confidentiality there is provided by the
+    /// network ([`RndcTransportPolicy::ProtectedNetwork`]), not by TLS.
     pub tls: Option<TlsConfig>,
 
     /// Timeout for individual operations (default: 10 seconds).
@@ -148,12 +153,21 @@ impl Bind9Client {
     /// This does not establish any connections — connections are created
     /// on demand by trait method implementations.
     pub fn new(config: ClientConfig) -> Self {
-        if config.tls.is_some() {
-            tracing::warn!(
-                "ClientConfig.tls is configured but TLS transports are not implemented yet"
-            );
-        }
         Self { config }
+    }
+
+    /// Build a statistics-channel client for the configured URL, applying the
+    /// optional custom [`TlsConfig`](crate::tls::TlsConfig) when present.
+    fn stats_client(&self) -> Result<StatsHttpClient, NetError> {
+        let url = self
+            .config
+            .stats_url
+            .as_ref()
+            .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
+        match &self.config.tls {
+            Some(tls) => StatsHttpClient::with_tls(url, self.config.timeout, tls),
+            None => StatsHttpClient::new(url, self.config.timeout),
+        }
     }
 
     /// Access the client configuration.
@@ -355,23 +369,11 @@ impl StatsClient for Bind9Client {
     type Error = NetError;
 
     async fn server_stats(&self) -> Result<ServerStats, NetError> {
-        let url = self
-            .config
-            .stats_url
-            .as_ref()
-            .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
-        let client = StatsHttpClient::new(url, self.config.timeout)?;
-        client.fetch_server_stats().await
+        self.stats_client()?.fetch_server_stats().await
     }
 
     async fn zone_stats(&self, zone: &DomainName) -> Result<ZoneStats, NetError> {
-        let url = self
-            .config
-            .stats_url
-            .as_ref()
-            .ok_or_else(|| NetError::Connection("stats URL not configured".into()))?;
-        let client = StatsHttpClient::new(url, self.config.timeout)?;
-        client.fetch_zone_stats(zone).await
+        self.stats_client()?.fetch_zone_stats(zone).await
     }
 }
 

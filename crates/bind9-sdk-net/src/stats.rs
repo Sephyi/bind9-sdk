@@ -299,6 +299,29 @@ impl StatsHttpClient {
         })
     }
 
+    /// Create a stats client that uses a caller-supplied TLS configuration.
+    ///
+    /// Use this for an HTTPS statistics channel secured by a private PKI: the
+    /// supplied [`TlsConfig`](crate::tls::TlsConfig) carries the trust anchors
+    /// and pins TLS 1.3 with AES-256-GCM / ChaCha20-Poly1305. The URL must use
+    /// the `https` scheme for the configuration to take effect.
+    pub fn with_tls(
+        url: &str,
+        timeout: std::time::Duration,
+        tls: &crate::tls::TlsConfig,
+    ) -> Result<Self, NetError> {
+        let url = validate_stats_url(url)?;
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .use_preconfigured_tls(tls.client_config().clone())
+            .build()
+            .map_err(|e| NetError::Connection(format!("failed to build HTTP client: {e}")))?;
+        Ok(Self {
+            url: url.to_string(),
+            http,
+        })
+    }
+
     /// Create a stats client with a custom authorization header.
     ///
     /// Use when the statistics-channel is protected by HTTP auth.
@@ -733,6 +756,31 @@ mod tests {
     fn stats_http_client_empty_url_fails() {
         let client = StatsHttpClient::new("", std::time::Duration::from_secs(10));
         assert!(client.is_err());
+    }
+
+    #[test]
+    fn stats_http_client_with_tls_builds_for_remote_https() {
+        let tls = crate::tls::TlsConfig::new().expect("default TLS config");
+        let client = StatsHttpClient::with_tls(
+            "https://stats.example.com:8053/json/v1",
+            std::time::Duration::from_secs(10),
+            &tls,
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn stats_http_client_with_tls_still_rejects_remote_plaintext() {
+        let tls = crate::tls::TlsConfig::new().expect("default TLS config");
+        let err = match StatsHttpClient::with_tls(
+            "http://192.0.2.10:8053/json/v1",
+            std::time::Duration::from_secs(10),
+            &tls,
+        ) {
+            Ok(_) => panic!("remote plaintext stats URL must be rejected even with TLS configured"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, NetError::TlsRequired { .. }));
     }
 
     #[test]

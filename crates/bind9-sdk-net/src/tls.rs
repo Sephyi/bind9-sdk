@@ -12,9 +12,12 @@ use crate::error::NetError;
 /// AES-256-GCM and ChaCha20-Poly1305 cipher suites. Certificate
 /// validation uses Mozilla's CA root certificates via `webpki-roots`.
 ///
-/// Used by the rndc and statistics-channel clients when TLS is enabled.
-/// Phase 1 rndc uses plaintext TCP on localhost; TLS is prepared here
-/// for Phase 2 XoT (DNS-over-TLS for zone transfers).
+/// Used by the statistics-channel client over HTTPS
+/// ([`StatsHttpClient::with_tls`](crate::stats::StatsHttpClient::with_tls)) and
+/// by the zone-transfer client for certificate-validated XoT
+/// ([`TransferClient::connect_tls`](crate::transfer::TransferClient)). It does
+/// not apply to the rndc control channel, which BIND exposes only as
+/// HMAC-authenticated plaintext TCP.
 pub struct TlsConfig {
     inner: Arc<rustls::ClientConfig>,
 }
