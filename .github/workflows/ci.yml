@@ -128,18 +128,83 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
-  bindings-check:
-    name: napi Bindings
+  bindings-native:
+    name: napi Bindings (Node ${{ matrix.node }})
     needs: fmt
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines requires Node >= 22; Node 20 is intentionally
+        # below the supported floor and is therefore not in the matrix.
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
       - run: cargo check -p bind9-sdk-bindings --features nodejs
+      - name: Build native addon
+        working-directory: crates/bind9-sdk-bindings
+        run: |
+          npm ci
+          npm run build
+      - name: Native smoke + package contract
+        working-directory: crates/bind9-sdk-bindings
+        run: |
+          node tests/smoke.mjs
+          node tests/package-contract.mjs
+
+  bindings-bun:
+    name: napi Bindings (Bun)
+    needs: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+      - name: Build native addon
+        working-directory: crates/bind9-sdk-bindings
+        run: |
+          npm ci
+          npm run build
+      - name: Bun smoke
+        working-directory: crates/bind9-sdk-bindings
+        run: bun tests/smoke.mjs
+
+  bindings-wasm:
+    name: napi Bindings (WASI)
+    needs: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-wasip1-threads
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build WASI addon and run fallback smoke
+        working-directory: crates/bind9-sdk-bindings
+        run: |
+          npm ci
+          npm run build:wasm
+          node tests/wasm-smoke.mjs
 
   dependency-review:
     name: Dependency Review
