@@ -62,7 +62,7 @@ pub use rdata::{RecordData, TxtString};
 pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};
 pub use security::{
     SecurityPolicy, SecurityWarning, Severity, classify_rrsig, dnssec_algorithm_is_weak,
-    tsig_algorithm_is_deprecated,
+    dnssec_algorithm_name_is_weak, tsig_algorithm_is_deprecated,
 };
 pub use traits::{
     CounterSet, DynamicUpdater, FrozenZone, MemoryContextStats, MemoryStats, NamedControl,

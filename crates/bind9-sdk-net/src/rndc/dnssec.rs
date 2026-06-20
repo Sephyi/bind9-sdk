@@ -50,6 +50,20 @@ pub enum KeyRole {
 }
 
 impl DnssecStatus {
+    /// Keys signing this zone with a weak or deprecated DNSSEC algorithm
+    /// (RFC 9904), reported through a typed API rather than only via tracing
+    /// (PRD REQ-LOG-5). Returns the offending [`DnssecKeyInfo`] entries.
+    pub fn weak_algorithm_keys(&self) -> Vec<&DnssecKeyInfo> {
+        self.keys
+            .iter()
+            .filter(|k| {
+                k.algorithm
+                    .as_deref()
+                    .is_some_and(bind9_sdk_core::dnssec_algorithm_name_is_weak)
+            })
+            .collect()
+    }
+
     /// Parse the text output of `rndc dnssec -status <zone>`.
     ///
     /// # Expected format
@@ -169,6 +183,30 @@ mod tests {
         assert_eq!(status.keys[0].tag, 12345);
         assert_eq!(status.keys[0].role, KeyRole::Ksk);
         assert_eq!(status.keys[0].state, "OMNIPRESENT");
+    }
+
+    #[test]
+    fn weak_algorithm_keys_flags_deprecated_signers() {
+        let status = DnssecStatus {
+            policy: "custom".into(),
+            keys: vec![
+                DnssecKeyInfo {
+                    tag: 1,
+                    algorithm: Some("RSASHA1".into()),
+                    role: KeyRole::Ksk,
+                    state: "OMNIPRESENT".into(),
+                },
+                DnssecKeyInfo {
+                    tag: 2,
+                    algorithm: Some("ECDSAP256SHA256".into()),
+                    role: KeyRole::Zsk,
+                    state: "OMNIPRESENT".into(),
+                },
+            ],
+        };
+        let weak = status.weak_algorithm_keys();
+        assert_eq!(weak.len(), 1);
+        assert_eq!(weak[0].tag, 1);
     }
 
     #[test]

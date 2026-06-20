@@ -132,6 +132,25 @@ pub fn dnssec_algorithm_is_weak(algorithm: u8) -> bool {
     matches!(algorithm, 1 | 3 | 5 | 6 | 7 | 12)
 }
 
+/// Whether a DNSSEC algorithm *mnemonic* (as reported by BIND `rndc
+/// dnssec -status`, e.g. `RSASHA1`) is weak or deprecated per RFC 9904.
+///
+/// Matching is case-insensitive. Unknown names are treated as not-weak so the
+/// SDK never produces a false security warning for an algorithm it cannot map.
+pub fn dnssec_algorithm_name_is_weak(name: &str) -> bool {
+    // RFC 9904 / IANA mnemonics for the deprecated set (1/3/5/6/7/12).
+    const WEAK: [&str; 7] = [
+        "RSAMD5",
+        "DSA",
+        "RSASHA1",
+        "DSA-NSEC3-SHA1",
+        "NSEC3DSA",
+        "RSASHA1-NSEC3-SHA1",
+        "ECC-GOST",
+    ];
+    WEAK.iter().any(|w| w.eq_ignore_ascii_case(name))
+}
+
 /// Classify a record's DNSSEC/RRSIG material against the current time.
 ///
 /// Returns a [`SecurityWarning`] when an RRSIG is within `warn_window_secs` of
@@ -193,6 +212,16 @@ mod tests {
         // ECDSAP256SHA256 (13) and ED25519 (15) are recommended.
         assert!(!dnssec_algorithm_is_weak(13));
         assert!(!dnssec_algorithm_is_weak(15));
+    }
+
+    #[test]
+    fn weak_dnssec_algorithm_names_are_flagged() {
+        assert!(dnssec_algorithm_name_is_weak("RSASHA1"));
+        assert!(dnssec_algorithm_name_is_weak("rsasha1-nsec3-sha1"));
+        assert!(dnssec_algorithm_name_is_weak("ECC-GOST"));
+        assert!(!dnssec_algorithm_name_is_weak("ECDSAP256SHA256"));
+        assert!(!dnssec_algorithm_name_is_weak("ED25519"));
+        assert!(!dnssec_algorithm_name_is_weak("unknown-future-alg"));
     }
 
     #[test]
