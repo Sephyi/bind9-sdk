@@ -40,6 +40,7 @@
 pub mod command;
 pub mod dnssec;
 pub(crate) mod protocol;
+pub mod rollover;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
