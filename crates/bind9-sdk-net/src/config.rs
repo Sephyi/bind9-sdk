@@ -145,6 +145,8 @@ impl ClientConfig {
 /// calls are safe.
 pub struct Bind9Client {
     config: ClientConfig,
+    /// Optional BIND view that scopes all zone-targeted operations (FR-070).
+    view: Option<String>,
 }
 
 impl Bind9Client {
@@ -153,7 +155,35 @@ impl Bind9Client {
     /// This does not establish any connections — connections are created
     /// on demand by trait method implementations.
     pub fn new(config: ClientConfig) -> Self {
-        Self { config }
+        Self { config, view: None }
+    }
+
+    /// Scope every zone-targeted operation on this client to a BIND `view`
+    /// (FR-070).
+    ///
+    /// All subsequent zone commands (`reload_zone`, `freeze`, `thaw`,
+    /// `zone_status`, `dnssec_status`, `dnssec_checkds`, …) target the zone
+    /// within the named view. Because `ClientConfig` holds non-cloneable key
+    /// material, this is a consuming builder; construct one client per view
+    /// for split-horizon deployments.
+    #[must_use]
+    pub fn for_view(mut self, view: impl Into<String>) -> Self {
+        self.view = Some(view.into());
+        self
+    }
+
+    /// The BIND view this client is scoped to, if any.
+    pub fn view(&self) -> Option<&str> {
+        self.view.as_deref()
+    }
+
+    /// Build a [`ZoneTarget`] for `zone`, applying this client's view scope.
+    fn zone_target(&self, zone: &DomainName) -> ZoneTarget {
+        let target = ZoneTarget::new(zone.clone());
+        match &self.view {
+            Some(view) => target.with_view(view.clone()),
+            None => target,
+        }
     }
 
     /// Build a statistics-channel client for the configured URL, applying the
@@ -175,27 +205,27 @@ impl Bind9Client {
         &self.config
     }
 
-    fn zone_status_command(zone: &DomainName) -> RndcCommand {
+    fn zone_status_command(&self, zone: &DomainName) -> RndcCommand {
         RndcCommand::ZoneStatus {
-            target: ZoneTarget::new(zone.clone()),
+            target: self.zone_target(zone),
         }
     }
 
-    fn thaw_command(zone: &DomainName) -> RndcCommand {
+    fn thaw_command(&self, zone: &DomainName) -> RndcCommand {
         RndcCommand::Thaw {
-            target: Some(ZoneTarget::new(zone.clone())),
+            target: Some(self.zone_target(zone)),
         }
     }
 
-    fn dnssec_status_command(zone: &DomainName) -> RndcCommand {
+    fn dnssec_status_command(&self, zone: &DomainName) -> RndcCommand {
         RndcCommand::DnssecStatus {
-            target: ZoneTarget::new(zone.clone()),
+            target: self.zone_target(zone),
         }
     }
 
-    fn dnssec_checkds_command(zone: &DomainName, state: DsState) -> RndcCommand {
+    fn dnssec_checkds_command(&self, zone: &DomainName, state: DsState) -> RndcCommand {
         RndcCommand::DnssecCheckDs {
-            target: ZoneTarget::new(zone.clone()),
+            target: self.zone_target(zone),
             state,
             key: None,
             when: None,
@@ -204,7 +234,7 @@ impl Bind9Client {
 
     /// Return the raw `rndc zonestatus` response for a zone.
     pub async fn zone_status(&self, zone: &DomainName) -> Result<String, NetError> {
-        let response = self.rndc_command(Self::zone_status_command(zone)).await?;
+        let response = self.rndc_command(self.zone_status_command(zone)).await?;
         if !response.is_success() {
             return Err(NetError::Protocol(format!(
                 "rndc zonestatus failed: {}",
@@ -216,7 +246,7 @@ impl Bind9Client {
 
     /// Return the parsed DNSSEC policy status for a zone.
     pub async fn dnssec_status(&self, zone: &DomainName) -> Result<DnssecStatus, NetError> {
-        let response = self.rndc_command(Self::dnssec_status_command(zone)).await?;
+        let response = self.rndc_command(self.dnssec_status_command(zone)).await?;
         if !response.is_success() {
             return Err(NetError::Protocol(format!(
                 "rndc dnssec -status failed: {}",
@@ -229,7 +259,7 @@ impl Bind9Client {
     /// Inform BIND that the parent DS record was published or withdrawn.
     pub async fn dnssec_checkds(&self, zone: &DomainName, state: DsState) -> Result<(), NetError> {
         let response = self
-            .rndc_command(Self::dnssec_checkds_command(zone, state))
+            .rndc_command(self.dnssec_checkds_command(zone, state))
             .await?;
         if !response.is_success() {
             return Err(NetError::Protocol(format!(
@@ -360,7 +390,7 @@ impl NamedControl for Bind9Client {
     async fn reload_zone(&self, zone: &DomainName) -> Result<(), NetError> {
         let resp = self
             .rndc_command(RndcCommand::Reload {
-                target: Some(ZoneTarget::new(zone.clone())),
+                target: Some(self.zone_target(zone)),
             })
             .await?;
         if !resp.is_success() {
@@ -375,7 +405,7 @@ impl NamedControl for Bind9Client {
     async fn freeze(&self, zone: &DomainName) -> Result<FrozenZone, NetError> {
         let resp = self
             .rndc_command(RndcCommand::Freeze {
-                target: Some(ZoneTarget::new(zone.clone())),
+                target: Some(self.zone_target(zone)),
             })
             .await?;
         if !resp.is_success() {
@@ -388,7 +418,7 @@ impl NamedControl for Bind9Client {
     }
 
     async fn thaw(&self, zone: &DomainName) -> Result<(), NetError> {
-        let resp = self.rndc_command(Self::thaw_command(zone)).await?;
+        let resp = self.rndc_command(self.thaw_command(zone)).await?;
         if !resp.is_success() {
             return Err(NetError::Protocol(format!(
                 "rndc thaw failed: {}",
@@ -455,11 +485,18 @@ mod tests {
         assert_eq!(config.timeout, Duration::from_secs(10));
     }
 
+    fn test_client() -> Bind9Client {
+        Bind9Client::new(ClientConfig::new(
+            "127.0.0.1:953".parse().unwrap(),
+            test_key(),
+        ))
+    }
+
     #[test]
     fn zone_status_command_targets_requested_zone() {
         let zone = DomainName::new("example.com.").unwrap();
         assert_eq!(
-            Bind9Client::zone_status_command(&zone),
+            test_client().zone_status_command(&zone),
             RndcCommand::ZoneStatus {
                 target: ZoneTarget::new(zone.clone())
             }
@@ -470,7 +507,7 @@ mod tests {
     fn thaw_command_targets_requested_zone() {
         let zone = DomainName::new("example.com.").unwrap();
         assert_eq!(
-            Bind9Client::thaw_command(&zone),
+            test_client().thaw_command(&zone),
             RndcCommand::Thaw {
                 target: Some(ZoneTarget::new(zone.clone()))
             }
@@ -481,7 +518,7 @@ mod tests {
     fn dnssec_status_command_targets_requested_zone() {
         let zone = DomainName::new("example.com.").unwrap();
         assert_eq!(
-            Bind9Client::dnssec_status_command(&zone),
+            test_client().dnssec_status_command(&zone),
             RndcCommand::DnssecStatus {
                 target: ZoneTarget::new(zone.clone())
             }
@@ -492,12 +529,25 @@ mod tests {
     fn dnssec_checkds_command_includes_parent_state() {
         let zone = DomainName::new("example.com.").unwrap();
         assert_eq!(
-            Bind9Client::dnssec_checkds_command(&zone, DsState::Published),
+            test_client().dnssec_checkds_command(&zone, DsState::Published),
             RndcCommand::DnssecCheckDs {
                 target: ZoneTarget::new(zone),
                 state: DsState::Published,
                 key: None,
                 when: None,
+            }
+        );
+    }
+
+    #[test]
+    fn for_view_scopes_zone_targets() {
+        let zone = DomainName::new("example.com.").unwrap();
+        let client = test_client().for_view("internal");
+        assert_eq!(client.view(), Some("internal"));
+        assert_eq!(
+            client.zone_status_command(&zone),
+            RndcCommand::ZoneStatus {
+                target: ZoneTarget::new(zone).with_view("internal"),
             }
         );
     }
