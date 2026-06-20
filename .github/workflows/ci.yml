@@ -73,7 +73,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
-      - run: cargo check -p bind9-sdk-core --target wasm32-unknown-unknown
+      - run: cargo check -p bind9-sdk-core --target wasm32-unknown-unknown --no-default-features
+      - run: cargo check -p bind9-sdk --target wasm32-unknown-unknown --no-default-features
 
   doc:
     name: Documentation

@@ -15,13 +15,15 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["net"]
+default = ["std", "net"]
+# Standard-library utilities in the core crate.
+std = ["bind9-sdk-core/std"]
 # Network layer: rndc TCP client, nsupdate sender, IXFR/AXFR, statistics HTTP client
-net = ["dep:bind9-sdk-net"]
+net = ["std", "dep:bind9-sdk-net"]
 # Data parallelism: Rayon-based parallel zone parsing (implies std; incompatible with WASM)
-parallel = ["bind9-sdk-core/parallel", "dep:rayon"]
+parallel = ["std", "bind9-sdk-core/parallel", "dep:rayon"]
 
 [dependencies]
-bind9-sdk-core = { workspace = true, features = ["std"] }
+bind9-sdk-core = { workspace = true }
 bind9-sdk-net = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }

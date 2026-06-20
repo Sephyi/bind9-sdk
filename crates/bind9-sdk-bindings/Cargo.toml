@@ -17,8 +17,11 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
+napi-bindings = ["dep:napi", "dep:napi-derive"]
 # Node.js/Bun native addon via napi-rs v3 (full surface including rndc/IXFR/nsupdate)
-nodejs = ["dep:napi", "dep:napi-derive", "dep:bind9-sdk-net", "dep:tokio-stream"]
+nodejs = ["napi-bindings", "dep:bind9-sdk-net", "dep:tokio-stream"]
+# Browser/Node WASI bindings expose the core-only surface.
+wasm = ["napi-bindings"]
 
 [dependencies]
 bind9-sdk-core = { workspace = true, features = ["std"] }

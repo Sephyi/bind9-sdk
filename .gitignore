@@ -31,6 +31,11 @@ dist/
 crates/bind9-sdk-bindings/*.node
 crates/bind9-sdk-bindings/index.js
 crates/bind9-sdk-bindings/index.d.ts
+crates/bind9-sdk-bindings/browser.js
+crates/bind9-sdk-bindings/*.wasm
+crates/bind9-sdk-bindings/*.wasi.cjs
+crates/bind9-sdk-bindings/*.wasi-browser.js
+crates/bind9-sdk-bindings/wasi-worker*.mjs
 
 # Rust backup files (rustfmt)
 **/*.rs.bk

@@ -43,8 +43,11 @@ description = "Type-check all workspace crates"
 run = "cargo check --workspace"
 
 [tasks."check:wasm"]
-description = "Check no_std compliance for core crate on WASM target"
-run = "cargo check -p bind9-sdk-core --target wasm32-unknown-unknown"
+description = "Check no_std compliance for core and top-level crates on WASM"
+run = """
+cargo check -p bind9-sdk-core --target wasm32-unknown-unknown --no-default-features
+cargo check -p bind9-sdk --target wasm32-unknown-unknown --no-default-features
+"""
 
 [tasks."check:bindings"]
 description = "Check napi-rs bindings compile (does not produce .node file)"
