@@ -110,7 +110,15 @@ fn rdata_to_json(rdata: &RecordData) -> Value {
             "preference": preference,
             "exchange": exchange.to_string(),
         }),
-        RecordData::Txt(strings) => json!({ "strings": strings }),
+        RecordData::Txt(strings) => json!({
+            "strings": strings
+                .iter()
+                .map(|value| json!({
+                    "bytes": value.as_bytes(),
+                    "text": core::str::from_utf8(value.as_bytes()).ok(),
+                }))
+                .collect::<Vec<_>>()
+        }),
         RecordData::Srv {
             priority,
             weight,
