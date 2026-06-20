@@ -305,6 +305,7 @@ All commands accept these flags (CLI flags override config file values):
 --server <HOST>       Server hostname or IP address
 --port <PORT>         rndc control port (default: 953)
 --dns-port <PORT>     DNS port for updates and transfers (default: 53)
+--stats-url <URL>     Statistics-channel JSON API URL
 --protected-rndc      Allow plaintext RNDC over a trusted protected network
 --key-name <NAME>     TSIG key name
 --key-secret <SECRET> Base64-encoded TSIG key secret
@@ -365,8 +366,8 @@ The `--profile` value should match the `host:port` of the server you connect to 
 ### 🗂️ Zone commands
 
 ```bash
-# List zones (shows server status and zone count)
-bind9 zone list
+# List zones through the statistics channel
+bind9 --stats-url http://127.0.0.1:8053/json/v1 zone list
 
 # Show zone status
 bind9 zone status example.com.

@@ -142,13 +142,18 @@ pub fn build_client_config(cli: &Cli) -> Result<Option<ClientConfig>, CliError> 
         config.dns_addr = Some(dns_addr);
     }
 
-    if let Some(ref file_cfg) = file_config
-        && let Some(ref stats_url) = file_cfg.server.stats_url
-    {
-        config.stats_url = Some(stats_url.clone());
-    }
+    config.stats_url = resolve_stats_url(
+        cli.stats_url.as_deref(),
+        file_config
+            .as_ref()
+            .and_then(|config| config.server.stats_url.as_deref()),
+    );
 
     Ok(Some(config))
+}
+
+fn resolve_stats_url(cli_url: Option<&str>, configured_url: Option<&str>) -> Option<String> {
+    cli_url.or(configured_url).map(str::to_owned)
 }
 
 /// Parse a TSIG algorithm string into a `TsigAlgorithm`.
@@ -195,5 +200,22 @@ mod tests {
     #[test]
     fn parse_algorithm_unsupported() {
         assert!(parse_algorithm("hmac-md5").is_err());
+    }
+
+    #[test]
+    fn stats_url_resolution_prefers_cli_and_falls_back_to_config() {
+        // Reserved .test names make clear this unit test performs no network I/O.
+        assert_eq!(
+            resolve_stats_url(
+                Some("https://cli.example.test/json/v1"),
+                Some("https://config.example.test/json/v1"),
+            ),
+            Some("https://cli.example.test/json/v1".into())
+        );
+        assert_eq!(
+            resolve_stats_url(None, Some("https://config.example.test/json/v1")),
+            Some("https://config.example.test/json/v1".into())
+        );
+        assert_eq!(resolve_stats_url(None, None), None);
     }
 }

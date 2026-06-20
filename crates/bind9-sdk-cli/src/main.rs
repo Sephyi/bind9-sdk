@@ -28,6 +28,7 @@ fn main() -> ExitCode {
                 .or_else(|_| EnvFilter::try_from_default_env())
                 .unwrap_or_else(|_| EnvFilter::new("warn")),
         )
+        .with_writer(std::io::stderr)
         .with_target(false)
         .init();
 

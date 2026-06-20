@@ -33,6 +33,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dns_port: Option<u16>,
 
+    /// Statistics-channel JSON API URL (overrides config file).
+    #[arg(long, global = true)]
+    pub stats_url: Option<String>,
+
     /// Permit plaintext rndc over a separately protected network such as WireGuard.
     #[arg(long, global = true)]
     pub protected_rndc: bool,
@@ -98,8 +102,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protected_rndc_flag_is_explicitly_selectable() {
+    fn cli_parser_accepts_protected_rndc_flag() {
         let cli = Cli::try_parse_from(["bind9", "--protected-rndc", "stats"]).unwrap();
         assert!(cli.protected_rndc);
+        assert!(matches!(cli.command, Command::Stats));
+    }
+
+    #[test]
+    fn cli_parser_accepts_stats_url_for_zone_list() {
+        let cli = Cli::try_parse_from([
+            "bind9",
+            "--stats-url",
+            "http://127.0.0.1:8053/json/v1",
+            "zone",
+            "list",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.stats_url.as_deref(),
+            Some("http://127.0.0.1:8053/json/v1")
+        );
+        assert!(matches!(
+            cli.command,
+            Command::Zone(zone::ZoneCommand::List)
+        ));
     }
 }
