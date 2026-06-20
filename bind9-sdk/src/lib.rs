@@ -20,6 +20,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 /// Core DNS types, zone parsing, and RFC 2136 message construction.
 ///

@@ -27,7 +27,12 @@ pub enum AclElement {
     /// One IP address.
     Address(IpAddr),
     /// One CIDR network.
-    Network { address: IpAddr, prefix: u8 },
+    Network {
+        /// Network base address.
+        address: IpAddr,
+        /// CIDR prefix length in bits.
+        prefix: u8,
+    },
     /// A TSIG key identity.
     Key(DomainName),
     /// A reference to a named ACL.
