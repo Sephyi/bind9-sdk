@@ -205,6 +205,14 @@ jobs:
           npm ci
           npm run build:wasm
           node tests/wasm-smoke.mjs
+      - name: Install Playwright Chromium
+        working-directory: crates/bind9-sdk-bindings
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Browser WASM runtime test (headless Chromium)
+        working-directory: crates/bind9-sdk-bindings
+        run: npm run test:browser
 
   dependency-review:
     name: Dependency Review

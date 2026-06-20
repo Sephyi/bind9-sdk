@@ -1,0 +1,43 @@
+<!--
+SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>bind9-sdk browser WASM test</title>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      // Exercises the browser WASM bundle (SharedArrayBuffer threads require the
+      // COOP/COEP headers served by the harness). Surfaces the result on
+      // window.__result so the Playwright runner can assert on it.
+      const out = document.getElementById('out');
+      function report(ok, detail) {
+        window.__result = { ok, detail };
+        out.textContent = (ok ? 'PASS: ' : 'FAIL: ') + detail;
+      }
+      try {
+        const sdk = await import('../../bind9-sdk.wasi-browser.js');
+        const mod = sdk.default ? sdk : sdk;
+        const JsDomainName = sdk.JsDomainName;
+        const JsZoneFile = sdk.JsZoneFile;
+        if (typeof JsDomainName !== 'function' || typeof JsZoneFile !== 'function') {
+          report(false, 'core WASM exports missing in browser');
+        } else {
+          const d = new JsDomainName('browser.example.');
+          const zone = JsZoneFile.parse(
+            '$ORIGIN browser.example.\nbrowser.example. 300 IN A 192.0.2.1\n',
+          );
+          const okName = d.toString() === 'browser.example.';
+          const okZone = zone.recordCount() === 1 && /192\.0\.2\.1/.test(zone.serialize());
+          report(okName && okZone, `name=${okName} zone=${okZone}`);
+        }
+      } catch (err) {
+        report(false, String(err && err.stack ? err.stack : err));
+      }
+    </script>
+  </body>
+</html>
