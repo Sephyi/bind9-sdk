@@ -107,3 +107,29 @@ rpassword = "5"
 # Testing (consumed via [dev-dependencies] in each crate)
 proptest = { version = "1" }
 insta = { version = "1" }
+
+# ---------------------------------------------------------------------------
+# Build profiles
+# ---------------------------------------------------------------------------
+
+# Hardened release profile for published binaries (the `bind9` CLI) and any
+# release-mode builds. `panic = "unwind"` is retained deliberately: this is a
+# library workspace, and aborting would prevent downstream consumers and the
+# test harness from observing failures. Library consumers are unaffected — a
+# profile only governs this workspace's own builds.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+overflow-checks = true
+
+# Dedicated profile for fuzz targets: optimized but with debug assertions and
+# overflow checks left on so undefined-behavior-adjacent bugs surface as panics
+# the fuzzer can catch.
+[profile.fuzz]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+strip = "none"

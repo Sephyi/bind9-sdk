@@ -160,6 +160,35 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  deny:
+    name: Supply Chain (cargo-deny)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
+  msrv:
+    name: MSRV + Stable
+    needs: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.94.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.toolchain }}
+      - run: cargo check --workspace --all-features
+
   reuse:
     name: REUSE Lint
     runs-on: ubuntu-24.04

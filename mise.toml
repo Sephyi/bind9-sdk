@@ -80,6 +80,14 @@ cargo clippy --workspace --lib --bins -- \
 description = "Run security audit on dependencies"
 run = "cargo audit"
 
+[tasks.deny]
+description = "Run cargo-deny supply-chain gate (advisories, bans, licenses, sources)"
+run = "cargo deny check advisories bans licenses sources"
+
+[tasks.sbom]
+description = "Generate a CycloneDX SBOM for the published crate graph"
+run = "cargo cyclonedx --format json --all --override-filename sbom"
+
 # Test
 
 [tasks.test]
@@ -119,8 +127,8 @@ run = "podman-compose -f tests/bind9/podman-compose.yml down -v"
 # CI
 
 [tasks.ci]
-description = "Run full CI gate: fmt, clippy, WASM, tests, audit"
-depends = ["fmt:check", "clippy", "check:wasm", "test", "audit"]
+description = "Run full CI gate: fmt, clippy, WASM, tests, audit, deny"
+depends = ["fmt:check", "clippy", "check:wasm", "test", "audit", "deny"]
 
 # Docs + Utilities
 

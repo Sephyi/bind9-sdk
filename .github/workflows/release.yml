@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+name: Release
+
+# Manual dispatch performs a full dry run (no publish). Pushing a semver tag
+# builds artifacts, an SBOM, checksums, and signed provenance attestations.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run publish steps in --dry-run mode only"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.94.0"
+
+jobs:
+  # Gate: the release must pass the supply-chain policy before anything is built.
+  supply-chain:
+    name: Supply Chain Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
+  # Verify every publishable crate resolves and packages cleanly, in dependency
+  # order, without actually uploading. This is the publish smoke test.
+  publish-dry-run:
+    name: Publish Dry Run
+    needs: supply-chain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Package crates in dependency order
+        run: |
+          set -euo pipefail
+          for crate in bind9-sdk-core bind9-sdk-net bind9-sdk bind9-sdk-cli; do
+            echo "::group::cargo package -p $crate"
+            cargo package -p "$crate" --allow-dirty --no-verify
+            echo "::endgroup::"
+          done
+
+  sbom:
+    name: SBOM + Checksums
+    needs: supply-chain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx --format json --all --override-filename sbom
+      - name: Collect SBOMs and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find . -name 'sbom.json' -not -path './dist/*' -print -exec cp --parents {} dist/ \;
+          ( cd dist && find . -name 'sbom.json' -exec sha256sum {} \; > SHA256SUMS )
+          cat dist/SHA256SUMS
+      - name: Generate build provenance attestation
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/**/sbom.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: dist/

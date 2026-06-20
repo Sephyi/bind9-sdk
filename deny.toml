@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 Sephyi <me@sephy.io>
+#
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+# cargo-deny configuration — supply-chain policy gate (PRD SR-004, FR Phase 6).
+# Run locally and in CI with: cargo deny check
+
+[graph]
+# Evaluate the full feature surface so optional dependencies are covered.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Security advisories (RustSec). cargo-audit covers the same database in CI;
+# cargo-deny enforces it as a hard gate on the resolved dependency graph.
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# No advisories are currently ignored. Any addition here MUST carry a comment
+# explaining why the advisory is not exploitable in this SDK.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# License policy. Only OSI-approved permissive / weak-copyleft licenses that
+# are compatible with the AGPL-3.0-only OR LicenseRef-Commercial dual model
+# are allowed. The workspace crates themselves satisfy this via AGPL-3.0-only.
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "Unlicense",
+    # First-party: workspace crates are dual-licensed; AGPL-3.0-only satisfies
+    # the OR expression. LicenseRef-Commercial is the proprietary alternative.
+    "AGPL-3.0-only",
+]
+
+# The proprietary side of the workspace dual-license is a LicenseRef that SPDX
+# cannot resolve to OSI metadata; clarify it as first-party for the SDK crates.
+[[licenses.clarify]]
+crate = "bind9-sdk"
+expression = "AGPL-3.0-only OR LicenseRef-Commercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "bind9-sdk-core"
+expression = "AGPL-3.0-only OR LicenseRef-Commercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "bind9-sdk-net"
+expression = "AGPL-3.0-only OR LicenseRef-Commercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "bind9-sdk-cli"
+expression = "AGPL-3.0-only OR LicenseRef-Commercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "bind9-sdk-bindings"
+expression = "AGPL-3.0-only OR LicenseRef-Commercial"
+license-files = []
+
+# ---------------------------------------------------------------------------
+# Dependency bans. Keep the graph lean and free of known-problematic crates.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Allow wildcard version requirements only for first-party path dependencies.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
