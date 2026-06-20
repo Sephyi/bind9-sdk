@@ -36,6 +36,8 @@ pub mod protocol;
 pub mod rdata;
 /// DNS resource record and associated types (`ResourceRecord`, `Ttl`, `Serial`, `SerialStrategy`, `RecordClass`).
 pub mod record;
+/// Typed operational security warnings and policy (REQ-LOG-5, REQ-SEC-DEFAULT).
+pub mod security;
 /// Management traits (`NamedControl`, `DynamicUpdater`, `ZoneManager`, `StatsClient`).
 pub mod traits;
 /// Zone transfer types (`TransferSession`, `TransferKind`, `TransferRecord`).
@@ -58,6 +60,10 @@ pub use named_conf::{
 pub use protocol::{Rcode, RecordType};
 pub use rdata::{RecordData, TxtString};
 pub use record::{RecordClass, ResourceRecord, Serial, SerialStrategy, Ttl};
+pub use security::{
+    SecurityPolicy, SecurityWarning, Severity, classify_rrsig, dnssec_algorithm_is_weak,
+    tsig_algorithm_is_deprecated,
+};
 pub use traits::{
     CounterSet, DynamicUpdater, FrozenZone, MemoryContextStats, MemoryStats, NamedControl,
     NamedCounter, ServerStats, ServerStatsRates, ServerStatus, StatsClient, TrafficHistogram,

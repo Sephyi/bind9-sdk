@@ -33,6 +33,8 @@ pub fn tsig_wire(data: &[u8]) {
 
 /// Round-trip property: any zone text that parses must re-serialize and
 /// re-parse to an equal zone. Catches serializer/parser asymmetry.
+// Panicking is the fuzz contract: libFuzzer detects the asymmetry via the panic.
+#[allow(clippy::panic)]
 pub fn zone_roundtrip(data: &[u8]) {
     let Ok(text) = core::str::from_utf8(data) else {
         return;
