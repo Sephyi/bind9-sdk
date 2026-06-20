@@ -18,6 +18,9 @@
 //! let name = DomainName::new("example.com.").unwrap();
 //! ```
 
+#![cfg_attr(not(feature = "std"), no_std)]
+#![forbid(unsafe_code)]
+
 /// Core DNS types, zone parsing, and RFC 2136 message construction.
 ///
 /// This module is `no_std` compatible — safe to use in WASM and embedded contexts.
@@ -37,14 +40,15 @@ pub use bind9_sdk_net as net;
 
 // Curated top-level re-exports (covered by semver)
 pub use bind9_sdk_core::{
-    CoreError, DiffEntry, DomainName, DynamicUpdater, Label, NamedControl, Rcode, RecordClass,
-    RecordData, RecordType, ResourceRecord, Serial, SerialStrategy, StatsClient, TransferRecord,
-    TsigAlgorithm, TsigKey, Ttl, UpdateBuilder, UpdateMessage, Zone, ZoneDiff, ZoneFile,
-    ZoneManager,
+    CoreError, CounterSet, DiffEntry, DomainName, DynamicUpdater, Label, MemoryContextStats,
+    MemoryStats, NamedControl, NamedCounter, Rcode, RecordClass, RecordData, RecordType,
+    ResourceRecord, Serial, SerialStrategy, ServerStats, ServerStatsRates, StatsClient,
+    TrafficHistogram, TransferRecord, TsigAlgorithm, TsigKey, Ttl, TxtString, UpdateBuilder,
+    UpdateMessage, ViewStats, Zone, ZoneDiff, ZoneFile, ZoneManager, ZoneStats,
 };
 
 #[cfg(feature = "net")]
 pub use bind9_sdk_net::{
-    Bind9Client, ClientConfig, NetError, NsUpdateSender, RndcPool, StatsHttpClient, TlsConfig,
-    TransferClient,
+    Bind9Client, ClientConfig, NetError, NsUpdateSender, RndcLimiter, RndcPool, StatsHttpClient,
+    TlsConfig, TransferClient,
 };
