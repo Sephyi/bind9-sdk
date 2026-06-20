@@ -690,9 +690,9 @@ Parser for BIND9 `named.conf` files. Reads zone declarations, TSIG key stanzas, 
 `cargo-fuzz` targets for all parsers.
 
 **Acceptance Criteria**:
-- ✓ Three fuzz targets: `fuzz_zone_parser`, `fuzz_rndc_response`, `fuzz_stats_json`
-- ✓ 24-hour fuzz run with no panics before v1.0.0 tag
-- ✓ All fuzz-discovered crashes fixed and regression tests added
+- ✓ Three fuzz targets: `fuzz_zone_parser`, `fuzz_rndc_response`, `fuzz_stats_json` (implemented, plus five more: `fuzz_named_conf`, `fuzz_zone_roundtrip`, `fuzz_tsig_wire`, `fuzz_transfer_wire`, `fuzz_update_response`)
+- ⏳ **24-hour fuzz run with no panics before v1.0.0 tag — EXPLICIT RELEASE GATE, NOT YET PERFORMED.** Evidence gathered so far: a fork-mode campaign across all eight targets (≈110s each, all CPU cores) and a sustained ≥1-hour zone-parser campaign, both with **zero crash/oom/timeout artifacts**. The full 24-hour wall-clock run must be executed (locally or in a dedicated CI job) and its clean result recorded here before tagging v1.0.0.
+- ✓ All fuzz-discovered crashes fixed and regression tests added (the zone-tokenizer stack-overflow DoS found during this work is fixed and pinned by `crates/bind9-sdk-core/src/fuzz.rs` regression inputs)
 
 #### FR-062: RFC Compliance Suite
 
